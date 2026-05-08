@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash ~/.claude/bin/capture-metrics.sh:*)",
+      "Bash(bash ~/.claude/bin/archive-cycle.sh:*)",
+      "Bash(bash ~/.claude/bin/pr-review.sh:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh auth status:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/bin/track-tokens.py"
+          }
+        ]
+      }
+    ]
+  },
+  "effortLevel": "medium",
+  "theme": "dark"
+}

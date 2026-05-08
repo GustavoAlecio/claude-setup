@@ -1,0 +1,7 @@
+# Everything: skills + agents + bin
+@smart-flow
+@review-flow
+@design
+@clean-arch
+@agents-all
+bin/
