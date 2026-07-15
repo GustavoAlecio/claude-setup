@@ -12,7 +12,7 @@ PROJECT_NAME=$(basename "$PROJECT_PATH")
 
 ## 2. Consultar lessons learned
 
-Se `~/.claude/workflow/$PROJECT_NAME/lessons.md` existir, leia-o. O mesmo padrao de bug pode ja ter sido corrigido antes — aplique a regra existente.
+Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, leia-o. O mesmo padrao de bug pode ja ter sido corrigido antes — aplique a regra existente.
 
 ## 3. Investigar
 
@@ -76,7 +76,7 @@ Apresente o resultado:
 
 ## 7. Registrar lesson (se aplicavel)
 
-Se o bug revela um padrao que pode se repetir, registre em `~/.claude/workflow/$PROJECT_NAME/lessons.md`:
+Se o bug revela um padrao que pode se repetir, registre em `~/.claude/projects/$PROJECT_NAME/lessons.md`:
 
 ```markdown
 ### <data> — <categoria>

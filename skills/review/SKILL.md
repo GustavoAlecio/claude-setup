@@ -101,7 +101,15 @@ Para cada combinacao `(stack, focus)` em `DETECTED_STACKS x FOCUSES`:
 3. Passe ao agente:
    - Lista de arquivos relevantes (paths absolutos)
    - Caminho do diff: `$REVIEWS_DIR/PR-${PR_NUM}.diff`
-   - Instrucao: "Leia o diff e os arquivos. Retorne JSON array de comentarios inline. Schema: `[{path, line, severity, body}]`. severity ∈ critical|major|minor|nit. Sem prosa fora do JSON."
+   - Instrucao: "Leia o diff e os arquivos. Retorne JSON array de comentarios inline. Schema: `[{path, line, severity, body}]`. severity ∈ critical|major|minor|nit. Sem prosa fora do JSON.
+
+     **IMPORTANTE sobre `line`:** o numero deve ser a linha **no arquivo NEW (pos-imagem)**, nao o offset dentro do diff. Para encontrar a linha correta:
+     - Procure o hunk header `@@ -a,b +c,d @@` que contem o trecho que voce quer comentar.
+     - A primeira linha de conteudo apos esse header corresponde a linha `c` do arquivo NEW.
+     - Cada linha que comeca com `+` ou ` ` (espaco/contexto) avanca o contador da linha NEW; linhas que comecam com `-` nao avancam.
+     - Use exatamente esse numero (`c + offset`) no campo `line`.
+     - Para arquivos novos (`@@ -0,0 +1,N @@`), a linha NEW vai de 1 ate N.
+     - Nunca use a posicao da linha dentro do arquivo .diff inteiro — o GitHub rejeita."
 
 Colete todas as respostas. Cada agente retorna um array (vazio se nada a flagged).
 

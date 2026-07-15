@@ -18,10 +18,14 @@ My personal [Claude Code](https://claude.com/claude-code) configuration — skil
 | `design`, `ui` | Design and UI scaffolding skills |
 | `dart-clean-arch` | Opinionated Dart conventions (sealed freezed, naming, extensions, lint) |
 | `flutter-clean-arch` | Opinionated Flutter architecture (Cubit-first, multi-state, manual DI, go_router) |
+| `refine` | Standalone technical refinement of a task against the project's codebase |
+| **ADO Flow** (`kickoff`, `ado-get`, `ado-comment`, `ado-close`, `ado-refine`) | Azure DevOps work item pipeline — triage, refine, comment, close (set `ADO_ORG` / `ADO_PROJECT`) |
+| `pr-open`, `pr-status` | Open PRs linked to work items and track in-flight PRs (review/CI/comments digest) |
+| `orcamento` | Commercial proposal generator (Markdown/HTML/PDF) driven by a local `company.json` — see `company.example.json` |
 
 ### Agents (`agents/`)
 
-30 specialized review agents organized as a 6 × 5 matrix:
+35 specialized review agents organized as a 7 × 5 matrix:
 
 | Stack | Architecture | Correctness | Performance | Security | Testing |
 |---|---|---|---|---|---|
@@ -29,10 +33,13 @@ My personal [Claude Code](https://claude.com/claude-code) configuration — skil
 | Dart | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Android (Kotlin) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | iOS (Swift) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| React | ✓ | ✓ | ✓ | ✓ | ✓ |
 | NestJS | ✓ | ✓ | ✓ | ✓ | ✓ |
 | GCP / Terraform | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 These are invoked automatically by the `review` skill based on the stack of the changed files.
+
+Plus one ops agent: `gcp-cloudsql-ops` — inspects and operates on GCP Cloud SQL (PostgreSQL) instances via `gcloud sql connect`.
 
 ### Bin (`bin/`)
 
@@ -41,7 +48,8 @@ Helper scripts used by skills and hooks:
 - `track-tokens.py` — usage telemetry (Stop hook)
 - `archive-cycle.sh` — Smart Flow lifecycle archival
 - `capture-metrics.sh` — capture per-cycle metrics
-- `pr-review.sh` — `gh` PR fetching helper for Review Flow
+- `pr-review.sh`, `pr-inspect.sh`, `pr-registry.sh` — `gh` PR helpers for Review Flow and `pr-status`
+- `ado.sh` — Azure DevOps REST helper (requires `ADO_ORG` / `ADO_PROJECT` env vars)
 - `current_json.py`, `get-project.sh`, `to-slug.sh` — small utilities
 
 ## Installation
@@ -86,8 +94,10 @@ Bundles are named subsets defined as plain text files under `bundles/`. Use them
 | `agents-android` | Android agents (5) |
 | `agents-ios` | iOS agents (5) |
 | `agents-mobile` | flutter + android + ios |
-| `agents-backend` | NestJS + GCP agents (10) |
-| `agents-all` | All 30 agents |
+| `agents-react` | React agents (5) |
+| `agents-backend` | NestJS + GCP agents (11, incl. `gcp-cloudsql-ops`) |
+| `agents-all` | All 36 agents |
+| `ado-flow` | Azure DevOps pipeline skills (kickoff, refine, ado-*, pr-open, pr-status) |
 | `all` | Everything (default) |
 
 Bundles can reference other bundles with `@<name>` lines. Bundle files are simple — feel free to edit or add your own.
@@ -125,8 +135,8 @@ claude-setup/
 ├── README.md
 ├── INSTALL.md
 ├── install.sh                # symlink installer with bundle support
-├── skills/                   # 16 skills (1:1 with ~/.claude/skills/<name>/)
-├── agents/                   # 30 agents (1:1 with ~/.claude/agents/<name>.md)
+├── skills/                   # 25 skills (1:1 with ~/.claude/skills/<name>/)
+├── agents/                   # 36 agents (1:1 with ~/.claude/agents/<name>.md)
 ├── bin/                      # helper scripts symlinked into ~/.claude/bin/
 ├── bundles/                  # named subsets (plain .txt files)
 ├── settings/                 # example settings.json + hooks.example.json

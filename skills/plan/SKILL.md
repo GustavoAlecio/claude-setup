@@ -37,7 +37,9 @@ Antes de planejar, explore o codigo real. Nao planeje no vacuo.
 
 ## 5. Consultar lessons learned
 
-Se `~/.claude/workflow/$PROJECT_NAME/lessons.md` existir, leia-o e aplique as regras como constraints do plano. Erros documentados nao devem ser repetidos.
+Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, leia-o e aplique as regras como constraints do plano. Erros documentados nao devem ser repetidos.
+
+> Lessons sao cross-cycle (propriedade do projeto, nao do ciclo). Por isso vivem em `projects/`, nao em `workflow/` — sobrevivem ao `archive-cycle.sh`.
 
 ## 6. Verificar coerencia com a spec (backtrack check)
 

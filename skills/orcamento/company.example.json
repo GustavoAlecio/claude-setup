@@ -1,0 +1,38 @@
+{
+  "razao_social": "SUA EMPRESA LTDA",
+  "nome_fantasia": "Sua Empresa",
+  "cnpj": "00.000.000/0000-00",
+  "endereco": {
+    "logradouro": "Rua Exemplo, 123",
+    "bairro": "Centro",
+    "cidade": "Cidade",
+    "uf": "UF",
+    "cep": "00000-000"
+  },
+  "contato": {
+    "email": "contato@suaempresa.com",
+    "telefone": "(00) 0000-0000",
+    "site": "suaempresa.com"
+  },
+  "socios": [
+    { "nome": "Nome do Sócio", "papel": "Responsável Técnico" }
+  ],
+  "responsavel_tecnico": "Nome do Sócio",
+  "valor_hora_padrao": 100.00,
+  "moeda": "BRL",
+  "dados_bancarios": {
+    "banco": null,
+    "agencia": null,
+    "conta": null,
+    "tipo": null,
+    "pix": null,
+    "titular": "SUA EMPRESA LTDA"
+  },
+  "logo": {
+    "preto": "assets/logo_preta.jpg",
+    "azul": "assets/logo_azul.jpg",
+    "padrao": "azul"
+  },
+  "cor_primaria": "#0A3FB0",
+  "cor_secundaria": "#1976D2"
+}

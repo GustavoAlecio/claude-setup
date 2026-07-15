@@ -75,7 +75,7 @@ Se `current.json` tiver o campo `backtracks`, liste:
 
 ### Lessons learned
 
-Se `~/.claude/workflow/$PROJECT_NAME/lessons.md` existir, exiba contagem: "N lessons registradas (X arquitetura, Y testes, Z logica...)"
+Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, exiba contagem: "N lessons registradas (X arquitetura, Y testes, Z logica...)"
 
 **Proximo passo:** <comando a executar e breve descricao>
 ---

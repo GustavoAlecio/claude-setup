@@ -1,0 +1,9 @@
+# Azure DevOps + PR pipeline skills (requires ADO_ORG / ADO_PROJECT env vars)
+skills/kickoff
+skills/refine
+skills/ado-get
+skills/ado-comment
+skills/ado-close
+skills/ado-refine
+skills/pr-open
+skills/pr-status

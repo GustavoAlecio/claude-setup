@@ -36,7 +36,9 @@ Se o `plan.md` tiver mais de 200 linhas, leia apenas: "Visao geral", "Arquivos i
 
 ## 3. Consultar lessons learned
 
-Se `~/.claude/workflow/$PROJECT_NAME/lessons.md` existir, leia-o. Aplique as regras como constraints durante a implementacao. Se uma task pode repetir um erro documentado, evite-o proativamente.
+Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, leia-o. Aplique as regras como constraints durante a implementacao. Se uma task pode repetir um erro documentado, evite-o proativamente.
+
+> Lessons sao cross-cycle (propriedade do projeto, nao do ciclo). Vivem em `projects/`, nao em `workflow/`.
 
 ## 4. Capturar metricas de inicio — EXECUTE AGORA
 ```bash

@@ -61,7 +61,7 @@ Para cada criterio de aceite `[ ]` da spec.md:
 
 ## 6. Verificar lessons learned
 
-Se `~/.claude/workflow/$PROJECT_NAME/lessons.md` existir, leia-o e verifique: "alguma regra documentada foi violada nesta implementacao?"
+Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, leia-o e verifique: "alguma regra documentada foi violada nesta implementacao?"
 
 Se sim, registre como FAIL adicional no relatorio com referencia a lesson violada.
 

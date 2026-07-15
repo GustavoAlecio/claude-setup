@@ -9,3 +9,4 @@ agents/gcp-correctness.md
 agents/gcp-performance.md
 agents/gcp-security.md
 agents/gcp-testing.md
+agents/gcp-cloudsql-ops.md
