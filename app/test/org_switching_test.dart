@@ -107,9 +107,9 @@ class _Sessions extends MockSessionsRepository {
   }
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) {
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) {
     created.add((project, command, cwd));
-    return super.create(project, command, cwd: cwd);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
   }
 }
 

@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:claude_flow/app/app.dart';
+import 'package:claude_flow/app/inbox_cubit.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/github_models.dart';
 import 'package:claude_flow/data/github_repository.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';
@@ -9,11 +11,14 @@ import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_github_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/data/orgs.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/sessions_repository.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/engine/engine_supervisor.dart';
 import 'package:claude_flow/features/inbox/inbox_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
@@ -21,16 +26,16 @@ class _SlowSessions extends MockSessionsRepository {
   final gate = Completer<void>();
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
   }
 }
 
 class _FailingSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
-    createCalls.add((project, command, cwd));
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
+    createCalls.add((project, command, cwd, githubAccount));
     throw const SessionsException('cwd fora das raízes', statusCode: 400);
   }
 }
@@ -83,11 +88,12 @@ Future<void> _open(
   MockSessionsRepository? sessions,
   EngineController engine = const MockEngineController(),
   List<Project>? projects,
+  MockFlowRepository? repository,
   String location = '/p/x/inbox',
 }) async {
   await tester.pumpWidget(
     ClaudeFlowApp(
-      repository: MockFlowRepository(data: projects ?? _projects),
+      repository: repository ?? MockFlowRepository(data: projects ?? _projects),
       sessions: sessions ?? MockSessionsRepository(),
       engine: engine,
       docs: MockDocsRepository(),
@@ -96,6 +102,53 @@ Future<void> _open(
   );
   await tester.pumpAndSettle();
   _router(tester).go(location);
+  await tester.pumpAndSettle();
+}
+
+/// Inbox calls as `account:owners`, since records holding lists do not compare by content.
+List<String> _calls(MockGitHubRepository github) => [for (final (a, o) in github.inboxCalls) '$a:${o.join(',')}'];
+
+class _GatedInbox extends MockGitHubRepository {
+  final gates = <Completer<Inbox>>[];
+
+  @override
+  Future<Inbox> inbox({String? account, List<String> owners = const []}) {
+    inboxCalls.add((account, List.unmodifiable(owners)));
+    final gate = Completer<Inbox>();
+    gates.add(gate);
+    return gate.future;
+  }
+}
+
+const _orgProjects = [Project(name: 'x', path: '/dev/a/x'), Project(name: 'y', path: '/dev/b/y')];
+
+/// Org `A` (project `x`) on `acct-a` + `org-x`, org `B` (project `y`) on `acct-b` + `org-y`; opens in `A`.
+Map<String, dynamic> _twoOrgs() => {
+  'orgs': [
+    {
+      'name': 'A',
+      'roots': ['/dev/a'],
+      'github': {
+        'account': 'acct-a',
+        'owners': ['org-x'],
+      },
+    },
+    {
+      'name': 'B',
+      'roots': ['/dev/b'],
+      'github': {
+        'account': 'acct-b',
+        'owners': ['org-y'],
+      },
+    },
+  ],
+  'lastOrg': 'A',
+};
+
+Future<void> _meta(WidgetTester tester, LogicalKeyboardKey key) async {
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+  await tester.sendKeyEvent(key);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
   await tester.pumpAndSettle();
 }
 
@@ -154,7 +207,7 @@ void main() {
     await tester.tap(_review(7));
     await tester.pumpAndSettle();
 
-    expect(sessions.createCalls.single, ('my-repo', '/review 7', '/tmp/my_repo'));
+    expect(sessions.createCalls.single, ('my-repo', '/review 7', '/tmp/my_repo', null));
     expect(_location(tester), startsWith('/p/my-repo/sessions/'));
   });
 
@@ -170,7 +223,7 @@ void main() {
     await tester.tap(_review(7));
     await tester.pumpAndSettle();
 
-    expect(sessions.createCalls.single, ('x', '/review 7', '/dev/org/x'));
+    expect(sessions.createCalls.single, ('x', '/review 7', '/dev/org/x', null));
     expect(_location(tester), startsWith('/p/x/sessions/'));
   });
 
@@ -264,12 +317,12 @@ void main() {
   testWidgets('error shows inline, keeps the list and Tentar de novo refetches', (tester) async {
     final github = MockGitHubRepository(inboxData: Inbox(items: [_item(number: 1)]));
     await _open(tester, github);
-    expect(github.inboxCalls, 1);
+    expect(github.inboxCalls, hasLength(1));
 
     github.inboxError = const GitHubException('gh sem login (gh auth login)');
     await tester.tap(find.text('Recarregar'));
     await tester.pumpAndSettle();
-    expect(github.inboxCalls, 2);
+    expect(github.inboxCalls, hasLength(2));
     expect(find.text('gh sem login (gh auth login)'), findsOneWidget);
     expect(find.text('Item 1'), findsOneWidget);
     expect(find.byKey(_badge), findsNothing);
@@ -277,7 +330,7 @@ void main() {
     github.inboxError = null;
     await tester.tap(find.text('Tentar de novo'));
     await tester.pumpAndSettle();
-    expect(github.inboxCalls, 3);
+    expect(github.inboxCalls, hasLength(3));
     expect(find.text('gh sem login (gh auth login)'), findsNothing);
     expect(find.byKey(_badge), findsOneWidget);
   });
@@ -301,7 +354,7 @@ void main() {
     await tester.pump(const Duration(seconds: 120));
     await tester.pump();
     expect(tester.widget<Text>(find.descendant(of: find.byKey(_badge), matching: find.byType(Text))).data, '1');
-    expect(github.inboxCalls, 2);
+    expect(github.inboxCalls, hasLength(2));
 
     github.inboxData = const Inbox(items: []);
     await tester.pump(const Duration(seconds: 120));
@@ -314,14 +367,147 @@ void main() {
     final github = MockGitHubRepository(inboxData: Inbox(items: [_item(number: 1)]));
     await _open(tester, github, engine: engine);
 
-    expect(github.inboxCalls, 0);
+    expect(github.inboxCalls, isEmpty);
     expect(find.descendant(of: find.byType(InboxPage), matching: find.text('engine iniciando')), findsOneWidget);
     expect(find.byKey(_badge), findsNothing);
 
     engine.states.add(EngineState.ok(Uri.parse('http://127.0.0.1:1')));
     await tester.pumpAndSettle();
-    expect(github.inboxCalls, 1);
+    expect(github.inboxCalls, hasLength(1));
     expect(find.text('Item 1'), findsOneWidget);
     expect(find.byKey(_badge), findsOneWidget);
+  });
+
+  group('scope of the current org', () {
+    test('org switch empties the state, fetches the new scope and drops the late answer', () async {
+      final repo = MockFlowRepository(data: _orgProjects, config: _twoOrgs());
+      final github = _GatedInbox();
+      final cubit = InboxCubit(
+        github,
+        Stream.value(Uri.parse('http://127.0.0.1:1')),
+        repo.watchConfig().map((c) => githubFor(c.lastOrg, c)),
+      );
+      addTearDown(cubit.close);
+      await pumpEventQueue();
+      expect(_calls(github), ['acct-a:org-x']);
+
+      github.gates[0].complete(Inbox(items: [_item(number: 1)]));
+      await pumpEventQueue();
+      expect(cubit.state.badge, 1);
+
+      unawaited(cubit.refresh());
+      await repo.updateConfig(setLastOrg('B'));
+      await pumpEventQueue();
+      expect(cubit.state.inbox, isNull);
+      expect(cubit.state.badge, 0);
+      expect(cubit.state.scope, const GithubScope(account: 'acct-b', owners: ['org-y']));
+      expect(_calls(github), ['acct-a:org-x', 'acct-a:org-x', 'acct-b:org-y']);
+
+      github.gates[1].complete(Inbox(items: [_item(number: 1), _item(number: 2)]));
+      await pumpEventQueue();
+      expect(cubit.state.inbox, isNull, reason: 'answer for A arrived after the switch');
+
+      github.gates[2].complete(Inbox(items: [_item(number: 3)]));
+      await pumpEventQueue();
+      expect(cubit.state.inbox!.items.single.number, 3);
+    });
+
+    test('a config change that keeps the scope does not refetch', () async {
+      final repo = MockFlowRepository(data: _orgProjects, config: _twoOrgs());
+      final github = MockGitHubRepository();
+      final cubit = InboxCubit(
+        github,
+        Stream.value(Uri.parse('http://127.0.0.1:1')),
+        repo.watchConfig().map((c) => githubFor(c.lastOrg, c)),
+      );
+      addTearDown(cubit.close);
+      await pumpEventQueue();
+
+      await repo.updateConfig(hideProject('x'));
+      await pumpEventQueue();
+      expect(_calls(github), ['acct-a:org-x']);
+    });
+
+    testWidgets('header shows account and owners; ⌘2 refetches with the other org', (tester) async {
+      final github = MockGitHubRepository(inboxData: Inbox(items: [_item(number: 1)]));
+      await _open(
+        tester,
+        github,
+        repository: MockFlowRepository(data: _orgProjects, config: _twoOrgs()),
+      );
+
+      expect(_calls(github), ['acct-a:org-x']);
+      expect(find.text('conta do gh: @acct-a · orgs: org-x'), findsOneWidget);
+
+      await _meta(tester, LogicalKeyboardKey.digit2);
+      expect(_calls(github).last, 'acct-b:org-y');
+
+      _router(tester).go('/p/y/inbox');
+      await tester.pumpAndSettle();
+      expect(find.text('conta do gh: @acct-b · orgs: org-y'), findsOneWidget);
+    });
+
+    testWidgets('editing the owners of the current org refetches with them', (tester) async {
+      final repo = MockFlowRepository(data: _orgProjects, config: _twoOrgs());
+      final github = MockGitHubRepository();
+      await _open(tester, github, repository: repo);
+      expect(_calls(github), ['acct-a:org-x']);
+
+      await repo.updateConfig(
+        saveOrgs([
+          for (final o in repo.config.orgs)
+            o.name == 'A'
+                ? OrgConfig(
+                    name: o.name,
+                    roots: o.roots,
+                    github: const OrgGithub(account: 'acct-a', owners: ['org-x', 'org-z']),
+                  )
+                : o,
+        ]),
+      );
+      await tester.pumpAndSettle();
+      expect(_calls(github), ['acct-a:org-x', 'acct-a:org-x,org-z']);
+    });
+
+    testWidgets('Revisar uses the account that listed the item, even for a project of another org', (tester) async {
+      final sessions = MockSessionsRepository();
+      final github = MockGitHubRepository(
+        inboxData: Inbox(
+          items: [_item(number: 7, repo: 'y', cwd: '/dev/b/y')],
+        ),
+      );
+      await _open(
+        tester,
+        github,
+        sessions: sessions,
+        repository: MockFlowRepository(data: _orgProjects, config: _twoOrgs()),
+      );
+
+      await tester.tap(_review(7));
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single, ('y', '/review 7', '/dev/b/y', 'acct-a'));
+    });
+
+    testWidgets('owner whose SSH authenticates as another account shows the alert', (tester) async {
+      final github = MockGitHubRepository(
+        inboxData: Inbox(items: [_item(number: 1)]),
+        sshIdentities: const {'org-x': SshIdentity(owner: 'org-x', host: 'github.com-alias', login: 'acct-b')},
+      );
+      await _open(
+        tester,
+        github,
+        repository: MockFlowRepository(data: _orgProjects, config: _twoOrgs()),
+      );
+
+      expect(find.text('SSH de org-x autentica como @acct-b, diferente da conta @acct-a'), findsOneWidget);
+      expect(github.sshCalls.single, (owner: 'org-x', cwd: null, fresh: false));
+    });
+
+    testWidgets('no SSH check without a configured account', (tester) async {
+      final github = MockGitHubRepository(inboxData: Inbox(items: [_item(number: 1)]));
+      await _open(tester, github);
+
+      expect(github.sshCalls, isEmpty);
+    });
   });
 }

@@ -334,4 +334,58 @@ void main() {
       expect(name, 'my_repo');
     });
   });
+
+  group('account routes', () {
+    test('parseAccounts keeps flags and drops entries without a login', () {
+      final accounts = parseAccounts({
+        'accounts': [
+          {'login': 'acct-a', 'active': true, 'valid': true},
+          {'login': 'acct-b'},
+          {'active': true},
+          {'login': ''},
+          'junk',
+        ],
+      });
+      expect(
+        [for (final a in accounts) (a.login, a.active, a.valid)],
+        [('acct-a', true, true), ('acct-b', false, false)],
+      );
+      expect(parseAccounts(null), isEmpty);
+      expect(parseAccounts({'accounts': 'x'}), isEmpty);
+    });
+
+    test('parseOrgs keeps the order and drops non-strings', () {
+      expect(
+        parseOrgs({
+          'login': 'acct-a',
+          'orgs': ['acct-a', 'org-x', 3, ''],
+        }),
+        ['acct-a', 'org-x'],
+      );
+      expect(parseOrgs([]), isEmpty);
+      expect(parseOrgs({'orgs': null}), isEmpty);
+    });
+
+    test('parseSshIdentity reads login or error and falls back to the asked owner', () {
+      final ok = parseSshIdentity({'owner': 'org-x', 'host': 'github.com-alias', 'login': 'acct-b'}, owner: 'org-x');
+      expect((ok.owner, ok.host, ok.login, ok.error), ('org-x', 'github.com-alias', 'acct-b', null));
+      final https = parseSshIdentity({
+        'owner': 'org-y',
+        'host': null,
+        'login': null,
+        'error': 'remote https: identidade definida pelo credential helper, não verificável',
+      }, owner: 'org-y');
+      expect((https.host, https.login), (null, null));
+      expect(https.error, startsWith('remote https'));
+      final broken = parseSshIdentity('junk', owner: 'org-z');
+      expect((broken.owner, broken.host, broken.login, broken.error), ('org-z', null, null, null));
+    });
+
+    test('parseProtocol is null when unset or malformed', () {
+      expect(parseProtocol({'protocol': 'https'}), 'https');
+      expect(parseProtocol({'protocol': null}), isNull);
+      expect(parseProtocol({'protocol': ''}), isNull);
+      expect(parseProtocol(null), isNull);
+    });
+  });
 }

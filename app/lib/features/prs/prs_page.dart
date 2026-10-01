@@ -4,6 +4,7 @@ import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../app/config_cubit.dart';
 import '../../app/engine_cubit.dart';
 import '../../app/projects_cubit.dart';
 import '../../core/theme/app_colors.dart';
@@ -16,23 +17,45 @@ import '../../data/github_models.dart';
 import '../../data/github_parser.dart';
 import '../../data/github_repository.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
+import '../../engine/engine_config.dart';
 import '../../engine/engine_supervisor.dart';
 
 const _logName = 'PrsPage';
 const _refreshInterval = Duration(seconds: 60);
 
-class PrsPage extends StatefulWidget {
-  /// Built with `ValueKey(projectName)`: a project switch disposes this state, so a late answer for the
-  /// previous project lands on an unmounted state and is dropped.
+/// Waits for the config and the projects: the account comes from the org of [projectName].
+class PrsPage extends StatelessWidget {
   const PrsPage({super.key, required this.projectName});
 
   final String projectName;
 
   @override
-  State<PrsPage> createState() => _PrsPageState();
+  Widget build(BuildContext context) {
+    final config = context.select<ConfigCubit, DashboardConfig?>((c) => c.state.data);
+    final projects = context.select<ProjectsCubit, List<Project>?>((c) => c.state.data);
+    if (config == null || projects == null) return const SizedBox.shrink();
+    final org = projects.where((p) => p.name == projectName).firstOrNull?.org;
+    final account = githubFor(org, config).account;
+    return _PrsView(key: ValueKey((projectName, account)), projectName: projectName, account: account);
+  }
 }
 
-class _PrsPageState extends State<PrsPage> with SessionLauncher {
+class _PrsView extends StatefulWidget {
+  /// Keyed by `(projectName, account)`: a project or account switch disposes this state, so a late answer for
+  /// the previous one lands on an unmounted state and is dropped.
+  const _PrsView({super.key, required this.projectName, required this.account});
+
+  final String projectName;
+
+  /// `null`: the `gh` active account.
+  final String? account;
+
+  @override
+  State<_PrsView> createState() => _PrsViewState();
+}
+
+class _PrsViewState extends State<_PrsView> with SessionLauncher {
   List<PullRequest>? _prs;
   String? _error;
   bool _inFlight = false;
@@ -40,6 +63,10 @@ class _PrsPageState extends State<PrsPage> with SessionLauncher {
   bool _started = false;
   late final Timer _timer;
   final _expanded = <String>{};
+
+  /// Push identity of each checkout, by cwd; a cwd is asked once per view.
+  final _identities = <String, SshIdentity>{};
+  final _asked = <String>{};
 
   @override
   String get logName => _logName;
@@ -78,18 +105,56 @@ class _PrsPageState extends State<PrsPage> with SessionLauncher {
     _inFlight = true;
     final github = GitHubScope.of(context);
     try {
-      final prs = await github.prs(widget.projectName);
+      final prs = await github.prs(widget.projectName, account: widget.account);
       if (!mounted) return;
       setState(() {
         _prs = prs;
         _error = null;
       });
+      _checkIdentities(github, prs);
     } on Exception catch (e, st) {
       log('cannot load PRs', name: _logName, error: e, stackTrace: st);
       if (mounted) setState(() => _error = '$e');
     } finally {
       _inFlight = false;
     }
+  }
+
+  void _checkIdentities(GitHubRepository github, List<PullRequest> prs) {
+    final projects = context.read<ProjectsCubit>().state.data ?? const <Project>[];
+    for (final pr in prs) {
+      final cwd = prCwd(pr, projects);
+      if (cwd == null || !_asked.add(cwd)) continue;
+      unawaited(_checkIdentity(github, cwd));
+    }
+  }
+
+  Future<void> _checkIdentity(GitHubRepository github, String cwd) async {
+    try {
+      final identity = await github.sshIdentity(cwd: cwd);
+      if (mounted) setState(() => _identities[cwd] = identity);
+    } on GitHubException catch (e, st) {
+      log('push identity unavailable for $cwd', name: _logName, error: e, stackTrace: st);
+    }
+  }
+
+  /// One line per checkout whose push does not go out as [_PrsView.account]: https remotes and diverging SSH.
+  List<(String, String)> _pushAlerts(List<PullRequest> prs, List<Project> projects) {
+    final account = widget.account;
+    final seen = <String>{};
+    return [
+      for (final pr in prs)
+        if (prCwd(pr, projects) case final cwd? when seen.add(cwd))
+          if (_identities[cwd] case final identity?)
+            if (isHttpsRemote(identity))
+              (
+                'prs-https-$cwd',
+                '${pr.repo ?? pr.nameWithOwner ?? cwd}: remote HTTPS: push usa o credential helper do git '
+                    '(osxkeychain), não a conta ${account == null ? 'ativa do gh' : '@$account'}',
+              )
+            else if (sshDivergence(identity, account) case final alert?)
+              ('prs-ssh-$cwd', alert),
+    ];
   }
 
   static String _keyOf(PullRequest pr) => pr.url ?? '#${pr.number}';
@@ -106,14 +171,14 @@ class _PrsPageState extends State<PrsPage> with SessionLauncher {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _toolbar(context),
+          _toolbar(context, projects),
           Expanded(child: _body(context, projects)),
         ],
       ),
     );
   }
 
-  Widget _toolbar(BuildContext context) {
+  Widget _toolbar(BuildContext context, List<Project> projects) {
     final c = context.colors;
     final prs = _prs ?? const <PullRequest>[];
     final offline = prs.any((p) => !p.live);
@@ -149,6 +214,15 @@ class _PrsPageState extends State<PrsPage> with SessionLauncher {
               ),
             ],
           ),
+          for (final (key, alert) in _pushAlerts(prs, projects))
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                alert,
+                key: ValueKey(key),
+                style: TextStyle(fontSize: 12, color: c.warn),
+              ),
+            ),
           if (_error case final error?) ErrorRetryRow(error, onRetry: _hasEndpoint ? () => unawaited(_load()) : null),
         ],
       ),
@@ -186,7 +260,9 @@ class _PrsPageState extends State<PrsPage> with SessionLauncher {
             creating: isCreating(_keyOf(pr)),
             createError: createError(_keyOf(pr)),
             onToggle: () => _toggle(_keyOf(pr)),
-            onResolve: (cwd) => unawaited(launchSession(_keyOf(pr), widget.projectName, '/pr-status', cwd: cwd)),
+            onResolve: (cwd) => unawaited(
+              launchSession(_keyOf(pr), widget.projectName, '/pr-status', cwd: cwd, githubAccount: widget.account),
+            ),
             onLink: openLink,
           ),
       ],

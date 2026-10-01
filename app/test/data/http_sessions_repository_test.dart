@@ -434,6 +434,21 @@ void main() {
     ]);
   });
 
+  test('create and createInOrg send githubAccount only when given', () async {
+    await repo.watchSessions().first.timeout(_timeout);
+    await expectLater(repo.create('demo', 'a', githubAccount: 'acct-a'), throwsA(isA<Exception>()));
+    await expectLater(
+      repo.createInOrg('org-x', 'b', cwd: '/dev/x', githubAccount: 'acct-b'),
+      throwsA(isA<Exception>()),
+    );
+    await expectLater(repo.createInOrg('org-x', 'c', cwd: '/dev/x'), throwsA(isA<Exception>()));
+    expect(engine.posts('/api/sessions').map((r) => r.body), [
+      {'project': 'demo', 'command': 'a', 'githubAccount': 'acct-a'},
+      {'org': 'org-x', 'command': 'b', 'cwd': '/dev/x', 'additionalDirectories': <String>[], 'githubAccount': 'acct-b'},
+      {'org': 'org-x', 'command': 'c', 'cwd': '/dev/x', 'additionalDirectories': <String>[]},
+    ]);
+  });
+
   group('org sessions', () {
     final orgSummary = {
       ..._summary('o1', project: ''),

@@ -15,16 +15,16 @@ class _RecordingSessions extends MockSessionsRepository {
   final cwds = <String?>[];
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) {
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) {
     created.add((project, command));
     cwds.add(cwd);
-    return super.create(project, command, cwd: cwd);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
   }
 }
 
 class _NoCwdSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async =>
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async =>
       throw const SessionsException(_noCwd, statusCode: 400);
 }
 
@@ -95,10 +95,10 @@ void main() {
     view.devicePixelRatio = 1;
   });
 
-  Future<void> openSessions(WidgetTester tester, {SessionsRepository? sessions}) async {
+  Future<void> openSessions(WidgetTester tester, {SessionsRepository? sessions, MockFlowRepository? repository}) async {
     await tester.pumpWidget(
       ClaudeFlowApp(
-        repository: MockFlowRepository(),
+        repository: repository ?? MockFlowRepository(),
         sessions: sessions ?? MockSessionsRepository(),
         engine: const MockEngineController(),
       ),
@@ -266,6 +266,25 @@ void main() {
       expect(find.text('Nova conversa em demo-app'), findsNothing);
       expect(find.text('/status agora'), findsWidgets);
       expect(find.text('aguardando resposta'), findsOneWidget);
+    });
+
+    testWidgets('a project session runs with the gh account of the project org', (tester) async {
+      final sessions = MockSessionsRepository();
+      final config = MockFlowRepository.defaultConfig(MockFlowRepository().data);
+      (config['orgs'] as List).first['github'] = {'account': 'acct-a', 'owners': <String>[]};
+      await openSessions(
+        tester,
+        sessions: sessions,
+        repository: MockFlowRepository(config: config),
+      );
+
+      await tester.tap(find.text('Nova conversa'));
+      await tester.pumpAndSettle();
+      await tester.enterText(_paletteField(), 'resuma o plano');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(sessions.createCalls.single, ('demo-app', 'resuma o plano', '~/development/demo-app', 'acct-a'));
     });
 
     testWidgets('escape closes the palette', (tester) async {

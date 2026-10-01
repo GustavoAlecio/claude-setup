@@ -2,7 +2,10 @@ import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../app/config_cubit.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
@@ -51,12 +54,17 @@ Future<void> showCommandPalette(BuildContext context, PaletteTarget target, {boo
     ProjectTarget(:final project) => project,
     OrgTarget() => null,
   };
+  final githubAccount = githubFor(switch (target) {
+    ProjectTarget(:final project) => project?.org,
+    OrgTarget(:final org) => org,
+  }, context.read<ConfigCubit>().state.data).account;
   return showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
     builder: (_) => _CommandPalette(
       target: target,
       sessions: sessions,
+      githubAccount: githubAccount,
       startOnPrompt: newConversation && (target is OrgTarget || project != null),
       onCreated: (s) => router.go(switch (target) {
         ProjectTarget() => '/p/${s.project}/sessions/${s.id}',
@@ -73,6 +81,7 @@ class _CommandPalette extends StatefulWidget {
   const _CommandPalette({
     required this.target,
     required this.sessions,
+    required this.githubAccount,
     required this.startOnPrompt,
     required this.onCreated,
     required this.onKickoff,
@@ -80,6 +89,9 @@ class _CommandPalette extends StatefulWidget {
 
   final PaletteTarget target;
   final SessionsRepository sessions;
+
+  /// Of the target's org; `null` keeps the `gh` active account.
+  final String? githubAccount;
   final bool startOnPrompt;
   final void Function(SessionSummary session) onCreated;
 
@@ -205,12 +217,14 @@ class _CommandPaletteState extends State<_CommandPalette> {
           project.name,
           command,
           cwd: project.path,
+          githubAccount: widget.githubAccount,
         ),
         OrgTarget() => await widget.sessions.createInOrg(
           target.org,
           command,
           cwd: target.cwd,
           additionalDirectories: target.additionalDirectories,
+          githubAccount: widget.githubAccount,
         ),
       };
       if (!mounted) return;

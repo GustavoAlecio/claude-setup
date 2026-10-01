@@ -19,7 +19,14 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
 
   String? createError(String key) => _createErrors[key];
 
-  Future<void> launchSession(String key, String project, String command, {required String cwd}) async {
+  /// [githubAccount] is the `gh` login the session runs as; `null` keeps the active account.
+  Future<void> launchSession(
+    String key,
+    String project,
+    String command, {
+    required String cwd,
+    required String? githubAccount,
+  }) async {
     if (_creating.contains(key)) return;
     final sessions = SessionsScope.of(context);
     final router = GoRouter.of(context);
@@ -28,7 +35,7 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
       _createErrors.remove(key);
     });
     try {
-      final s = await sessions.create(project, command, cwd: cwd);
+      final s = await sessions.create(project, command, cwd: cwd, githubAccount: githubAccount);
       if (!mounted) return;
       router.go('/p/${s.project}/sessions/${s.id}');
     } on Exception catch (e, st) {

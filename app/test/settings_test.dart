@@ -4,6 +4,10 @@ import 'dart:io';
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/data/flow_repository.dart';
+import 'package:claude_flow/data/github_models.dart';
+import 'package:claude_flow/data/github_parser.dart';
+import 'package:claude_flow/data/github_repository.dart';
+import 'package:claude_flow/data/mock_github_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
@@ -31,19 +35,66 @@ Map<String, dynamic> _config({String a = '/dev/a', String b = '/dev/b'}) => {
   'lastOrg': 'A',
 };
 
-Future<void> _openSettings(WidgetTester tester, FlowRepository repo, {FolderPicker? picker}) async {
+Future<void> _openSettings(
+  WidgetTester tester,
+  FlowRepository repo, {
+  FolderPicker? picker,
+  GitHubRepository? github,
+}) async {
   await tester.pumpWidget(
     ClaudeFlowApp(
       repository: repo,
       sessions: MockSessionsRepository(),
       engine: const MockEngineController(),
       pickDirectory: picker ?? () async => null,
+      github: github,
     ),
   );
   await tester.pumpAndSettle();
   GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/settings');
   await tester.pumpAndSettle();
 }
+
+class _EngineDown extends MockGitHubRepository {
+  @override
+  Future<List<GithubAccount>> accounts() async => throw const GitHubException('engine iniciando');
+}
+
+class _AccountsSequence extends MockGitHubRepository {
+  final calls = <Completer<List<GithubAccount>>>[];
+
+  @override
+  Future<List<GithubAccount>> accounts() {
+    final c = Completer<List<GithubAccount>>();
+    calls.add(c);
+    return c.future;
+  }
+}
+
+class _SshHangs extends MockGitHubRepository {
+  _SshHangs() : super(accountList: const [GithubAccount(login: 'acct-a', active: true, valid: true)]);
+
+  final pending = Completer<SshIdentity>();
+
+  @override
+  Future<SshIdentity> sshIdentity({String? owner, String? cwd, bool fresh = false}) => pending.future;
+}
+
+Map<String, dynamic> _configWithOwner(String owner, {String? account}) {
+  final c = _config();
+  (c['orgs'] as List)[0]['github'] = {
+    'account': account,
+    'owners': [owner],
+  };
+  return c;
+}
+
+const _accts = [
+  GithubAccount(login: 'acct-a', active: true, valid: true),
+  GithubAccount(login: 'acct-b', valid: false),
+];
+
+Finder _save(String org) => _in('settings-org-form-$org', find.widgetWithText(FilledButton, 'Salvar'));
 
 Finder _in(String key, Finder finder) => find.descendant(of: find.byKey(ValueKey(key)), matching: finder);
 
@@ -132,7 +183,7 @@ void main() {
       final repo = MockFlowRepository(data: _data, config: _config());
       await _openSettings(tester, repo);
 
-      await tester.enterText(_in('settings-org-form-A', find.byType(TextField)), 'Alfa');
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 
@@ -182,7 +233,7 @@ void main() {
       );
       await _openSettings(tester, repo);
 
-      await tester.enterText(_in('settings-org-form-A', find.byType(TextField)), 'Alfa');
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
       await _tap(tester, _in('settings-org-form-A', find.text('Salvar')));
 
       expect(repo.config.orgs.map((o) => o.name), ['Alfa', 'B']);
@@ -202,17 +253,172 @@ void main() {
       await _openSettings(tester, repo, picker: () async => '/dev/a/sub');
 
       await _tap(tester, find.text('Nova org'));
-      await tester.enterText(_in('settings-new-org', find.byType(TextField)), 'C');
+      await tester.enterText(_in('settings-new-org', find.widgetWithText(TextField, 'Nome')), 'C');
       await _tap(tester, _in('settings-new-org', find.text('escolher pasta')));
       await _tap(tester, _in('settings-new-org', find.text('Criar org')));
 
       expect(find.textContaining('sobrepõe'), findsOneWidget);
 
-      await tester.enterText(_in('settings-new-org', find.byType(TextField)), 'B');
+      await tester.enterText(_in('settings-new-org', find.widgetWithText(TextField, 'Nome')), 'B');
       await _tap(tester, _in('settings-new-org', find.text('Criar org')));
 
       expect(find.text('já existe uma org chamada "B"'), findsOneWidget);
       expect(repo.config.orgs.map((o) => o.name), ['A', 'B']);
+    });
+  });
+
+  group('OrgForm GitHub', () {
+    testWidgets('lists the accounts and saves the chosen account with owners from suggestion and typing', (
+      tester,
+    ) async {
+      final gh = MockGitHubRepository(
+        accountList: _accts,
+        orgSuggestions: {
+          'acct-a': ['acct-a', 'Org-X'],
+        },
+        gitProtocol: 'https',
+      );
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo, github: gh);
+
+      expect(find.text('git_protocol do gh: https (recomendado: ssh)'), findsWidgets);
+      await _tap(tester, _in('settings-org-form-A', find.byKey(const ValueKey('org-github-account'))));
+      await _tap(tester, find.text('acct-a').last);
+      expect(gh.orgsCalls, contains('acct-a'));
+
+      await _tap(tester, _in('settings-org-form-A', find.widgetWithText(ActionChip, 'Org-X')));
+      await tester.enterText(_in('settings-org-form-A', find.byKey(const ValueKey('org-github-owner-input'))), 'ORG-y');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      await tester.enterText(_in('settings-org-form-A', find.byKey(const ValueKey('org-github-owner-input'))), 'org-x');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      await _tap(tester, _save('A'));
+
+      expect(repo.rawConfig['orgs'][0]['github'], {
+        'account': 'acct-a',
+        'owners': ['Org-X', 'ORG-y'],
+      });
+      expect(gh.sshCalls.every((c) => c.fresh), isTrue);
+    });
+
+    testWidgets('invalid owner format shows an inline error and is not added', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo, github: MockGitHubRepository(accountList: _accts));
+
+      final input = _in('settings-org-form-A', find.byKey(const ValueKey('org-github-owner-input')));
+      await tester.enterText(input, 'a b');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('org do GitHub inválida'), findsOneWidget);
+      expect(_in('settings-org-form-A', find.byType(InputChip)), findsNothing);
+    });
+
+    testWidgets('SSH identity different from the account blocks saving, ignoring case elsewhere', (tester) async {
+      final gh = MockGitHubRepository(
+        accountList: _accts,
+        sshIdentities: {'org-x': const SshIdentity(owner: 'org-x', host: 'github.com-alias', login: 'ACCT-B')},
+      );
+      final repo = MockFlowRepository(
+        data: _data,
+        config: _configWithOwner('org-x', account: 'acct-a'),
+      );
+      await _openSettings(tester, repo, github: gh);
+
+      expect(find.text('SSH de org-x autentica como @ACCT-B, diferente da conta @acct-a'), findsOneWidget);
+      expect(tester.widget<FilledButton>(_save('A')).onPressed, isNull);
+
+      await _tap(tester, _in('settings-org-form-A', find.byKey(const ValueKey('org-github-account'))));
+      await _tap(tester, find.text('acct-b').last);
+
+      expect(find.text('SSH: @ACCT-B via github.com-alias'), findsOneWidget);
+      expect(tester.widget<FilledButton>(_save('A')).onPressed, isNotNull);
+    });
+
+    testWidgets('SSH check failure shows "SSH não verificado" and saving stays enabled', (tester) async {
+      final gh = MockGitHubRepository(accountList: _accts)..sshError = const GitHubException('timeout');
+      final repo = MockFlowRepository(
+        data: _data,
+        config: _configWithOwner('org-x', account: 'acct-a'),
+      );
+      await _openSettings(tester, repo, github: gh);
+
+      expect(find.text('SSH não verificado'), findsOneWidget);
+      expect(tester.widget<FilledButton>(_save('A')).onPressed, isNotNull);
+      await _tap(tester, _save('A'));
+      expect(repo.rawConfig['orgs'][0]['github'], {
+        'account': 'acct-a',
+        'owners': ['org-x'],
+      });
+    });
+
+    testWidgets('a pending SSH check disables saving for at most 10 s', (tester) async {
+      final gh = _SshHangs();
+      final repo = MockFlowRepository(
+        data: _data,
+        config: _configWithOwner('org-x', account: 'acct-a'),
+      );
+      await _openSettings(tester, repo, github: gh);
+
+      expect(tester.widget<FilledButton>(_save('A')).onPressed, isNull);
+
+      await tester.pump(const Duration(seconds: 11));
+
+      expect(find.text('SSH não verificado'), findsOneWidget);
+      expect(tester.widget<FilledButton>(_save('A')).onPressed, isNotNull);
+    });
+
+    testWidgets('engine unavailable shows "engine iniciando" and the rest of the org can be saved', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo, github: _EngineDown());
+
+      expect(find.text('engine iniciando'), findsWidgets);
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
+      await _tap(tester, _save('A'));
+
+      expect(repo.config.orgs.map((o) => o.name), ['Alfa', 'B']);
+      expect(repo.rawConfig['orgs'][0].containsKey('github'), isFalse);
+    });
+
+    testWidgets('an old accounts error does not come back after "Recarregar contas"', (tester) async {
+      final gh = _AccountsSequence();
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo, github: gh);
+      final initial = gh.calls.length;
+
+      await _tap(tester, _in('settings-org-form-A', find.byKey(const ValueKey('org-github-reload'))));
+      expect(gh.calls, hasLength(initial + 1));
+
+      gh.calls.last.complete(_accts);
+      await tester.pumpAndSettle();
+      gh.calls[0].completeError(const GitHubException('erro antigo'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('erro antigo'), findsNothing);
+    });
+
+    testWidgets('the divergence message is the one from sshDivergence', (tester) async {
+      const identity = SshIdentity(owner: 'org-x', host: 'github.com', login: 'acct-b');
+      final gh = MockGitHubRepository(accountList: _accts, sshIdentities: {'org-x': identity});
+      final repo = MockFlowRepository(
+        data: _data,
+        config: _configWithOwner('org-x', account: 'acct-a'),
+      );
+      await _openSettings(tester, repo, github: gh);
+
+      expect(find.text(sshDivergence(identity, 'acct-a')!), findsOneWidget);
+    });
+
+    testWidgets('a saved account that is no longer logged in is flagged', (tester) async {
+      final repo = MockFlowRepository(
+        data: _data,
+        config: _configWithOwner('org-x', account: 'gone'),
+      );
+      await _openSettings(tester, repo, github: MockGitHubRepository(accountList: _accts)..orgsFailFor = {'gone'});
+
+      expect(find.text('não logada'), findsOneWidget);
     });
   });
 }
