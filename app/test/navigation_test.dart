@@ -36,6 +36,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Favoritos offline'), findsWidgets);
+    // Next to the side panel the run summary stacks below the timeline and the cycle card.
+    await tester.scrollUntilVisible(
+      find.textContaining('T4 bloqueou'),
+      300,
+      scrollable: find.ancestor(of: find.text('Linha do tempo'), matching: find.byType(Scrollable)).first,
+    );
     expect(find.textContaining('T4 bloqueou'), findsOneWidget);
 
     await tester.tap(find.text('Execuções'));

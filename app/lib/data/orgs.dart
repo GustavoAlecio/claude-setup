@@ -268,6 +268,15 @@ SessionSummary? runningStageSession(List<SessionSummary> sessions, Project proje
   return best;
 }
 
+/// Sessions of [project] (not of an org) holding a request the user can still answer, oldest first.
+List<SessionSummary> pendingProjectSessions(List<SessionSummary> sessions, String project) {
+  final out = [
+    for (final s in sessions)
+      if (pendingOf(s) > 0 && !s.isOrgSession && s.project == project) s,
+  ];
+  return out..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+}
+
 /// Inside the shell the org is the route project's; an unknown or still-loading project keeps `lastOrg`.
 String currentOrg(String? routeProject, List<Project> projects, DashboardConfig? config) =>
     projects.where((p) => p.name == routeProject).firstOrNull?.org ?? config?.lastOrg ?? kNoOrg;

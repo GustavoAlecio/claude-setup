@@ -40,6 +40,17 @@ List<StageDecision> allDecisions(ReportDoc? report, {String? by}) => [
 /// Autores distintos na ordem da primeira aparição.
 List<String> decisionAuthors(ReportDoc? report) => {for (final d in allDecisions(report)) d.decision.by}.toList();
 
+/// The stage a session reported last: one session may chain several stages, and the newest `started_at` wins
+/// (later stage on a tie). `null` without a match.
+StageReport? stageOfSession(ReportDoc? report, String sessionId) {
+  StageReport? best;
+  for (final s in report?.stages ?? const <StageReport>[]) {
+    if (s.sessionId != sessionId) continue;
+    if (best == null || (s.startedAt ?? '').compareTo(best.startedAt ?? '') >= 0) best = s;
+  }
+  return best;
+}
+
 StageReport _parseStage(Stage stage, Map<String, dynamic> raw) => StageReport(
   stage: stage,
   status: switch (raw['status']) {
@@ -85,6 +96,7 @@ StageReport _parseStage(Stage stage, Map<String, dynamic> raw) => StageReport(
       ),
   ],
   artifacts: _strings(raw['artifacts']),
+  sessionId: _string(raw['session_id']),
 );
 
 Stage? _stage(Object? v) => v is String ? Stage.values.where((s) => s.name == v).firstOrNull : null;

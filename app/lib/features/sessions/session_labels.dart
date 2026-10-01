@@ -10,3 +10,8 @@ String statusLabel(SessionStatus s) => switch (s) {
   SessionStatus.error => 'erro',
   SessionStatus.detached => 'desanexada',
 };
+
+const kInterruptedLabel = 'interrompida — envie uma mensagem para continuar';
+
+/// [statusLabel], except that an idle session whose process the engine restart killed asks for a new message.
+String sessionStatusLabel(SessionSummary s) => s.showsInterrupted ? kInterruptedLabel : statusLabel(s.status);

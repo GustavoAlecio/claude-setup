@@ -596,7 +596,8 @@ void main() {
 
     testWidgets('⌘⇧K does nothing with the palette already open', (tester) async {
       await pump(tester);
-      await _go(tester, '/p/alpha/flow');
+      // Not the Fluxo: its side panel has the session composer, a second TextField.
+      await _go(tester, '/p/alpha/runs');
       await _meta(tester, LogicalKeyboardKey.keyK);
       expect(find.byType(TextField), findsOneWidget);
       expect(hint(tester), 'Executar skill em alpha…');
