@@ -8,25 +8,60 @@ import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/kickoff.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
+import '../../engine/engine_config.dart';
 import 'kickoff_form.dart';
 
 const _kickoffSkill = 'kickoff';
 
-/// [newConversation] skips the skill list and opens straight on the free prompt. Without a [project]
-/// (an org with no projects) the palette only lists skills and nothing can be started.
-Future<void> showCommandPalette(BuildContext context, Project? project, {bool newConversation = false}) {
+sealed class PaletteTarget {
+  const PaletteTarget();
+}
+
+/// A session of a project. Without a [project] (unknown, or an org with no projects) the palette only lists
+/// skills and nothing can be started.
+class ProjectTarget extends PaletteTarget {
+  const ProjectTarget(this.project);
+
+  final Project? project;
+}
+
+/// An activity of an org: runs in the first root with the others as additional directories.
+class OrgTarget extends PaletteTarget {
+  const OrgTarget(this.org, this.cwd, this.additionalDirectories);
+
+  /// `null` when the org is unknown or has no roots, so nothing can be started.
+  static OrgTarget? of(OrgConfig? org) {
+    final dirs = org == null ? null : orgSessionDirs(org);
+    return dirs == null ? null : OrgTarget(org!.name, dirs.$1, dirs.$2);
+  }
+
+  final String org;
+  final String cwd;
+  final List<String> additionalDirectories;
+}
+
+/// [newConversation] skips the skill list and opens straight on the free prompt.
+Future<void> showCommandPalette(BuildContext context, PaletteTarget target, {bool newConversation = false}) {
   final router = GoRouter.of(context);
   final sessions = SessionsScope.of(context);
+  final project = switch (target) {
+    ProjectTarget(:final project) => project,
+    OrgTarget() => null,
+  };
   return showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
     builder: (_) => _CommandPalette(
-      project: project,
+      target: target,
       sessions: sessions,
-      startOnPrompt: newConversation && project != null,
-      onCreated: (s) => router.go('/p/${s.project}/sessions/${s.id}'),
+      startOnPrompt: newConversation && (target is OrgTarget || project != null),
+      onCreated: (s) => router.go(switch (target) {
+        ProjectTarget() => '/p/${s.project}/sessions/${s.id}',
+        OrgTarget(:final org) => orgSessionsLocation(org, session: s.id),
+      }),
       onKickoff: () => showKickoffForm(context, project),
     ),
   );
@@ -36,14 +71,14 @@ enum _Mode { list, args, prompt }
 
 class _CommandPalette extends StatefulWidget {
   const _CommandPalette({
-    required this.project,
+    required this.target,
     required this.sessions,
     required this.startOnPrompt,
     required this.onCreated,
     required this.onKickoff,
   });
 
-  final Project? project;
+  final PaletteTarget target;
   final SessionsRepository sessions;
   final bool startOnPrompt;
   final void Function(SessionSummary session) onCreated;
@@ -92,13 +127,23 @@ class _CommandPaletteState extends State<_CommandPalette> {
     if (_mode == _Mode.list) _index = 0;
   });
 
+  Project? get _project => switch (widget.target) {
+    ProjectTarget(:final project) => project,
+    OrgTarget() => null,
+  };
+
+  bool get _canStart => widget.target is OrgTarget || _project != null;
+
   List<PaletteSkill> get _filtered {
     final q = _field.text.trim().toLowerCase();
-    return _skills.where((s) => s.name.toLowerCase().contains(q)).toList();
+    final orgMode = widget.target is OrgTarget;
+    return _skills
+        .where((s) => s.name.toLowerCase().contains(q) && !(orgMode && kPipelineSkills.contains(s.name)))
+        .toList();
   }
 
-  /// Skills plus the fixed "Novo kickoff" and "Nova conversa" entries at the end.
-  int get _count => _filtered.length + 2;
+  /// Skills plus the fixed "Novo kickoff" (projects only) and "Nova conversa" entries at the end.
+  int get _count => _filtered.length + (widget.target is OrgTarget ? 1 : 2);
 
   void _enter(_Mode mode, {PaletteSkill? skill}) => setState(() {
     _mode = mode;
@@ -108,9 +153,15 @@ class _CommandPaletteState extends State<_CommandPalette> {
   });
 
   void _choose(int index) {
-    if (widget.project == null) return;
+    if (!_canStart) return;
     final filtered = _filtered;
-    if (index == filtered.length + 1) {
+    if (widget.target is OrgTarget) {
+      if (index == filtered.length) {
+        _enter(_Mode.prompt);
+      } else {
+        _enter(_Mode.args, skill: filtered[index]);
+      }
+    } else if (index == filtered.length + 1) {
       _enter(_Mode.prompt);
     } else if (index == filtered.length || filtered[index].name == _kickoffSkill) {
       Navigator.of(context).pop();
@@ -134,18 +185,34 @@ class _CommandPaletteState extends State<_CommandPalette> {
   }
 
   Future<void> _create(String command) async {
-    final project = widget.project;
-    if (_creating || project == null) return;
-    if (project.path == null) {
-      setState(() => _error = missingProjectPathError(project));
-      return;
+    if (_creating) return;
+    final target = widget.target;
+    if (target is ProjectTarget) {
+      final project = target.project;
+      if (project == null) return;
+      if (project.path == null) {
+        setState(() => _error = missingProjectPathError(project));
+        return;
+      }
     }
     setState(() {
       _creating = true;
       _error = null;
     });
     try {
-      final session = await widget.sessions.create(project.name, command, cwd: project.path);
+      final session = switch (target) {
+        ProjectTarget(project: final project!) => await widget.sessions.create(
+          project.name,
+          command,
+          cwd: project.path,
+        ),
+        OrgTarget() => await widget.sessions.createInOrg(
+          target.org,
+          command,
+          cwd: target.cwd,
+          additionalDirectories: target.additionalDirectories,
+        ),
+      };
       if (!mounted) return;
       Navigator.of(context).pop();
       widget.onCreated(session);
@@ -223,12 +290,16 @@ class _CommandPaletteState extends State<_CommandPalette> {
                       decoration: InputDecoration(
                         border: InputBorder.none,
                         hintText: switch (_mode) {
-                          _Mode.list => switch (widget.project) {
-                            final p? => 'Executar skill em ${p.name}…',
-                            null => 'Skills (sem projeto nesta org)',
+                          _Mode.list => switch (widget.target) {
+                            OrgTarget(:final org) => 'Atividade em $org…',
+                            ProjectTarget(project: final p?) => 'Executar skill em ${p.name}…',
+                            ProjectTarget() => 'Skills (sem projeto nesta org)',
                           },
                           _Mode.args => 'argumentos (opcional)',
-                          _Mode.prompt => 'Nova conversa em ${widget.project!.name}: escreva o prompt',
+                          _Mode.prompt => switch (widget.target) {
+                            OrgTarget(:final org) => 'Nova conversa em $org: escreva o prompt',
+                            ProjectTarget(:final project) => 'Nova conversa em ${project!.name}: escreva o prompt',
+                          },
                         },
                         hintStyle: TextStyle(color: c.textMuted),
                         prefixIcon: _mode == _Mode.args
@@ -263,7 +334,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
                           for (final (i, s) in _filtered.indexed)
                             _Item(
                               selected: i == _index,
-                              onTap: widget.project == null ? null : () => _choose(i),
+                              onTap: _canStart ? () => _choose(i) : null,
                               leading: Mono('/${s.name}', color: c.textPrimary, size: 13),
                               description: s.description,
                             ),
@@ -272,32 +343,25 @@ class _CommandPaletteState extends State<_CommandPalette> {
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
                               child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
                             ),
-                          _Item(
-                            selected: _index == _count - 2,
-                            onTap: widget.project == null ? null : () => _choose(_count - 2),
-                            leading: Text(
-                              'Novo kickoff',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: widget.project == null ? c.textMuted : c.textPrimary,
+                          if (widget.target is ProjectTarget)
+                            _Item(
+                              selected: _index == _count - 2,
+                              onTap: _canStart ? () => _choose(_count - 2) : null,
+                              leading: Text(
+                                'Novo kickoff',
+                                style: TextStyle(fontSize: 13, color: _canStart ? c.textPrimary : c.textMuted),
                               ),
+                              description: _canStart ? 'ID do card ou descrição' : 'sem projeto',
                             ),
-                            description: widget.project == null ? 'sem projeto' : 'ID do card ou descrição',
-                          ),
                           _Item(
                             selected: _index == _count - 1,
-                            onTap: widget.project == null ? null : () => _choose(_count - 1),
-                            leading: Text(
-                              switch (widget.project) {
-                                final p? => 'Nova conversa em ${p.name}',
-                                null => 'Nova conversa',
-                              },
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: widget.project == null ? c.textMuted : c.textPrimary,
-                              ),
-                            ),
-                            description: widget.project == null ? 'nenhum projeto nesta org' : 'prompt livre',
+                            onTap: _canStart ? () => _choose(_count - 1) : null,
+                            leading: Text(switch (widget.target) {
+                              OrgTarget(:final org) => 'Nova conversa em $org',
+                              ProjectTarget(project: final p?) => 'Nova conversa em ${p.name}',
+                              ProjectTarget() => 'Nova conversa',
+                            }, style: TextStyle(fontSize: 13, color: _canStart ? c.textPrimary : c.textMuted)),
+                            description: _canStart ? 'prompt livre' : 'nenhum projeto nesta org',
                           ),
                         ],
                       ),

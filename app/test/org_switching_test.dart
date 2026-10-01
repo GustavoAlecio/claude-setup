@@ -175,36 +175,31 @@ void main() {
       expect(repo.writes, 1);
     });
 
-    testWidgets('⌘ to an empty org from a project route lands on the chooser even if config emits late', (
-      tester,
-    ) async {
-      final config = _config();
-      (config['orgs'] as List).add({
-        'name': 'C',
-        'roots': ['/dev/c'],
-      });
-      final repo = _SlowConfigRepository(config);
-      await tester.pumpWidget(
-        ClaudeFlowApp(repository: repo, sessions: _Sessions(), engine: const MockEngineController()),
-      );
-      await tester.pump(const Duration(seconds: 1));
-      await tester.pumpAndSettle();
-      expect(_location(tester), '/p/alpha/flow');
+    testWidgets(
+      '⌘ to an org without projects or roots from a project route lands on the landing even if config emits late',
+      (tester) async {
+        final config = _config();
+        (config['orgs'] as List).add({'name': 'C', 'roots': <String>[]});
+        final repo = _SlowConfigRepository(config);
+        await tester.pumpWidget(
+          ClaudeFlowApp(repository: repo, sessions: _Sessions(), engine: const MockEngineController()),
+        );
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pumpAndSettle();
+        expect(_location(tester), '/p/alpha/flow');
 
-      await _meta(tester, LogicalKeyboardKey.digit3);
-      await tester.pump(const Duration(seconds: 1));
-      await tester.pumpAndSettle();
+        await _meta(tester, LogicalKeyboardKey.digit3);
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pumpAndSettle();
 
-      expect(repo.config.lastOrg, 'C');
-      expect(_location(tester), '/');
-    });
+        expect(repo.config.lastOrg, 'C');
+        expect(_location(tester), '/');
+      },
+    );
 
     testWidgets('a failed lastOrg write while the landing waits returns to / instead of a blank page', (tester) async {
       final config = _config();
-      (config['orgs'] as List).add({
-        'name': 'C',
-        'roots': ['/dev/c'],
-      });
+      (config['orgs'] as List).add({'name': 'C', 'roots': <String>[]});
       await tester.pumpWidget(
         ClaudeFlowApp(
           repository: _FailingRepository(config),
@@ -518,13 +513,10 @@ void main() {
       expect(repo.config.lastOrg, kNoOrg);
     });
 
-    testWidgets('lastOrg without visible projects shows the empty org notice', (tester) async {
+    testWidgets('lastOrg without visible projects or roots shows the empty org notice', (tester) async {
       await open(tester, {
         'orgs': [
-          {
-            'name': 'E',
-            'roots': ['/nowhere'],
-          },
+          {'name': 'E', 'roots': <String>[]},
         ],
         'lastOrg': 'E',
       });

@@ -48,6 +48,27 @@ class _LongCommandSessions extends MockSessionsRepository {
   );
 }
 
+/// A pending org session in `demo`: counts for the org, never for a project.
+class _OrgActivitySessions extends MockSessionsRepository {
+  @override
+  Stream<List<SessionSummary>> watchSessions() => super.watchSessions().map(
+    (list) => [
+      const SessionSummary(
+        id: 'org-1',
+        project: '',
+        command: 'analise os repos',
+        title: 'Atividade na org demo',
+        status: SessionStatus.waitingPermission,
+        createdAt: '2026-03-10T14:41:00Z',
+        pendingPermissions: 3,
+        org: 'demo',
+        cwd: '/nowhere',
+      ),
+      ...list,
+    ],
+  );
+}
+
 Finder _paletteField() => find.byType(TextField).last;
 
 Finder _paletteList() =>
@@ -107,6 +128,14 @@ void main() {
     expect(find.text('Permitir'), findsNothing);
     expect(find.text('1 aguardando você'), findsOneWidget);
     expect(find.text('2 aguardando você'), findsNothing);
+  });
+
+  testWidgets('an org session stays out of the project list and badges but counts for the org', (tester) async {
+    await openSessions(tester, sessions: _OrgActivitySessions());
+
+    expect(find.text('Atividade na org demo'), findsNothing);
+    expect(find.text('2 aguardando você'), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('org-pending')), matching: find.text('5')), findsOneWidget);
   });
 
   testWidgets('denying a permission resolves the card and decrements the badge', (tester) async {

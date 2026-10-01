@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 /// Must match `version` in `engine/package.json`; a mismatch only raises a non-blocking warning.
-const kEngineVersion = '0.1.0';
+const kEngineVersion = '0.2.0';
 
 const kEnvSentinel = '\x00__ENV__\x00';
 

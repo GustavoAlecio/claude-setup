@@ -12,9 +12,14 @@ class SessionSummary {
     this.pendingPermissions = 0,
     this.resumable = false,
     this.model,
+    this.cwd,
+    this.org,
+    this.additionalDirectories = const [],
   });
 
   final String id;
+
+  /// `""` for an org session: it belongs to no project.
   final String project;
   final String command;
   final String title;
@@ -26,6 +31,13 @@ class SessionSummary {
   final int pendingPermissions;
   final bool resumable;
   final String? model;
+  final String? cwd;
+
+  /// Set only for org sessions, which run in the org's first root with the others as [additionalDirectories].
+  final String? org;
+  final List<String> additionalDirectories;
+
+  bool get isOrgSession => org != null;
 
   SessionSummary copyWith({SessionStatus? status, double? cost, int? pendingPermissions, String? model}) =>
       SessionSummary(
@@ -39,6 +51,9 @@ class SessionSummary {
         pendingPermissions: pendingPermissions ?? this.pendingPermissions,
         resumable: resumable,
         model: model ?? this.model,
+        cwd: cwd,
+        org: org,
+        additionalDirectories: additionalDirectories,
       );
 }
 

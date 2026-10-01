@@ -96,7 +96,7 @@ test("ENGINE_READY e a unica linha do stdout, com porta 0; health responde e nao
 
   const health = await api(port, "GET", "/api/health");
   assert.equal(health.status, 200);
-  assert.deepEqual(health.body, { ok: true, version: "0.1.0" });
+  assert.deepEqual(health.body, { ok: true, version: "0.2.0" });
   assert.equal((await api(port, "GET", "/")).status, 404);
   assert.equal((await api(port, "GET", "/api/projects/demo/artifact?path=spec.md")).status, 404);
   assert.equal(readFileSync(path.join(dir, "engine.pid"), "utf8"), String(pid));
