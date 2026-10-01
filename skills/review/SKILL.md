@@ -7,7 +7,8 @@ description: Fluxo Review etapa 1 — gera revisao detalhada de um PR aberto, us
 ## 1. Detectar projeto
 ```bash
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+source ~/.claude/bin/get-project.sh
+PROJECT_NAME=$(get-project-name)
 REVIEWS_DIR="$HOME/.claude/workflow/$PROJECT_NAME/reviews"
 mkdir -p "$REVIEWS_DIR"
 ```

@@ -7,7 +7,8 @@ description: Mostra o estado atual do Fluxo Smart — qual etapa foi concluida, 
 
 Primeiro, detecte o nome do projeto atual:
 ```bash
-basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)
+source ~/.claude/bin/get-project.sh
+get-project-name
 ```
 
 Use esse nome como `PROJECT_NAME`. O diretorio de workflow deste projeto e `~/.claude/workflow/PROJECT_NAME/`.

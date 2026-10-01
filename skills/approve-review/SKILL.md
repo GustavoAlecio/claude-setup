@@ -6,7 +6,8 @@ description: Fluxo Review etapa 2 — gate local. Marca um review draft como apr
 ## 1. Detectar projeto e PR
 ```bash
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+source ~/.claude/bin/get-project.sh
+PROJECT_NAME=$(get-project-name)
 REVIEWS_DIR="$HOME/.claude/workflow/$PROJECT_NAME/reviews"
 ```
 

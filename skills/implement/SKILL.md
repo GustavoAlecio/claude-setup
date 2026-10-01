@@ -9,7 +9,8 @@ Esta skill não implementa: ela prepara os args, dispara o workflow `smart-imple
 ## 1. Detectar projeto
 ```bash
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+source ~/.claude/bin/get-project.sh
+PROJECT_NAME=$(get-project-name)
 WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ```
 
