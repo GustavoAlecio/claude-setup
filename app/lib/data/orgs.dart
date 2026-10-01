@@ -1,5 +1,7 @@
 import '../engine/engine_config.dart';
 import 'models.dart';
+import 'session_models.dart';
+import 'session_reducer.dart';
 
 /// Resolves symlinks for an existing path and returns the input unchanged when it does not exist.
 typedef Canonical = String Function(String path);
@@ -26,13 +28,93 @@ String? routeProject(String location) {
   return segments.length >= 2 && segments.first == 'p' ? segments[1] : null;
 }
 
+/// `/p/<project>/…` and `/o/<org>/…`: the routes the shell wraps.
+bool isShellLocation(String location) {
+  final segments = Uri.parse(location).pathSegments;
+  return segments.length >= 2 && (segments.first == 'p' || segments.first == 'o');
+}
+
+/// Config entry of [org]; `null` for [kNoOrg] and for a name the config does not have.
+OrgConfig? orgConfigOf(DashboardConfig? config, String org) => config?.orgs.where((o) => o.name == org).firstOrNull;
+
+/// Org of a shell location: `/p/<project>` → the project's org (`null` while it is unknown), `/o/<org>` → `<org>`;
+/// `null` for any other route.
+String? routeOrg(String location, List<Project> projects) {
+  if (!isShellLocation(location)) return null;
+  final segments = Uri.parse(location).pathSegments;
+  return switch (segments.first) {
+    'p' => projects.where((p) => p.name == segments[1]).firstOrNull?.org,
+    'o' => segments[1],
+    _ => null,
+  };
+}
+
+/// `/o/<org>/sessions[/<session>]`, encoded segment by segment: org names may carry spaces and accents.
+String orgSessionsLocation(String org, {String? session}) =>
+    Uri(pathSegments: ['', 'o', org, 'sessions', ?session]).toString();
+
+/// Where an org opens: its first visible project, else its activities when it has roots; `null` when it has
+/// neither, so the caller keeps the landing.
+String? orgHome(String org, List<Project> projects, DashboardConfig? config) {
+  if (projectsInOrg(projects, org).firstOrNull case final first?) return '/p/${first.name}/flow';
+  final roots = config?.orgs.where((o) => o.name == org).firstOrNull?.roots ?? const <String>[];
+  return roots.isEmpty ? null : orgSessionsLocation(org);
+}
+
 /// Target of "Voltar" in Configurações and Sobre. An org switched there (⌘N) changed `lastOrg`; going back to a
-/// project of the old org would make the shell write that org back, so the landing opens the new one instead.
+/// shell route of the old org would make the shell write that org back, so the landing opens the new one instead.
 String backTarget(String target, DashboardConfig? config, List<Project>? projects) {
-  final project = routeProject(target);
-  if (config == null || projects == null || project == null) return target;
-  final org = projects.where((p) => p.name == project).firstOrNull?.org;
+  if (config == null || projects == null) return target;
+  final org = routeOrg(target, projects);
   return org == null || org == config.lastOrg ? target : '/';
+}
+
+/// Org sessions of [org], resolved by [sessionOrg]: what its "Atividades da org" counts and lists.
+List<SessionSummary> orgActivities(
+  List<SessionSummary> sessions,
+  List<Project> projects,
+  DashboardConfig? config,
+  String org,
+) => [
+  for (final s in sessions)
+    if (s.isOrgSession && sessionOrg(s, projects, config) == org) s,
+];
+
+/// First pending session of [org], as a label name and the route that lists it (the page auto-selects the pending
+/// one): its project's sessions for a project session, the org's activities for an org session. `null` when nothing of the org waits.
+({String name, String location})? firstPendingInOrg(
+  List<SessionSummary> sessions,
+  List<Project> projects,
+  DashboardConfig? config,
+  String org,
+) {
+  for (final s in sessions) {
+    if (pendingOf(s) == 0 || sessionOrg(s, projects, config) != org) continue;
+    return s.isOrgSession
+        ? (name: org, location: orgSessionsLocation(org))
+        : (name: s.project, location: '/p/${s.project}/sessions');
+  }
+  return null;
+}
+
+/// Org the palette's "Nova atividade" (⌘⇧K and the shell menu item) targets from [location]: the route's org
+/// inside the shell (an unknown project keeps `lastOrg`, as the shell shows), the landing's org on `/`;
+/// `null` elsewhere (Settings, About, the org chooser).
+String? paletteOrg(
+  String location,
+  DashboardConfig config,
+  List<Project> projects, {
+  List<SessionSummary> sessions = const [],
+}) {
+  if (Uri.parse(location).path == '/') {
+    return switch (landingFor(config, projects, sessions)) {
+      OpenOrgLanding(:final org) => org,
+      _ => null,
+    };
+  }
+  if (!isShellLocation(location)) return null;
+  final project = routeProject(location);
+  return project != null ? currentOrg(project, projects, config) : routeOrg(location, projects);
 }
 
 /// Segment-wise prefix: `/dev/r10` contains `/dev/r10/app` but not `/dev/r10x`.
@@ -129,21 +211,35 @@ List<Project> projectsInOrg(List<Project> projects, String org) => [
     if (!p.hidden && p.org == org) p,
 ];
 
-/// Whether sessions of [project] belong to [org]: unknown projects (the engine keys sessions by
-/// `basename(cwd)`) live in [kNoOrg]; hidden projects belong to none.
-bool belongsToOrg(String project, List<Project> projects, String org) {
-  final p = projects.where((p) => p.name == project).firstOrNull;
-  return p == null ? org == kNoOrg : !p.hidden && p.org == org;
+/// Org a session belongs to; `null` for a session of a hidden project, which belongs to none.
+///
+/// Project session: unknown projects (the engine keys sessions by `basename(cwd)`) live in [kNoOrg].
+/// Org session: its `org` while the config still has it, else the org whose root holds its `cwd`, so a
+/// renamed org keeps its sessions; [kNoOrg] once no org claims it.
+String? sessionOrg(SessionSummary session, List<Project> projects, DashboardConfig? config) {
+  final orgs = config?.orgs ?? const <OrgConfig>[];
+  if (session.org case final org?) {
+    if (orgs.any((o) => o.name == org)) return org;
+    return orgOf(session.cwd, orgs: orgs, canonical: normalizePath);
+  }
+  final p = projects.where((p) => p.name == session.project).firstOrNull;
+  if (p == null) return kNoOrg;
+  return p.hidden ? null : p.org;
 }
 
-/// Pending permissions of the org, with the membership of [belongsToOrg].
-int pendingInOrg(Map<String, int> pendingByProject, List<Project> projects, String org) {
+/// Pending permissions of the org's sessions, project and org sessions alike, with the membership of [sessionOrg].
+int pendingInOrg(List<SessionSummary> sessions, List<Project> projects, DashboardConfig? config, String org) {
   var total = 0;
-  for (final e in pendingByProject.entries) {
-    if (belongsToOrg(e.key, projects, org)) total += e.value;
+  for (final s in sessions) {
+    if (sessionOrg(s, projects, config) == org) total += pendingOf(s);
   }
   return total;
 }
+
+/// `cwd` and `additionalDirectories` of an org session: the first root and the others, in config order;
+/// `null` when the org has no roots.
+(String, List<String>)? orgSessionDirs(OrgConfig org) =>
+    org.roots.isEmpty ? null : (org.roots.first, org.roots.sublist(1));
 
 /// Inside the shell the org is the route project's; an unknown or still-loading project keeps `lastOrg`.
 String currentOrg(String? routeProject, List<Project> projects, DashboardConfig? config) =>
@@ -151,13 +247,13 @@ String currentOrg(String? routeProject, List<Project> projects, DashboardConfig?
 
 /// [kNoOrg] is offered (switcher and landing alike) when it has a visible project or a pending session,
 /// so a pending session of an unknown project stays reachable.
-bool offersNoOrg(List<Project> projects, Map<String, int> pending) =>
-    projectsInOrg(projects, kNoOrg).isNotEmpty || pendingInOrg(pending, projects, kNoOrg) > 0;
+bool offersNoOrg(List<Project> projects, List<SessionSummary> sessions, DashboardConfig? config) =>
+    projectsInOrg(projects, kNoOrg).isNotEmpty || pendingInOrg(sessions, projects, config, kNoOrg) > 0;
 
 /// Orgs offered by the switcher: configured ones in order, plus [kNoOrg] per [offersNoOrg].
-List<String> switchableOrgs(DashboardConfig? config, List<Project> projects, Map<String, int> pending) => [
+List<String> switchableOrgs(DashboardConfig? config, List<Project> projects, List<SessionSummary> sessions) => [
   for (final o in config?.orgs ?? const <OrgConfig>[]) o.name,
-  if (offersNoOrg(projects, pending)) kNoOrg,
+  if (offersNoOrg(projects, sessions, config)) kNoOrg,
 ];
 
 enum ConfigChange {
@@ -200,6 +296,7 @@ String? validateOrgs(List<OrgConfig> orgs) {
     final name = org.name.trim();
     if (name.isEmpty) return 'informe um nome para a org';
     if (name == kNoOrg) return '"$kNoOrg" é um nome reservado';
+    if (name.contains('/')) return 'o nome da org não pode ter "/"';
     if (!names.add(name)) return 'já existe uma org chamada "$name"';
     for (final root in org.roots) {
       if (normalizePath(root).isEmpty) return 'informe uma pasta para "$name"';
@@ -239,9 +336,9 @@ class ChooseOrgLanding extends Landing {
 }
 
 /// [projects] must already be annotated; the options are [switchableOrgs].
-Landing landingFor(DashboardConfig config, List<Project> projects, Map<String, int> pending) {
+Landing landingFor(DashboardConfig config, List<Project> projects, List<SessionSummary> sessions) {
   if (config.orgs.isEmpty) return const CreateOrgLanding();
-  final options = switchableOrgs(config, projects, pending);
+  final options = switchableOrgs(config, projects, sessions);
   final last = config.lastOrg;
   if (last != null && options.contains(last)) return OpenOrgLanding(last);
   return ChooseOrgLanding(options);

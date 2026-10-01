@@ -24,6 +24,9 @@ class MockSessionsRepository implements SessionsRepository {
   /// Every [create] call, in order, for tests to assert the exact command and cwd.
   final createCalls = <(String project, String command, String? cwd)>[];
 
+  /// Every [createInOrg] call, in order.
+  final orgCreateCalls = <(String org, String command, String cwd, List<String> additionalDirectories)>[];
+
   List<SessionSummary> get _list => [for (final id in _order) _details[id]!.summary];
 
   @override
@@ -55,19 +58,48 @@ class MockSessionsRepository implements SessionsRepository {
   @override
   Future<SessionSummary> create(String project, String command, {String? cwd}) async {
     createCalls.add((project, command, cwd));
-    final id = 'mock-${++_created}';
-    final summary = SessionSummary(
-      id: id,
-      project: project,
-      command: command,
-      title: command,
-      status: SessionStatus.idle,
-      createdAt: DateTime.now().toUtc().toIso8601String(),
+    return _add(
+      (id) => SessionSummary(
+        id: id,
+        project: project,
+        command: command,
+        title: command,
+        status: SessionStatus.idle,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ),
     );
+  }
+
+  @override
+  Future<SessionSummary> createInOrg(
+    String org,
+    String command, {
+    required String cwd,
+    List<String> additionalDirectories = const [],
+  }) async {
+    orgCreateCalls.add((org, command, cwd, additionalDirectories));
+    return _add(
+      (id) => SessionSummary(
+        id: id,
+        project: '',
+        command: command,
+        title: command,
+        status: SessionStatus.idle,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        cwd: cwd,
+        org: org,
+        additionalDirectories: additionalDirectories,
+      ),
+    );
+  }
+
+  SessionSummary _add(SessionSummary Function(String id) build) {
+    final id = 'mock-${++_created}';
+    final summary = build(id);
     _order.insert(0, id);
     _details[id] = SessionDetail(summary: summary);
     _apply(id, [
-      _event(id, {'kind': 'user_text', 'text': command}),
+      _event(id, {'kind': 'user_text', 'text': summary.command}),
     ]);
     return summary;
   }

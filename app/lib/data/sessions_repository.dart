@@ -10,6 +10,14 @@ abstract interface class SessionsRepository {
 
   /// [cwd] overrides the engine's own lookup (`cwds` + scan); `null` lets the engine resolve it.
   Future<SessionSummary> create(String project, String command, {String? cwd});
+
+  /// Session of the org itself, outside any project: [cwd] is its first root, [additionalDirectories] the others.
+  Future<SessionSummary> createInOrg(
+    String org,
+    String command, {
+    required String cwd,
+    List<String> additionalDirectories = const [],
+  });
   Future<void> send(String id, String text);
   Future<void> answer(String id, String requestId, PermissionDecision decision, {Map<String, String>? answers});
   Future<void> resume(String id);

@@ -19,7 +19,7 @@ import 'org_form.dart';
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key, required this.backTo});
 
-  /// Location of "Voltar": the last project route visited, or the landing.
+  /// Location of "Voltar": the last shell route visited (`/p/` or `/o/`), or the landing.
   final String Function() backTo;
 
   @override
