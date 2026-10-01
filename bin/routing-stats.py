@@ -28,11 +28,30 @@ def results(project):
                 continue
 
 
+def write_routing(project, bands, overrides):
+    out = HOME / "projects" / project / "routing.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if out.exists():
+        try:
+            existing = json.loads(out.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    output = {k: v for k, v in existing.items() if k not in ("overrides", "bands")}
+    output["overrides"] = overrides
+    output["bands"] = bands
+    out.write_text(json.dumps(output, indent=2, ensure_ascii=False))
+    print(f"gravado em {out}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project")
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args()
+
+    if a.write and not a.project:
+        ap.error("--write exige --project")
 
     stats = defaultdict(lambda: {"n": 0, "first_tier_pass": 0, "attempts": 0, "escalated": 0, "blocked": 0, "final": defaultdict(int)})
     for r in results(a.project):
@@ -51,11 +70,14 @@ def main():
 
     if not stats:
         print("sem dados de runs ainda")
+        if a.write:
+            write_routing(a.project, [], {})
         return
 
     print("| complexidade | risco | n | passou no tier0 | escalou | bloqueou | tentativas/task | tier final |")
     print("|---|---|---|---|---|---|---|---|")
     suggestions = {}
+    bands = []
     for (cx, risk), s in sorted(stats.items()):
         rate = s["first_tier_pass"] / s["n"]
         print(f"| {cx} | {risk} | {s['n']} | {rate:.0%} | {s['escalated']} | {s['blocked']} | "
@@ -65,13 +87,22 @@ def main():
             if dominant in LADDER:
                 suggestions[f"{cx}:{risk}"] = {"tier0": dominant, "reason": f"tier0 passou em {rate:.0%} de {s['n']} tasks"}
 
+        band = {
+            "complexity": cx,
+            "risk": risk,
+            "n": s["n"],
+            "pass_tier0": s["first_tier_pass"],
+            "escalated": s["escalated"],
+            "blocked": s["blocked"],
+            "attempts_per_task": round(s["attempts"] / s["n"], 1),
+            "final_tiers": dict(s["final"])
+        }
+        bands.append(band)
+
     if suggestions:
         print("\nSugestões de tier0:", json.dumps(suggestions, ensure_ascii=False, indent=2))
-    if a.write and a.project:
-        out = HOME / "projects" / a.project / "routing.json"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps({"overrides": suggestions}, indent=2, ensure_ascii=False))
-        print(f"gravado em {out}")
+    if a.write:
+        write_routing(a.project, bands, suggestions)
 
 
 if __name__ == "__main__":
