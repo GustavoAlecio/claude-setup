@@ -215,7 +215,8 @@ python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --che
     history.push({ attempt: attempts, tier, failing: failing.map(f => ({ gate: f.gate, file: f.file, rule_ref: f.rule_ref, message: (f.message || '').slice(0, 300) })) })
 
     if (g0.verdict === 'pass' && g1 && g1.verdict !== 'fail' && failing.length === 0) {
-      checkpoint = g0.snapshot || checkpoint
+      // gate_g0.py writes the tree to this file; never trust the haiku relay to copy a sha.
+      checkpoint = `@${A.run_dir}/checkpoints/${task.id}.tree`
       outcome = { status: 'done' }
       break
     }
