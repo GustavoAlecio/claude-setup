@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/claude_home.dart';
+import '../features/about/about_page.dart';
 import '../features/flow/flow_page.dart';
 import '../features/landing/landing_page.dart';
 import '../features/placeholder/planned_page.dart';
@@ -10,7 +12,7 @@ import '../features/sessions/sessions_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/shell/shell_page.dart';
 
-GoRouter buildRouter() {
+GoRouter buildRouter(EffectivePaths paths) {
   const route = String.fromEnvironment('INITIAL_ROUTE');
   var lastProjectRoute = route.startsWith('/p/') ? route : '/';
   final router = GoRouter(
@@ -20,6 +22,10 @@ GoRouter buildRouter() {
       GoRoute(
         path: '/settings',
         pageBuilder: (_, state) => _instant(state, SettingsPage(backTo: () => lastProjectRoute)),
+      ),
+      GoRoute(
+        path: '/about',
+        pageBuilder: (_, state) => _instant(state, AboutPage(backTo: () => lastProjectRoute, paths: paths)),
       ),
       ShellRoute(
         builder: (context, state, child) => ShellPage(
@@ -62,7 +68,7 @@ GoRouter buildRouter() {
       ),
     ],
   );
-  // `/settings` sits outside the shell and `go` keeps no history, so "Voltar" needs the last project route.
+  // `/settings` and `/about` sit outside the shell and `go` keeps no history, so "Voltar" needs the last project route.
   router.routerDelegate.addListener(() {
     final uri = router.routerDelegate.currentConfiguration.uri;
     if (uri.path.startsWith('/p/')) lastProjectRoute = uri.toString();
