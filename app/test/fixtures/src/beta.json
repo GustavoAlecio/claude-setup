@@ -38,7 +38,7 @@
             "lib/beta/service.dart"
           ],
           "tests": [],
-          "description": "Tarefa sintética T1.",
+          "description": "Implementar o servico beta; criterio: testes do servico passam.",
           "tier": "haiku",
           "attempts": 0,
           "status": "pending"
@@ -58,7 +58,8 @@
           "task": "T1",
           "tier": "haiku",
           "verdict": "start",
-          "attempt": 1
+          "attempt": 1,
+          "checkpoint": "aaaa111"
         },
         {
           "ts": "2026-03-11T14:01:10Z",
@@ -85,7 +86,8 @@
           "task": "T1",
           "tier": "sonnet",
           "verdict": "start",
-          "attempt": 2
+          "attempt": 2,
+          "checkpoint": "aaaa111"
         }
       ]
     }

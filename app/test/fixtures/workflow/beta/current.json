@@ -37,7 +37,7 @@
           "lib/beta/service.dart"
         ],
         "tests": [],
-        "description": "Tarefa sintética T1.",
+        "description": "Implementar o servico beta; criterio: testes do servico passam.",
         "tier": "haiku",
         "attempts": 0,
         "status": "pending"
