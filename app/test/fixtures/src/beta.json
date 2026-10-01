@@ -1,0 +1,93 @@
+{
+  "current": {
+    "phases": {
+      "specify": {
+        "start": "2026-03-10T13:00:00Z",
+        "end": "2026-03-10T13:09:00Z"
+      },
+      "plan": {
+        "start": "2026-03-10T13:15:00Z",
+        "end": "2026-03-10T13:30:00Z"
+      },
+      "tasks": {
+        "start": "2026-03-10T13:32:00Z",
+        "end": "2026-03-10T13:38:00Z"
+      }
+    },
+    "status": "implementing",
+    "feature": "Fluxo beta",
+    "project": "beta",
+    "project_path": "/synthetic/beta",
+    "linear_key": "BET-7",
+    "start_date": "2026-03-10T13:00:00Z",
+    "end_date": null,
+    "blockers": [],
+    "tags": [],
+    "tasks": {
+      "total": 1,
+      "completed": 0,
+      "current_task_id": null,
+      "items": [
+        {
+          "id": "T1",
+          "title": "Servico beta",
+          "complexity": "M",
+          "risk": "low",
+          "tier0": "haiku",
+          "affects": [
+            "lib/beta/service.dart"
+          ],
+          "tests": [],
+          "description": "Tarefa sintética T1.",
+          "tier": "haiku",
+          "attempts": 0,
+          "status": "pending"
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "id": "impl-20260311T140000Z",
+      "result": null,
+      "events": [
+        {
+          "ts": "2026-03-11T14:00:05Z",
+          "run_id": "impl-20260311T140000Z",
+          "role": "dev",
+          "task": "T1",
+          "tier": "haiku",
+          "verdict": "start",
+          "attempt": 1
+        },
+        {
+          "ts": "2026-03-11T14:01:10Z",
+          "run_id": "impl-20260311T140000Z",
+          "role": "g0",
+          "task": "T1",
+          "tier": "haiku",
+          "verdict": "fail",
+          "attempt": 1,
+          "count": 2
+        },
+        {
+          "ts": "2026-03-11T14:01:20Z",
+          "run_id": "impl-20260311T140000Z",
+          "role": "escalate",
+          "task": "T1",
+          "tier": "sonnet",
+          "note": "from haiku"
+        },
+        {
+          "ts": "2026-03-11T14:01:40Z",
+          "run_id": "impl-20260311T140000Z",
+          "role": "dev",
+          "task": "T1",
+          "tier": "sonnet",
+          "verdict": "start",
+          "attempt": 2
+        }
+      ]
+    }
+  ]
+}

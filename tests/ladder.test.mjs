@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loadWorkflow, STACK, pass, fail } from './harness.mjs'
+import { loadWorkflow, STACK, pass, fail, meteredBudget } from './harness.mjs'
 
 const implement = loadWorkflow('smart-implement')
 const verify = loadWorkflow('smart-verify')
@@ -81,4 +81,59 @@ test('verify maps findings to the owning task, creates a task for orphans and re
   assert.equal(r.status, 'verified')
   assert.deepEqual(reentry, ['T2', 'V1'])
   assert.equal(r.checkpoint, 'cp2')
+})
+
+test('trace entries carry blocking findings ≤300', async () => {
+  const budget = meteredBudget()
+  const cost = { dev: 100, g0: 10, g1: 1000 }
+  const long = 'x'.repeat(500)
+  let n = 0
+  const agent = async (_p, o) => {
+    const kind = o.label.split(':')[0]
+    budget.spend(cost[kind] || 0)
+    if (kind === 'dev') return { status: 'done', summary: 's', files_changed: ['lib/a.dart'] }
+    if (kind === 'g0') return pass('G0')
+    return ++n === 1
+      ? { gate: 'G1', verdict: 'fail', findings: [
+        { id: 'F1', severity: 'major', file: 'lib/a.dart', line: 7, rule_ref: 'adr/0001', message: long, fix_hint: 'h' },
+        { id: 'F2', severity: 'minor', file: 'lib/a.dart', message: 'nit' },
+      ] }
+      : pass('G1')
+  }
+  const r = await implement({ args: baseArgs([{ id: 'T1', complexity: 'M' }]), agent, budget })
+  assert.equal(r.status, 'done')
+  const g1 = r.trace.filter(e => e.role === 'g1')
+  assert.deepEqual(g1[0].findings, [{ id: 'F1', severity: 'major', file: 'lib/a.dart', line: 7, rule_ref: 'adr/0001', message: 'x'.repeat(300) }])
+  assert.deepEqual(g1[0].blocking, ['G1:lib/a.dart:adr/0001'])
+  assert.deepEqual(g1[1].findings, [])
+  assert.ok(r.trace.every(e => Array.isArray(e.findings)))
+  assert.deepEqual([...new Set(r.trace.map(e => e.tokens_out))].sort((a, b) => a - b), [10, 100, 1000])
+
+  const vbudget = meteredBudget()
+  const vagent = async (_p, o) => {
+    vbudget.spend(o.label.startsWith('g2') ? 7 : 3)
+    return o.label.startsWith('g1')
+      ? pass('G1')
+      : { gate: 'G2', verdict: 'fail', criteria: [], findings: [{ id: 'Q1', severity: 'critical', file: 'lib/a.dart', message: long }] }
+  }
+  const v = await verify({ args: { ...baseArgs([{ id: 'T1', tier: 'haiku', files_changed: ['lib/a.dart'] }]), base_checkpoint: 'cp0' }, agent: vagent, budget: vbudget })
+  assert.equal(v.reason, 'reentry_failed_to_run')
+  const g2 = v.trace.find(e => e.role === 'g2')
+  assert.equal(g2.findings.length, 1)
+  assert.equal(g2.findings[0].message.length, 300)
+  assert.equal(g2.tokens_out, 7)
+  assert.deepEqual(v.trace.filter(e => e.role.startsWith('g1')).map(e => e.findings), [[], []])
+})
+
+test('g1/escalate prompts pass --attempt', async () => {
+  const prompts = {}
+  let n = 0
+  const { agent: base } = mockAgent(() => (++n <= 2 ? fail('G1', 'lib/a.dart', `rule${n}`) : pass('G1')))
+  const agent = (p, o) => { prompts[o.label] = p; return base(p, o) }
+  const r = await implement({ args: baseArgs([{ id: 'T1', complexity: 'S' }]), agent })
+  assert.equal(r.status, 'done')
+  assert.match(prompts['g1:T1#1'], /--role g1 --task T1 --attempt 1 --tier haiku /)
+  assert.match(prompts['g1:T1#2'], /--role g1 --task T1 --attempt 2 --tier haiku /)
+  assert.match(prompts['g1:T1#3'], /--role g1 --task T1 --attempt 3 --tier sonnet /)
+  assert.match(prompts['rollback:T1'], /--role escalate --task T1 --attempt 2 --tier sonnet /)
 })

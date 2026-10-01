@@ -11,6 +11,7 @@ and folds per-task tier/attempts/status back into current.json.
 """
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,7 +47,9 @@ def cmd_persist(a):
     run_dir = Path(a.run_dir)
     result = json.loads(Path(a.result_file).read_text())
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    tmp = run_dir / "result.json.tmp"
+    tmp.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    os.replace(tmp, run_dir / "result.json")
 
     ts = now()
     with open(run_dir / "trace.jsonl", "a") as f:
