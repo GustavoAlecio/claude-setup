@@ -1,0 +1,82 @@
+{
+  "phases": {
+    "specify": {
+      "start": "2026-03-10T08:00:00Z",
+      "end": "2026-03-10T08:10:00Z"
+    },
+    "plan": {
+      "start": "2026-03-10T08:15:00Z",
+      "end": "2026-03-10T08:40:00Z"
+    },
+    "tasks": {
+      "start": "2026-03-10T08:41:00Z",
+      "end": "2026-03-10T08:45:00Z"
+    },
+    "implement": {
+      "start": "2026-03-10T08:50:00Z",
+      "end": "2026-03-10T10:20:00Z"
+    }
+  },
+  "status": "verifying",
+  "feature": "Tela gamma",
+  "project": "gamma",
+  "project_path": "/synthetic/gamma",
+  "ado_id": 2002,
+  "start_date": "2026-03-10T08:00:00Z",
+  "end_date": null,
+  "blockers": [],
+  "tags": [],
+  "tasks": {
+    "total": 2,
+    "completed": 2,
+    "current_task_id": null,
+    "items": [
+      {
+        "id": "T1",
+        "title": "View gamma",
+        "complexity": "M",
+        "risk": "low",
+        "tier0": "sonnet",
+        "affects": [
+          "lib/gamma/view.dart"
+        ],
+        "tests": [],
+        "description": "Tarefa sint\u00e9tica T1.",
+        "tier": "sonnet",
+        "attempts": 2,
+        "status": "done",
+        "files_changed": [
+          "lib/gamma/view.dart"
+        ],
+        "escalations": []
+      },
+      {
+        "id": "T2",
+        "title": "Modelo gamma",
+        "complexity": "S",
+        "risk": "low",
+        "tier0": "haiku",
+        "affects": [
+          "lib/gamma/model.dart"
+        ],
+        "tests": [],
+        "description": "Tarefa sint\u00e9tica T2.",
+        "tier": "haiku",
+        "attempts": 1,
+        "status": "done",
+        "files_changed": [
+          "lib/gamma/model.dart"
+        ],
+        "escalations": []
+      }
+    ]
+  },
+  "exec": {
+    "runs": [
+      "verify-20260310T110000Z",
+      "verify-20260310T113000Z"
+    ],
+    "checkpoint": "0000000000000000000000000000000000000b2e",
+    "last_status": "verified"
+  }
+}

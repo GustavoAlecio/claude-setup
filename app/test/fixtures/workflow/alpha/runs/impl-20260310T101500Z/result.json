@@ -1,0 +1,301 @@
+{
+  "status": "blocked",
+  "blocked_task": "T2",
+  "reason": "same_failure_across_tiers",
+  "diagnosis": [
+    {
+      "lens": "arquitetura",
+      "hypothesis": "Estado do alpha vive no widget e o BLoC so repassa dados.",
+      "confidence": 0.55,
+      "evidence": [
+        "alpha_bloc.dart sem eventos proprios"
+      ],
+      "recommended_action": "Mover a leitura para o repositorio."
+    },
+    {
+      "lens": "escopo",
+      "hypothesis": "A task mistura duas responsabilidades e nenhum tier fecha ambas.",
+      "confidence": 0.8,
+      "evidence": [
+        "dois arquivos de feature no escopo",
+        "finding repetido em 3 tentativas"
+      ],
+      "recommended_action": "Dividir T2 em duas tasks."
+    },
+    {
+      "lens": "contrato",
+      "hypothesis": "A rule de estado e ambigua para o caso de stream unico.",
+      "confidence": 0.3,
+      "evidence": [
+        "rule citada sem exemplo"
+      ],
+      "recommended_action": "Esclarecer a rule antes de retomar."
+    }
+  ],
+  "history": [
+    {
+      "attempt": 1,
+      "tier": "haiku",
+      "failing": []
+    },
+    {
+      "attempt": 2,
+      "tier": "haiku",
+      "failing": []
+    },
+    {
+      "attempt": 3,
+      "tier": "sonnet",
+      "failing": []
+    },
+    {
+      "attempt": 4,
+      "tier": "sonnet",
+      "failing": []
+    }
+  ],
+  "checkpoint": "0000000000000000000000000000000000000a1f",
+  "tasks": [
+    {
+      "id": "T1",
+      "complexity": "S",
+      "risk": "low",
+      "tier0": "haiku",
+      "tier": "haiku",
+      "attempts": 1,
+      "escalations": [],
+      "status": "done",
+      "reason": null,
+      "files_changed": [
+        "lib/features/alpha/alpha_page.dart"
+      ],
+      "decisions": [],
+      "summary": "Pagina criada."
+    },
+    {
+      "id": "T2",
+      "complexity": "L",
+      "risk": "high",
+      "tier0": "haiku",
+      "tier": "sonnet",
+      "attempts": 4,
+      "escalations": [
+        {
+          "from": "haiku",
+          "to": "sonnet",
+          "at_attempt": 2,
+          "open": [
+            "g0:lib/features/alpha/alpha_page.dart:unused_import",
+            "g0:lib/features/alpha/alpha_bloc.dart:flutter-app/estado"
+          ]
+        }
+      ],
+      "status": "blocked",
+      "reason": "same_failure_across_tiers",
+      "files_changed": [
+        "lib/features/alpha/alpha_bloc.dart",
+        "lib/features/alpha/alpha_repo.dart"
+      ],
+      "decisions": [
+        "usar repositorio unico"
+      ],
+      "summary": "Bloc e repositorio implementados."
+    },
+    {
+      "id": "T3",
+      "status": "pending"
+    }
+  ],
+  "trace": [
+    {
+      "role": "dev",
+      "task": "T1",
+      "attempt": 1,
+      "tier": "haiku",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 1200
+    },
+    {
+      "role": "g0",
+      "task": "T1",
+      "attempt": 1,
+      "tier": "haiku",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 300
+    },
+    {
+      "role": "g1",
+      "task": "T1",
+      "attempt": 1,
+      "tier": "haiku",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 2100
+    },
+    {
+      "role": "ops",
+      "task": "T1",
+      "attempt": 1,
+      "tier": "haiku",
+      "verdict": "ok",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 90
+    },
+    {
+      "role": "dev",
+      "task": "T2",
+      "attempt": 1,
+      "tier": "haiku",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 3100
+    },
+    {
+      "role": "g0",
+      "task": "T2",
+      "attempt": 1,
+      "tier": "haiku",
+      "verdict": "fail",
+      "blocking": [
+        "g0:lib/features/alpha/alpha_page.dart:unused_import"
+      ],
+      "findings": [
+        {
+          "id": "G0-ANALYZE-UNUSED_IMPORT",
+          "severity": "major",
+          "file": "lib/features/alpha/alpha_page.dart",
+          "message": "Import nao utilizado em alpha_page.dart.",
+          "line": 12,
+          "rule_ref": "unused_import"
+        }
+      ],
+      "tokens_out": 410
+    },
+    {
+      "role": "dev",
+      "task": "T2",
+      "attempt": 2,
+      "tier": "haiku",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 2800
+    },
+    {
+      "role": "g0",
+      "task": "T2",
+      "attempt": 2,
+      "tier": "haiku",
+      "verdict": "fail",
+      "blocking": [
+        "g0:lib/features/alpha/alpha_page.dart:unused_import",
+        "g0:lib/features/alpha/alpha_bloc.dart:flutter-app/estado"
+      ],
+      "findings": [
+        {
+          "id": "G0-ANALYZE-UNUSED_IMPORT",
+          "severity": "major",
+          "file": "lib/features/alpha/alpha_page.dart",
+          "message": "Import nao utilizado em alpha_page.dart.",
+          "line": 12,
+          "rule_ref": "unused_import"
+        },
+        {
+          "id": "G1-ARCH-LAYER",
+          "severity": "critical",
+          "file": "lib/features/alpha/alpha_bloc.dart",
+          "message": "Classe de estado mistura apresentacao e acesso a dados; extraia a leitura para o repositorio e mantenha o widget estatico. Classe de estado mistura apresentacao e acesso a dados; extraia a leitura para o repositorio e mantenha o widget estatico. Classe de estado mistura apresentacao e acesso a dados",
+          "line": 0,
+          "rule_ref": "flutter-app/estado"
+        }
+      ],
+      "tokens_out": 380
+    },
+    {
+      "role": "dev",
+      "task": "T2",
+      "attempt": 3,
+      "tier": "sonnet",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 4100
+    },
+    {
+      "role": "g0",
+      "task": "T2",
+      "attempt": 3,
+      "tier": "sonnet",
+      "verdict": "fail",
+      "blocking": [
+        "g0:lib/features/alpha/alpha_page.dart:unused_import"
+      ],
+      "findings": [
+        {
+          "id": "G0-ANALYZE-UNUSED_IMPORT",
+          "severity": "major",
+          "file": "lib/features/alpha/alpha_page.dart",
+          "message": "Import nao utilizado em alpha_page.dart.",
+          "line": 12,
+          "rule_ref": "unused_import"
+        }
+      ],
+      "tokens_out": 350
+    },
+    {
+      "role": "dev",
+      "task": "T2",
+      "attempt": 4,
+      "tier": "sonnet",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 3900
+    },
+    {
+      "role": "g0",
+      "task": "T2",
+      "attempt": 4,
+      "tier": "sonnet",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 420
+    },
+    {
+      "role": "g1",
+      "task": "T2",
+      "attempt": 4,
+      "tier": "sonnet",
+      "verdict": "fail",
+      "blocking": [
+        "g1:lib/features/alpha/alpha_bloc.dart:flutter-app/estado",
+        "g1:lib/features/alpha/alpha_repo.dart:G1-ARCH-DI"
+      ],
+      "findings": [
+        {
+          "id": "G1-ARCH-LAYER",
+          "severity": "critical",
+          "file": "lib/features/alpha/alpha_bloc.dart",
+          "message": "Classe de estado mistura apresentacao e acesso a dados; extraia a leitura para o repositorio e mantenha o widget estatico. Classe de estado mistura apresentacao e acesso a dados; extraia a leitura para o repositorio e mantenha o widget estatico. Classe de estado mistura apresentacao e acesso a dados",
+          "line": 0,
+          "rule_ref": "flutter-app/estado"
+        },
+        {
+          "id": "G1-ARCH-DI",
+          "severity": "major",
+          "file": "lib/features/alpha/alpha_repo.dart",
+          "message": "Dependencia criada dentro do widget em vez de injetada."
+        }
+      ],
+      "tokens_out": 5200
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "phases": {
+    "specify": {
+      "start": "2026-03-10T06:00:00Z",
+      "end": "2026-03-10T06:05:00Z"
+    }
+  },
+  "status": "implementing",
+  "feature": "Fixture quebrada",
+  "project": "broken",
+  "project_path": "/synthetic/broken",
+  "start_date": "2026-03-10T06:00:00Z",
+  "end_date": null,
+  "blockers": [],
+  "tags": [],
+  "tasks": {
+    "total": 1,
+    "completed": 1,
+    "current_task_id": null,
+    "items": [
+      {
+        "id": "T1",
+        "title": "Task quebrada",
+        "complexity": "S",
+        "risk": "low",
+        "tier0": "haiku",
+        "affects": [],
+        "tests": [],
+        "description": "Tarefa sint\u00e9tica T1.",
+        "tier": "haiku",
+        "attempts": 1,
+        "status": "done",
+        "files_changed": [],
+        "escalations": []
+      }
+    ]
+  },
+  "exec": {
+    "runs": [
+      "impl-20260312T070000Z"
+    ],
+    "checkpoint": "0000000000000000000000000000000000000c3d",
+    "last_status": "done"
+  }
+}
