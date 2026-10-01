@@ -4,11 +4,12 @@ import 'package:go_router/go_router.dart';
 import '../core/claude_home.dart';
 import '../data/orgs.dart';
 import '../features/about/about_page.dart';
+import '../features/adrs/adrs_page.dart';
 import '../features/artifacts/artifacts_page.dart';
 import '../features/flow/flow_page.dart';
 import '../features/inbox/inbox_page.dart';
 import '../features/landing/landing_page.dart';
-import '../features/placeholder/planned_page.dart';
+import '../features/metrics/metrics_page.dart';
 import '../features/prs/prs_page.dart';
 import '../features/reviews/reviews_page.dart';
 import '../features/runs/runs_page.dart';
@@ -95,8 +96,9 @@ GoRouter buildRouter(EffectivePaths paths) {
                   pr: int.tryParse(query['pr'] ?? ''),
                 ),
                 AppTab.prs => PrsPage(key: ValueKey(project), projectName: project),
+                AppTab.metrics => MetricsPage(key: ValueKey(project), projectName: project),
+                AppTab.adrs => AdrsPage(key: ValueKey(project), projectName: project, adr: query['adr']),
                 AppTab.inbox => const InboxPage(),
-                final tab => PlannedPage(tab: tab),
               });
             },
           ),

@@ -97,7 +97,7 @@ class _ProjectSections extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final adrs = [...data.adrs]..sort((a, b) => a.id.compareTo(b.id));
+    final adrs = data.adrs;
     final routing = data.routing;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -130,7 +130,7 @@ class _ProjectSections extends StatelessWidget {
                       children: [
                         SizedBox(width: 48, child: Mono(a.id)),
                         Expanded(child: Text(a.title, style: const TextStyle(fontSize: 13))),
-                        Pill(label: a.status, color: a.status == 'accepted' ? c.pass : c.textMuted, dot: false),
+                        Pill(label: a.status, color: adrStatusColor(c, a.status), dot: false),
                       ],
                     ),
             ),

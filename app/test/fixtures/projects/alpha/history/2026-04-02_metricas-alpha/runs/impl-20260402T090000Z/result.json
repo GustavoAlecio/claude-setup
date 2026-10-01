@@ -1,0 +1,104 @@
+{
+  "status": "done",
+  "checkpoint": "cccc333",
+  "tasks": [
+    {
+      "id": "T1",
+      "status": "done",
+      "tier0": "sonnet",
+      "tier": "opus",
+      "attempts": 2
+    },
+    {
+      "id": "T2",
+      "status": "done",
+      "tier0": "sonnet",
+      "tier": "sonnet",
+      "attempts": 1
+    }
+  ],
+  "trace": [
+    {
+      "role": "dev",
+      "task": "T1",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 100
+    },
+    {
+      "role": "g0",
+      "task": "T1",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "fail",
+      "blocking": [
+        "G0:lib/a.dart:analyze"
+      ],
+      "findings": [],
+      "tokens_out": 0
+    },
+    {
+      "role": "dev",
+      "task": "T1",
+      "attempt": 2,
+      "tier": "opus",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 200
+    },
+    {
+      "role": "g0",
+      "task": "T1",
+      "attempt": 2,
+      "tier": "opus",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 0
+    },
+    {
+      "role": "g1",
+      "task": "T1",
+      "attempt": 2,
+      "tier": "opus",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 50
+    },
+    {
+      "role": "dev",
+      "task": "T2",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 150
+    },
+    {
+      "role": "g0",
+      "task": "T2",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 0
+    },
+    {
+      "role": "g1",
+      "task": "T2",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 40
+    }
+  ]
+}

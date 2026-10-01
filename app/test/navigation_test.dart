@@ -155,35 +155,33 @@ void main() {
     expect(router().routerDelegate.currentConfiguration.uri.path, '/p/notifications-api/runs');
   });
 
-  testWidgets('Artefatos, Reviews, PRs and Para revisar tabs open their pages instead of the planned placeholder', (
-    tester,
-  ) async {
+  testWidgets('every project tab opens its own page', (tester) async {
     await tester.pumpWidget(_app(MockFlowRepository()));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('Artefatos'));
     await tester.pumpAndSettle();
     expect(find.text('nenhum artefato'), findsOneWidget);
-    expect(find.text('paridade · próxima etapa'), findsNothing);
 
     await tester.tap(find.text('Reviews'));
     await tester.pumpAndSettle();
     expect(find.text('nenhum review; rode /review em um PR'), findsOneWidget);
-    expect(find.text('paridade · próxima etapa'), findsNothing);
 
     await tester.tap(find.text('PRs'));
     await tester.pumpAndSettle();
     expect(find.text('nenhum PR registrado; abra com /pr-open'), findsOneWidget);
-    expect(find.text('paridade · próxima etapa'), findsNothing);
 
     await tester.tap(find.text('Para revisar'));
     await tester.pumpAndSettle();
     expect(find.text('nenhum PR esperando sua revisão'), findsOneWidget);
-    expect(find.text('paridade · próxima etapa'), findsNothing);
 
     await tester.tap(find.text('Métricas'));
     await tester.pumpAndSettle();
-    expect(find.text('paridade · próxima etapa'), findsOneWidget);
+    expect(find.text('nenhum ciclo registrado'), findsOneWidget);
+
+    await tester.tap(find.text('ADRs'));
+    await tester.pumpAndSettle();
+    expect(find.text('este projeto não tem ADRs'), findsOneWidget);
   });
 
   group('two runs in one cycle', () {

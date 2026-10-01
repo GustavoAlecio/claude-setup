@@ -38,6 +38,12 @@ class MockInventoryRepository implements InventoryRepository {
 
   @override
   Future<ProjectInventory> loadProject(Project project) async => _project;
+
+  @override
+  Future<({AdrEntry entry, String body})?> loadAdr(Project project, String id) async {
+    final entry = _project.adrs.where((a) => a.id == id).firstOrNull;
+    return entry == null ? null : (entry: entry, body: _adrBodies[id] ?? '# ${entry.title}\n');
+  }
 }
 
 const _pipeline = [
@@ -128,6 +134,11 @@ const _workflows = [
     ),
   ),
 ];
+
+const _adrBodies = {
+  '0001': '# Parser puro separado do IO\n\nParsers são funções puras. Veja [[0002-cubit]].\n',
+  '0002': '# StreamCubit genérico\n\nDepende de [[0001]].\n',
+};
 
 const _projectData = ProjectInventory(
   rules: [

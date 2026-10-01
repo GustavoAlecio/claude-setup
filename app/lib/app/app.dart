@@ -12,8 +12,10 @@ import '../data/flow_repository.dart';
 import '../data/github_repository.dart';
 import '../data/mock_github_repository.dart';
 import '../data/inventory_repository.dart';
+import '../data/metrics_repository.dart';
 import '../data/mock_docs_repository.dart';
 import '../data/mock_inventory_repository.dart';
+import '../data/mock_metrics_repository.dart';
 import '../data/orgs.dart';
 import '../data/session_models.dart';
 import '../data/sessions_repository.dart';
@@ -36,6 +38,7 @@ class ClaudeFlowApp extends StatefulWidget {
     required this.engine,
     this.pickDirectory = getDirectoryPath,
     this.inventory = const MockInventoryRepository.empty(),
+    this.metrics = const MockMetricsRepository.empty(),
     this.docs,
     this.github,
     this.paths,
@@ -46,6 +49,7 @@ class ClaudeFlowApp extends StatefulWidget {
   final SessionsRepository sessions;
   final EngineController engine;
   final InventoryRepository inventory;
+  final MetricsRepository metrics;
 
   /// `null` is [MockDocsRepository.empty].
   final DocsRepository? docs;
@@ -93,33 +97,36 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
       pickDirectory: widget.pickDirectory,
       child: InventoryScope(
         repository: widget.inventory,
-        child: DocsScope(
-          repository: docs,
-          opener: docs.open,
-          child: SessionsScope(
-            sessions: widget.sessions,
-            engine: widget.engine,
-            child: GitHubScope(
-              repository: github,
-              child: MultiBlocProvider(
-                providers: [
-                  BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
-                  BlocProvider(create: (_) => ConfigCubit(widget.repository)),
-                  BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
-                  BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
-                  BlocProvider(
-                    create: (_) => InboxCubit(github, widget.engine.watch().map((s) => s.endpoint)),
-                    lazy: false,
+        child: MetricsScope(
+          repository: widget.metrics,
+          child: DocsScope(
+            repository: docs,
+            opener: docs.open,
+            child: SessionsScope(
+              sessions: widget.sessions,
+              engine: widget.engine,
+              child: GitHubScope(
+                repository: github,
+                child: MultiBlocProvider(
+                  providers: [
+                    BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
+                    BlocProvider(create: (_) => ConfigCubit(widget.repository)),
+                    BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
+                    BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
+                    BlocProvider(
+                      create: (_) => InboxCubit(github, widget.engine.watch().map((s) => s.endpoint)),
+                      lazy: false,
+                    ),
+                  ],
+                  child: MaterialApp.router(
+                    title: 'Claude Flow',
+                    debugShowCheckedModeBanner: false,
+                    theme: buildTheme(Brightness.light),
+                    darkTheme: buildTheme(Brightness.dark),
+                    themeMode: ThemeMode.dark,
+                    routerConfig: _router,
+                    builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
                   ),
-                ],
-                child: MaterialApp.router(
-                  title: 'Claude Flow',
-                  debugShowCheckedModeBanner: false,
-                  theme: buildTheme(Brightness.light),
-                  darkTheme: buildTheme(Brightness.dark),
-                  themeMode: ThemeMode.dark,
-                  routerConfig: _router,
-                  builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
                 ),
               ),
             ),

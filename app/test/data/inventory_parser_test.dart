@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:claude_flow/data/inventory_models.dart';
 import 'package:claude_flow/data/inventory_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -182,6 +183,121 @@ void main() {
 
       final bad = parseAdr('---\nid: 0001\n---\n', path: '/d/0001-y.md');
       expect(bad.error, contains('0001-y.md'));
+    });
+
+    test('parseAdr lê date e as formas reais de lista', () {
+      final a = parseAdr(
+        '---\nid: 0007\ntitle: T\nstatus: accepted\ndate: 2026-10-01\n'
+        'affects: ["a/**", \'b c\', d]\nsupersedes: []\nsuperseded_by: [0008, "0009"]\ntags: [x]\n---\n',
+        path: '/d/0007-x.md',
+      );
+      expect(a.error, isNull);
+      expect(a.warning, isNull);
+      expect(a.date, '2026-10-01');
+      expect(a.affects, ['a/**', 'b c', 'd']);
+      expect(a.supersedes, isEmpty);
+      expect(a.supersededBy, ['0008', '0009']);
+      expect(a.tags, ['x']);
+    });
+
+    test('parseAdr: lista inválida vira campo vazio com warning', () {
+      final a = parseAdr(
+        '---\nid: 0007\ntitle: T\nstatus: accepted\naffects: [a, "b\nsupersedes:\n  - 0001\ntags: [ok]\n---\n',
+        path: '/d/0007-x.md',
+      );
+      expect(a.affects, isEmpty);
+      expect(a.supersedes, isEmpty);
+      expect(a.tags, ['ok']);
+      expect(a.warning, allOf(contains('affects'), contains('supersedes')));
+      expect(a.error, isNull);
+    });
+
+    test('parseAdr sem frontmatter usa os dígitos do nome e status ?', () {
+      final a = parseAdr('# só texto', path: '/d/0012-sem.md');
+      expect((a.id, a.status), ('0012', '?'));
+      expect(a.error, contains('0012-sem.md'));
+      expect(parseAdr('x', path: '/d/INDEX.md').id, '');
+    });
+
+    test('parseAdr com id fora de 4 dígitos cai no nome do arquivo', () {
+      final a = parseAdr('---\nid: 7\ntitle: T\nstatus: accepted\n---\n', path: '/d/0007-x.md');
+      expect((a.id, a.status), ('0007', '?'));
+    });
+
+    test('adrBody e markDuplicateAdrs', () {
+      expect(adrBody('---\nid: 1\n---\n# T\ncorpo'), '# T\ncorpo');
+      expect(adrBody('sem fm'), 'sem fm');
+      expect(adrBody('---\nsem fim'), '---\nsem fim');
+      const a = AdrEntry(id: '0001', title: 'a', status: 'accepted', path: '/d/0001-a.md');
+      const b = AdrEntry(id: '0001', title: 'b', status: 'accepted', path: '/d/0001-b.md');
+      final r = markDuplicateAdrs([a, b]);
+      expect(r.first.error, isNull);
+      expect(r.last.error, contains('id duplicado'));
+    });
+
+    test('resolveAdrTarget: nome do arquivo, senão 4 dígitos', () {
+      const adrs = [
+        AdrEntry(id: '0002', title: 'b', status: 'accepted', path: '/d/0002-cubit.md'),
+        AdrEntry(id: '0001', title: 'a', status: 'accepted', path: '/d/0001-parser.md'),
+      ];
+      expect(resolveAdrTarget('0002-cubit', adrs), '0002');
+      expect(resolveAdrTarget('0001', adrs), '0001');
+      expect(resolveAdrTarget('0001-renomeado', adrs), '0001');
+      expect(resolveAdrTarget('0009', adrs), isNull);
+      expect(resolveAdrTarget('nada', adrs), isNull);
+    });
+
+    test('adrChain: componente conexo em ordem topológica, ids inexistentes e ciclos', () {
+      AdrEntry adr(String id, {List<String> supersedes = const [], List<String> by = const []}) =>
+          AdrEntry(id: id, title: id, status: 'x', path: '/d/$id.md', supersedes: supersedes, supersededBy: by);
+      final adrs = [
+        adr('0003', supersedes: ['0002']),
+        adr('0002', by: ['0003'], supersedes: ['0001']),
+        adr('0001', by: ['0099']),
+        adr('0010'),
+      ];
+      final chain = adrChain('0002', adrs);
+      expect(chain.map((i) => i.id), ['0001', '0002', '0003', '0099']);
+      expect(chain.last.entry, isNull);
+      expect(adrChain('0010', adrs).map((i) => i.id), ['0010']);
+
+      final cycle = [
+        adr('0001', supersedes: ['0002']),
+        adr('0002', supersedes: ['0001']),
+      ];
+      expect(adrChain('0002', cycle).map((i) => i.id), ['0001', '0002']);
+    });
+
+    test('defaultAdrId: maior accepted, senão maior id, vazio → null', () {
+      AdrEntry adr(String id, String status) => AdrEntry(id: id, title: id, status: status, path: '/d/$id.md');
+      expect(defaultAdrId([adr('0001', 'accepted'), adr('0003', 'proposed'), adr('0002', 'accepted')]), '0002');
+      expect(defaultAdrId([adr('0001', 'proposed'), adr('0004', 'superseded')]), '0004');
+      expect(defaultAdrId(const []), isNull);
+    });
+
+    test('adrStatusMatches agrupa substituídos e deprecados', () {
+      expect(adrStatusMatches(AdrStatusGroup.all, '?'), isTrue);
+      expect(adrStatusMatches(AdrStatusGroup.accepted, 'accepted'), isTrue);
+      expect(adrStatusMatches(AdrStatusGroup.accepted, 'proposed'), isFalse);
+      expect(adrStatusMatches(AdrStatusGroup.proposed, 'proposed'), isTrue);
+      expect(adrStatusMatches(AdrStatusGroup.superseded, 'superseded'), isTrue);
+      expect(adrStatusMatches(AdrStatusGroup.superseded, 'deprecated'), isTrue);
+      expect(adrStatusMatches(AdrStatusGroup.superseded, 'accepted'), isFalse);
+    });
+
+    test('sortAdrs ordena por (id, path) sem mutar a entrada', () {
+      AdrEntry adr(String id, String path) => AdrEntry(id: id, title: id, status: 'accepted', path: path);
+      final input = [adr('0002', '/d/b.md'), adr('0001', '/d/z.md'), adr('0001', '/d/a.md')];
+      expect(sortAdrs(input).map((a) => a.path), ['/d/a.md', '/d/z.md', '/d/b.md']);
+      expect(input.first.id, '0002');
+    });
+
+    test('adrSelectable recusa id vazio e duplicado', () {
+      const ok = AdrEntry(id: '0001', title: 'a', status: 'accepted', path: '/d/1.md');
+      expect(adrSelectable(ok), isTrue);
+      expect(adrSelectable(ok.withError('id duplicado: 0001 (1.md)')), isFalse);
+      expect(adrSelectable(const AdrEntry(id: '', title: '', status: '?', path: '/d/x.md')), isFalse);
+      expect(adrSelectable(ok.withError('ilegível')), isTrue);
     });
 
     test('parseRuleSummary pula frontmatter e título', () {
