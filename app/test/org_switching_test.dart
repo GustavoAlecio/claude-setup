@@ -107,9 +107,15 @@ class _Sessions extends MockSessionsRepository {
   }
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) {
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) {
     created.add((project, command, cwd));
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
   }
 }
 

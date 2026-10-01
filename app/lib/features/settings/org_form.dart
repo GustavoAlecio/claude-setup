@@ -4,6 +4,7 @@ import 'dart:developer';
 import 'package:flutter/material.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/config_mutations.dart';
 import '../../data/flow_repository.dart';
@@ -66,6 +67,7 @@ class _OrgFormState extends State<OrgForm> {
   final _ownerInput = TextEditingController();
   late String? _account = widget.initial?.github?.account;
   late List<String> _owners = [...?widget.initial?.github?.owners];
+  late PermissionMode? _permissionMode = widget.initial?.permissionMode;
   bool _githubTouched = false;
   String? _error;
   String? _ownerError;
@@ -223,7 +225,7 @@ class _OrgFormState extends State<OrgForm> {
   Future<void> _save() async {
     if (_busy || _blocked) return;
     final github = _githubTouched ? OrgGithub(account: _account, owners: _owners) : widget.initial?.github;
-    final draft = OrgConfig(name: _name.text.trim(), roots: _roots, github: github);
+    final draft = OrgConfig(name: _name.text.trim(), roots: _roots, github: github, permissionMode: _permissionMode);
     final error = _roots.isEmpty ? 'escolha uma pasta para a org' : validateOrgs([...widget.others, draft]);
     if (error != null) {
       setState(() => _error = error);
@@ -381,6 +383,46 @@ class _OrgFormState extends State<OrgForm> {
     );
   }
 
+  Widget _permissionsSection(AppColors c) {
+    final mode = _permissionMode;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InputDecorator(
+          decoration: const InputDecoration(labelText: 'Permissões da org', isDense: true),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<PermissionMode?>(
+              key: const ValueKey('org-permission-mode'),
+              isDense: true,
+              isExpanded: true,
+              value: mode,
+              style: TextStyle(fontSize: 13, color: c.textPrimary),
+              items: [
+                const DropdownMenuItem<PermissionMode?>(value: null, child: Text('herdar global')),
+                for (final m in PermissionMode.values)
+                  DropdownMenuItem<PermissionMode?>(
+                    value: m,
+                    child: Text(permissionModeLabel(m), style: TextStyle(color: permissionModeColor(c, m))),
+                  ),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (m) => setState(() {
+                      _permissionMode = m;
+                      _error = null;
+                    }),
+            ),
+          ),
+        ),
+        if (mode == PermissionMode.bypassPermissions)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(permissionModeHint(mode!), style: TextStyle(fontSize: 12, color: c.warn)),
+          ),
+      ],
+    );
+  }
+
   Widget _sshLine(AppColors c, String owner) {
     final ssh = _ssh[owner.toLowerCase()];
     final identity = ssh?.identity;
@@ -473,6 +515,8 @@ class _OrgFormState extends State<OrgForm> {
             ],
           ),
         ],
+        const SizedBox(height: 14),
+        _permissionsSection(c),
         const SizedBox(height: 14),
         _githubSection(c),
         if (_error != null) ...[

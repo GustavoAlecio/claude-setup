@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../engine/engine_config.dart';
 import '../engine/engine_supervisor.dart';
 import 'session_models.dart';
 
@@ -10,7 +11,14 @@ abstract interface class SessionsRepository {
 
   /// [cwd] overrides the engine's own lookup (`cwds` + scan); `null` lets the engine resolve it.
   /// [githubAccount] is the `gh` login the session's `gh` runs as; `null` keeps the active account.
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount});
+  /// [permissionMode] comes from `effectivePermissionMode`; required to track sessions' modes.
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  });
 
   /// Session of the org itself, outside any project: [cwd] is its first root, [additionalDirectories] the others.
   Future<SessionSummary> createInOrg(
@@ -19,7 +27,12 @@ abstract interface class SessionsRepository {
     required String cwd,
     List<String> additionalDirectories = const [],
     String? githubAccount,
+    required PermissionMode permissionMode,
   });
+
+  /// Changes the mode of a live or detached session. Throws [SessionsException] with the engine text on a refusal
+  /// (409) and on 404 (unknown session, or an engine older than the route).
+  Future<void> setPermissionMode(String id, PermissionMode mode);
   Future<void> send(String id, String text);
   Future<void> answer(String id, String requestId, PermissionDecision decision, {Map<String, String>? answers});
   Future<void> resume(String id);

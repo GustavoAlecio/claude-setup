@@ -4,6 +4,7 @@ import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../app/config_cubit.dart';
 import '../../app/engine_cubit.dart';
 import '../../app/inbox_cubit.dart';
 import '../../app/projects_cubit.dart';
@@ -51,6 +52,7 @@ class _InboxPageState extends State<InboxPage> with SessionLauncher {
       '/review ${item.number}',
       cwd: cwd,
       githubAccount: account,
+      permissionMode: launchOrg(cwd, projects, context.read<ConfigCubit>().state.data).mode,
     ),
   );
 

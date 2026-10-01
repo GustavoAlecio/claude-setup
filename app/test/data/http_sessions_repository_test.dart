@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:claude_flow/data/http_sessions_repository.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/session_reducer.dart';
+import 'package:claude_flow/data/sessions_repository.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _timeout = Duration(seconds: 5);
@@ -45,6 +47,10 @@ class _FakeEngine {
 
   /// Response of `POST /api/sessions`; `null` answers with the engine's missing-cwd 400.
   Map<String, Object?>? created;
+
+  /// Error reply of `POST /api/sessions/:id/permission-mode` as `(status, body)`; `null` answers with the summary
+  /// carrying the new mode. A [String] body is sent as is, like the HTML 404 of an engine without the route.
+  (int, Object)? permissionModeError;
 
   /// Called per `/api/sessions/:id/stream` connection; returning leaves the response open.
   Future<void> Function(HttpResponse res, _Req req, int connection) sessionStream = (_, _, _) async {};
@@ -104,6 +110,18 @@ class _FakeEngine {
     if (request.method == 'GET' && segments.length == 3) {
       final summary = known[segments[2]];
       return summary == null ? _json(res, 404, {'error': 'sessao nao encontrada'}) : _json(res, 200, summary);
+    }
+    if (request.method == 'POST' && segments.length == 4 && segments[3] == 'permission-mode') {
+      if (permissionModeError case (final status, final String body)) {
+        res.statusCode = status;
+        res.headers.contentType = ContentType.html;
+        res.write(body);
+        return res.close();
+      }
+      if (permissionModeError case (final status, final body)) return _json(res, status, body);
+      final summary = known[segments[2]];
+      if (summary == null) return _json(res, 404, {'error': 'sessao nao encontrada'});
+      return _json(res, 200, {...summary, 'permissionMode': (req.body as Map)['mode']});
     }
     if (request.method == 'POST' && segments.length == 4) {
       final summary = known[segments[2]];
@@ -412,7 +430,7 @@ void main() {
     test('create surfaces the engine error text', () async {
       await repo.watchSessions().first.timeout(_timeout);
       await expectLater(
-        repo.create('demo', 'responda ok'),
+        repo.create('demo', 'responda ok', permissionMode: PermissionMode.bypassPermissions),
         throwsA(
           isA<Object>().having(
             (e) => e.toString(),
@@ -426,27 +444,147 @@ void main() {
 
   test('create sends cwd only when given', () async {
     await repo.watchSessions().first.timeout(_timeout);
-    await expectLater(repo.create('demo', 'a', cwd: '/repos/demo'), throwsA(isA<Exception>()));
-    await expectLater(repo.create('demo', 'b'), throwsA(isA<Exception>()));
+    await expectLater(
+      repo.create('demo', 'a', cwd: '/repos/demo', permissionMode: PermissionMode.bypassPermissions),
+      throwsA(isA<Exception>()),
+    );
+    await expectLater(
+      repo.create('demo', 'b', permissionMode: PermissionMode.bypassPermissions),
+      throwsA(isA<Exception>()),
+    );
     expect(engine.posts('/api/sessions').map((r) => r.body), [
-      {'project': 'demo', 'command': 'a', 'cwd': '/repos/demo'},
-      {'project': 'demo', 'command': 'b'},
+      {'project': 'demo', 'command': 'a', 'cwd': '/repos/demo', 'permissionMode': 'bypassPermissions'},
+      {'project': 'demo', 'command': 'b', 'permissionMode': 'bypassPermissions'},
     ]);
   });
 
   test('create and createInOrg send githubAccount only when given', () async {
     await repo.watchSessions().first.timeout(_timeout);
-    await expectLater(repo.create('demo', 'a', githubAccount: 'acct-a'), throwsA(isA<Exception>()));
     await expectLater(
-      repo.createInOrg('org-x', 'b', cwd: '/dev/x', githubAccount: 'acct-b'),
+      repo.create('demo', 'a', githubAccount: 'acct-a', permissionMode: PermissionMode.bypassPermissions),
       throwsA(isA<Exception>()),
     );
-    await expectLater(repo.createInOrg('org-x', 'c', cwd: '/dev/x'), throwsA(isA<Exception>()));
+    await expectLater(
+      repo.createInOrg(
+        'org-x',
+        'b',
+        cwd: '/dev/x',
+        githubAccount: 'acct-b',
+        permissionMode: PermissionMode.bypassPermissions,
+      ),
+      throwsA(isA<Exception>()),
+    );
+    await expectLater(
+      repo.createInOrg('org-x', 'c', cwd: '/dev/x', permissionMode: PermissionMode.bypassPermissions),
+      throwsA(isA<Exception>()),
+    );
     expect(engine.posts('/api/sessions').map((r) => r.body), [
-      {'project': 'demo', 'command': 'a', 'githubAccount': 'acct-a'},
-      {'org': 'org-x', 'command': 'b', 'cwd': '/dev/x', 'additionalDirectories': <String>[], 'githubAccount': 'acct-b'},
-      {'org': 'org-x', 'command': 'c', 'cwd': '/dev/x', 'additionalDirectories': <String>[]},
+      {'project': 'demo', 'command': 'a', 'githubAccount': 'acct-a', 'permissionMode': 'bypassPermissions'},
+      {
+        'org': 'org-x',
+        'command': 'b',
+        'cwd': '/dev/x',
+        'additionalDirectories': <String>[],
+        'githubAccount': 'acct-b',
+        'permissionMode': 'bypassPermissions',
+      },
+      {
+        'org': 'org-x',
+        'command': 'c',
+        'cwd': '/dev/x',
+        'additionalDirectories': <String>[],
+        'permissionMode': 'bypassPermissions',
+      },
     ]);
+  });
+
+  group('permission mode', () {
+    test('create and createInOrg send permissionMode always', () async {
+      await repo.watchSessions().first.timeout(_timeout);
+      await expectLater(
+        repo.create('demo', 'a', permissionMode: PermissionMode.bypassPermissions),
+        throwsA(isA<Exception>()),
+      );
+      await expectLater(
+        repo.create('demo', 'b', permissionMode: PermissionMode.defaultMode),
+        throwsA(isA<Exception>()),
+      );
+      await expectLater(
+        repo.createInOrg('org-x', 'c', cwd: '/dev/x', permissionMode: PermissionMode.defaultMode),
+        throwsA(isA<Exception>()),
+      );
+      expect(engine.posts('/api/sessions').map((r) => r.body), [
+        {'project': 'demo', 'command': 'a', 'permissionMode': 'bypassPermissions'},
+        {'project': 'demo', 'command': 'b', 'permissionMode': 'default'},
+        {
+          'org': 'org-x',
+          'command': 'c',
+          'cwd': '/dev/x',
+          'additionalDirectories': <String>[],
+          'permissionMode': 'default',
+        },
+      ]);
+    });
+
+    test('setPermissionMode posts {mode} to the session route and lists the returned summary', () async {
+      engine.snapshot = [_summary('s1', status: 'idle')];
+      engine.known['s1'] = _summary('s1', status: 'idle');
+      final listed = await repo.watchSessions().first.timeout(_timeout);
+      expect(listed.single.permissionMode, PermissionMode.defaultMode);
+
+      final updated = repo
+          .watchSessions()
+          .firstWhere((l) => l.single.permissionMode == PermissionMode.acceptEdits)
+          .timeout(_timeout);
+      await repo.setPermissionMode('s1', PermissionMode.acceptEdits);
+
+      expect(engine.posts('/api/sessions/s1/permission-mode').map((r) => r.body), [
+        {'mode': 'acceptEdits'},
+      ]);
+      expect((await updated).single.id, 's1');
+    });
+
+    test('a refusal (409) is a SessionsException with the engine text and keeps the session', () async {
+      engine.snapshot = [_summary('s1', status: 'idle')];
+      engine.known['s1'] = _summary('s1', status: 'idle');
+      await repo.watchSessions().first.timeout(_timeout);
+      engine.permissionModeError = (409, {'error': 'bypass_disabled'});
+
+      await expectLater(
+        repo.setPermissionMode('s1', PermissionMode.bypassPermissions),
+        throwsA(
+          isA<SessionsException>()
+              .having((e) => e.statusCode, 'statusCode', 409)
+              .having((e) => e.message, 'message', 'bypass_disabled'),
+        ),
+      );
+      expect((await repo.watchSessions().first.timeout(_timeout)).single.permissionMode, PermissionMode.defaultMode);
+    });
+
+    test('404 is a SessionsException with the engine text and does not drop the session', () async {
+      engine.snapshot = [_summary('s1', status: 'idle')];
+      await repo.watchSessions().first.timeout(_timeout);
+
+      await expectLater(
+        repo.setPermissionMode('s1', PermissionMode.auto),
+        throwsA(
+          isA<SessionsException>()
+              .having((e) => e.statusCode, 'statusCode', 404)
+              .having((e) => e.message, 'message', 'sessao nao encontrada'),
+        ),
+      );
+
+      engine.permissionModeError = (404, '<!DOCTYPE html><pre>Cannot POST /api/sessions/s1/permission-mode</pre>');
+      await expectLater(
+        repo.setPermissionMode('s1', PermissionMode.auto),
+        throwsA(
+          isA<SessionsException>()
+              .having((e) => e.statusCode, 'statusCode', 404)
+              .having((e) => e.message, 'message', 'HTTP 404'),
+        ),
+      );
+      expect((await repo.watchSessions().first.timeout(_timeout)).map((s) => s.id), ['s1']);
+    });
   });
 
   group('org sessions', () {
@@ -481,16 +619,29 @@ void main() {
       engine.created = orgSummary;
       await repo.watchSessions().first.timeout(_timeout);
       final listed = repo.watchSessions().firstWhere((l) => l.isNotEmpty).timeout(_timeout);
-      final summary = await repo.createInOrg('OTG', 'analise', cwd: '/dev/otg', additionalDirectories: ['/vol/otg']);
-      await repo.createInOrg('OTG', 'só uma raiz', cwd: '/dev/otg');
+      final summary = await repo.createInOrg(
+        'OTG',
+        'analise',
+        cwd: '/dev/otg',
+        additionalDirectories: ['/vol/otg'],
+        permissionMode: PermissionMode.bypassPermissions,
+      );
+      await repo.createInOrg('OTG', 'só uma raiz', cwd: '/dev/otg', permissionMode: PermissionMode.bypassPermissions);
       expect(engine.posts('/api/sessions').map((r) => r.body), [
         {
           'org': 'OTG',
           'command': 'analise',
           'cwd': '/dev/otg',
           'additionalDirectories': ['/vol/otg'],
+          'permissionMode': 'bypassPermissions',
         },
-        {'org': 'OTG', 'command': 'só uma raiz', 'cwd': '/dev/otg', 'additionalDirectories': <String>[]},
+        {
+          'org': 'OTG',
+          'command': 'só uma raiz',
+          'cwd': '/dev/otg',
+          'additionalDirectories': <String>[],
+          'permissionMode': 'bypassPermissions',
+        },
       ]);
       expect(summary.org, 'OTG');
       expect((await listed).single.id, 'o1');
@@ -499,7 +650,7 @@ void main() {
     test('createInOrg surfaces the engine 400 text', () async {
       await repo.watchSessions().first.timeout(_timeout);
       await expectLater(
-        repo.createInOrg('OTG', 'a', cwd: '/dev/otg'),
+        repo.createInOrg('OTG', 'a', cwd: '/dev/otg', permissionMode: PermissionMode.bypassPermissions),
         throwsA(isA<Exception>().having((e) => '$e', 'message', startsWith('sem diretório'))),
       );
     });

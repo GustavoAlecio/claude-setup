@@ -267,6 +267,51 @@ void main() {
     });
   });
 
+  group('permissions', () {
+    Future<void> scrollTo(WidgetTester tester, Finder finder) async {
+      await tester.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> pick(WidgetTester tester, Finder menu, String label) async {
+      await _tap(tester, menu);
+      await _tap(tester, find.text(label).last);
+    }
+
+    testWidgets('Configurações writes the global mode and warns only in bypass', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+      final menu = find.byKey(const ValueKey('settings-permission-mode'));
+      await scrollTo(tester, menu);
+
+      expect(find.descendant(of: menu, matching: find.text('bypass')), findsOneWidget);
+      expect(_in('settings-permissions', find.text('as sessões rodam sem pedir confirmação')), findsOneWidget);
+
+      await pick(tester, menu, 'aceitar edições');
+
+      expect(repo.rawConfig['permissionMode'], 'acceptEdits');
+      expect(find.descendant(of: menu, matching: find.text('aceitar edições')), findsOneWidget);
+      expect(_in('settings-permissions', find.text('as sessões rodam sem pedir confirmação')), findsNothing);
+    });
+
+    testWidgets('OrgForm writes the org mode and "herdar global" removes the key', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+      final dropdown = _in('settings-org-form-A', find.byKey(const ValueKey('org-permission-mode')));
+      expect(_in('settings-org-form-A', find.text('herdar global')), findsOneWidget);
+
+      await pick(tester, dropdown, 'auto (classificador)');
+      await _tap(tester, _save('A'));
+      expect(repo.rawConfig['orgs'][0]['permissionMode'], 'auto');
+      expect((repo.rawConfig['orgs'][1] as Map).containsKey('permissionMode'), isFalse);
+
+      await pick(tester, dropdown, 'herdar global');
+      await _tap(tester, _save('A'));
+      expect((repo.rawConfig['orgs'][0] as Map).containsKey('permissionMode'), isFalse);
+      expect(repo.config.orgs.first.name, 'A');
+    });
+  });
+
   group('OrgForm GitHub', () {
     testWidgets('lists the accounts and saves the chosen account with owners from suggestion and typing', (
       tester,
