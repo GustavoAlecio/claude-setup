@@ -47,7 +47,7 @@ void main() {
   testWidgets('quitting the app shuts the engine down before allowing the exit', (tester) async {
     final engine = _ShutdownSpy();
     await tester.pumpWidget(
-      ClaudeFlowApp(repository: const MockFlowRepository(), sessions: MockSessionsRepository(), engine: engine),
+      ClaudeFlowApp(repository: MockFlowRepository(), sessions: MockSessionsRepository(), engine: engine),
     );
     await tester.pumpAndSettle();
 

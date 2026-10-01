@@ -4,6 +4,10 @@ import '../../data/models.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
 
+/// Top space kept clear on macOS: the window uses fullSizeContentView, so the traffic lights draw over
+/// the first ~28pt of content.
+const kTitleBarInset = 44.0;
+
 class Pill extends StatelessWidget {
   const Pill({super.key, required this.label, required this.color, this.mono = false, this.dot = true});
 

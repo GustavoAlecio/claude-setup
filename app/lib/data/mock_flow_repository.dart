@@ -1,21 +1,70 @@
+import 'dart:async';
+
+import '../engine/engine_config.dart';
+import 'config_mutations.dart';
 import 'flow_repository.dart';
 import 'models.dart';
+import 'orgs.dart';
+import 'project_scan.dart' as scan;
 
+/// In-memory repository: the config lives in a mutable raw map and goes through the same
+/// [applyConfigMutation] and [annotateProjects] as the file repository.
 class MockFlowRepository implements FlowRepository {
-  const MockFlowRepository({this.data = _projects, this.numstats = const []});
+  MockFlowRepository({
+    this.data = _projects,
+    this.numstats = const [],
+    Map<String, dynamic>? config,
+    this.suggestions = const [],
+  }) : _raw = config ?? defaultConfig(data);
 
   final List<Project> data;
   final List<FileStat> numstats;
+  final List<String> suggestions;
+
+  Map<String, dynamic> _raw;
+  final _changes = StreamController<void>.broadcast();
+
+  /// Org `demo` over the parent folders of [data]'s paths, opened by default.
+  static Map<String, dynamic> defaultConfig(List<Project> data) {
+    final roots = <String>{
+      for (final p in data)
+        if (p.path != null) parentPath(p.path!),
+    };
+    return {
+      'orgs': [
+        {'name': 'demo', 'roots': roots.toList()},
+      ],
+      'lastOrg': 'demo',
+    };
+  }
+
+  DashboardConfig get config => DashboardConfig.fromMap(_raw);
+
+  /// Current `.dashboard.json` content, as the file repository would have written it.
+  Map<String, dynamic> get rawConfig => _raw;
+
+  List<Project> get projects => annotateProjects(data, config, canonical: normalizePath);
 
   @override
-  Stream<List<Project>> watchProjects() => Stream.value(data);
+  Stream<List<Project>> watchProjects() => _watch(() => projects);
 
   @override
-  Stream<Project?> watchProject(String name) => Stream.value(_project(name));
+  Stream<Project?> watchProject(String name) => watchProjects().map((l) => _find(l, name));
 
   @override
   Stream<Run?> watchRun(String project, String runId) =>
-      Stream.value(_project(project)?.cycle?.runs.where((r) => r.id == runId).firstOrNull);
+      watchProject(project).map((p) => p?.cycle?.runs.where((r) => r.id == runId).firstOrNull);
+
+  @override
+  Stream<DashboardConfig> watchConfig() => _watch(() => config);
+
+  @override
+  Future<void> updateConfig(ConfigMutation mutation) async {
+    final out = applyConfigMutation(_raw, mutation);
+    if (out == null) return;
+    _raw = out;
+    _changes.add(null);
+  }
 
   @override
   Future<void> reload() async {}
@@ -23,7 +72,20 @@ class MockFlowRepository implements FlowRepository {
   @override
   Future<List<FileStat>> numstat(String project, String checkpoint) async => numstats;
 
-  Project? _project(String name) => data.where((p) => p.name == name).firstOrNull;
+  @override
+  Future<scan.ProjectDir> inspectDirectory(String dir) =>
+      scan.inspectDirectory(dir, workflowExists: (name) => data.any((p) => p.name == name));
+
+  @override
+  Future<List<String>> suggestedRoots() async => suggestions;
+
+  Stream<T> _watch<T>(T Function() current) => Stream.multi((controller) {
+    controller.add(current());
+    final sub = _changes.stream.listen((_) => controller.add(current()));
+    controller.onCancel = sub.cancel;
+  });
+
+  static Project? _find(List<Project> list, String name) => list.where((p) => p.name == name).firstOrNull;
 }
 
 const _g0Pass = GateResult('G0', Verdict.pass);

@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/flow/flow_page.dart';
@@ -7,14 +7,20 @@ import '../features/placeholder/planned_page.dart';
 import '../features/runs/runs_page.dart';
 import '../features/runs/task_detail_page.dart';
 import '../features/sessions/sessions_page.dart';
+import '../features/settings/settings_page.dart';
 import '../features/shell/shell_page.dart';
 
 GoRouter buildRouter() {
   const route = String.fromEnvironment('INITIAL_ROUTE');
-  return GoRouter(
+  var lastProjectRoute = route.startsWith('/p/') ? route : '/';
+  final router = GoRouter(
     initialLocation: route.isEmpty ? '/' : route,
     routes: [
       GoRoute(path: '/', pageBuilder: (_, state) => _instant(state, const LandingPage())),
+      GoRoute(
+        path: '/settings',
+        pageBuilder: (_, state) => _instant(state, SettingsPage(backTo: () => lastProjectRoute)),
+      ),
       ShellRoute(
         builder: (context, state, child) => ShellPage(
           projectName: state.pathParameters['project']!,
@@ -56,6 +62,12 @@ GoRouter buildRouter() {
       ),
     ],
   );
+  // `/settings` sits outside the shell and `go` keeps no history, so "Voltar" needs the last project route.
+  router.routerDelegate.addListener(() {
+    final uri = router.routerDelegate.currentConfiguration.uri;
+    if (uri.path.startsWith('/p/')) lastProjectRoute = uri.toString();
+  });
+  return router;
 }
 
 /// Desktop tabs and drill-downs swap content in place; a page transition here reads as the whole shell sliding.
