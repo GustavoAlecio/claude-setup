@@ -37,13 +37,52 @@ export async function readCurrent(name) {
   }
 }
 
-function parseFrontmatter(raw) {
-  const match = /^---\n([\s\S]*?)\n---/.exec(raw);
+const KEY_LINE = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]+(.*))?$/;
+
+function unquote(value) {
+  const quote = value[0];
+  let out = "";
+  for (let i = 1; i < value.length; i++) {
+    const c = value[i];
+    if (quote === '"' && c === "\\" && i + 1 < value.length) {
+      const n = value[++i];
+      out += n === "n" ? "\n" : n === "t" ? "\t" : n === '"' || n === "\\" ? n : c + n;
+    } else if (c === quote) {
+      if (quote === "'" && value[i + 1] === "'") {
+        out += "'";
+        i++;
+      } else {
+        return out;
+      }
+    } else {
+      out += c;
+    }
+  }
+  return value;
+}
+
+/** Subconjunto de YAML das skills: escalar, aspas ("..." / '...'), blocos `>`/`>-`/`|`/`|-`; o resto e ignorado. */
+export function parseFrontmatter(raw) {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
   if (!match) return {};
+  const lines = match[1].split(/\r?\n/);
   const out = {};
-  for (const line of match[1].split("\n")) {
-    const kv = /^([A-Za-z_-]+):\s*(.*)$/.exec(line);
-    if (kv) out[kv[1]] = kv[2].replace(/^["']|["']$/g, "");
+  for (let i = 0; i < lines.length; i++) {
+    const kv = KEY_LINE.exec(lines[i].trimEnd());
+    if (!kv) continue;
+    const value = (kv[2] ?? "").trim();
+    const body = [];
+    while (i + 1 < lines.length && (lines[i + 1].trim() === "" || /^[ \t]/.test(lines[i + 1]))) body.push(lines[++i]);
+    if (/^[>|]-?$/.test(value)) {
+      const text = body.filter((l) => l.trim() !== "");
+      const indent = Math.min(...text.map((l) => l.length - l.trimStart().length));
+      const parts = text.map((l) => l.slice(indent).trimEnd());
+      out[kv[1]] = value.startsWith(">") ? parts.join(" ") : parts.join("\n");
+    } else if (value.startsWith('"') || value.startsWith("'")) {
+      out[kv[1]] = unquote(value);
+    } else {
+      out[kv[1]] = value;
+    }
   }
   return out;
 }
