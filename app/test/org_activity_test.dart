@@ -1,5 +1,6 @@
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
@@ -84,6 +85,7 @@ class _Sessions extends MockSessionsRepository {
     required String cwd,
     List<String> additionalDirectories = const [],
     String? githubAccount,
+    required PermissionMode permissionMode,
   }) async {
     if (orgError case final error?) throw error;
     return super.createInOrg(
@@ -92,6 +94,7 @@ class _Sessions extends MockSessionsRepository {
       cwd: cwd,
       additionalDirectories: additionalDirectories,
       githubAccount: githubAccount,
+      permissionMode: permissionMode,
     );
   }
 
@@ -407,7 +410,7 @@ void main() {
     Finder inPalette(String text) => find.descendant(of: palette, matching: find.text(text));
 
     void expectOrgCall(String command) {
-      final (org, cmd, cwd, additional, _) = sessions.orgCreateCalls.single;
+      final (org, cmd, cwd, additional, _, _) = sessions.orgCreateCalls.single;
       expect((org, cmd, cwd), ('A', command, '/dev/a'));
       expect(additional, ['/dev/a2']);
     }
@@ -469,6 +472,39 @@ void main() {
       await startAndSend(tester);
 
       expect(sessions.orgCreateCalls.single.$5, isNull);
+    });
+
+    testWidgets('the activity shows and runs with the org permission mode', (tester) async {
+      final config = _config();
+      config['permissionMode'] = 'default';
+      (config['orgs'] as List).first['permissionMode'] = 'acceptEdits';
+      await pump(tester, config: config);
+      await _go(tester, '/o/A/sessions');
+
+      await _metaShift(tester, LogicalKeyboardKey.keyK);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('palette-permission-mode')),
+          matching: find.text('aceitar edições'),
+        ),
+        findsOneWidget,
+      );
+      await startAndSend(tester);
+
+      expectOrgCall('liste as pastas');
+      expect(sessions.orgCreateCalls.single.$6, PermissionMode.acceptEdits);
+    });
+
+    testWidgets('an org without a mode runs the activity with the global one', (tester) async {
+      final config = _config();
+      config['permissionMode'] = 'default';
+      await pump(tester, config: config);
+      await _go(tester, '/o/A/sessions');
+
+      await _metaShift(tester, LogicalKeyboardKey.keyK);
+      await startAndSend(tester);
+
+      expect(sessions.orgCreateCalls.single.$6, PermissionMode.defaultMode);
     });
 
     testWidgets('⌘⇧K on / opens the org of lastOrg', (tester) async {

@@ -7,7 +7,7 @@ import { readConfig, resolveCwd } from "./cwd.mjs";
 import { HttpError, listSkills, readCurrent } from "./data.mjs";
 import { createTokens, loginParam, ownersParam, redact } from "./gh_env.mjs";
 import { createGitHub } from "./github.mjs";
-import { createSessions } from "./sessions.mjs";
+import { PERMISSION_MODES, createSessions } from "./sessions.mjs";
 import { createStore } from "./store.mjs";
 
 export const VERSION = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
@@ -57,6 +57,13 @@ function validateOrgDirs(org, cwd, additionalDirectories) {
     if (!path.isAbsolute(dir) || !existsSync(dir)) throw new HttpError(400, `diretorio invalido: ${dir}`);
   }
   return extra;
+}
+
+/** Ausente e `default`: o engine nunca le o modo da config, quem resolve sessao > org > global e o app. */
+function permissionModeParam(value) {
+  if (value === undefined) return "default";
+  if (!PERMISSION_MODES.has(value)) throw new HttpError(400, `permissionMode invalido: ${value}`);
+  return value;
 }
 
 export function createEngine({
@@ -135,6 +142,7 @@ export function createEngine({
       const { project, command, model, cwd: explicitCwd, org, additionalDirectories } = req.body ?? {};
       if (typeof command !== "string" || !command.trim()) throw new HttpError(400, "comando vazio");
       const githubAccount = loginParam(req.body?.githubAccount);
+      const permissionMode = permissionModeParam(req.body?.permissionMode);
 
       if (org !== undefined) {
         const dirs = validateOrgDirs(org, explicitCwd, additionalDirectories);
@@ -146,6 +154,7 @@ export function createEngine({
           additionalDirectories: dirs,
           command: command.trim(),
           model,
+          permissionMode,
         });
         log("sessao criada", session.id, `org ${org}`);
         return session.summary();
@@ -159,6 +168,7 @@ export function createEngine({
           cwd: explicitCwd,
           command: command.trim(),
           model,
+          permissionMode,
         });
         log("sessao criada", session.id, session.project);
         return session.summary();
@@ -170,7 +180,7 @@ export function createEngine({
         throw new HttpError(400, `sem diretório para ${project}: defina cwds.${project} em ~/.claude/workflow/.dashboard.json`);
       }
 
-      const session = await sessions.create({ project, githubAccount, cwd, command: command.trim(), model });
+      const session = await sessions.create({ project, githubAccount, cwd, command: command.trim(), model, permissionMode });
       log("sessao criada", session.id, session.project);
       return session.summary();
     })
@@ -218,6 +228,16 @@ export function createEngine({
       if (!["allow", "always", "deny", "answer"].includes(decision)) throw new HttpError(400, `decisao invalida: ${decision}`);
       if (decision === "answer" && (!answers || typeof answers !== "object")) throw new HttpError(400, "answers ausente");
       if (!session.answerPermission(requestId, decision, answers)) throw new HttpError(409, "pedido ja resolvido");
+      return session.summary();
+    })
+  );
+
+  app.post(
+    "/api/sessions/:id/permission-mode",
+    withSession(async (session, req) => {
+      const mode = req.body?.mode;
+      if (!PERMISSION_MODES.has(mode)) throw new HttpError(400, `modo invalido: ${mode}`);
+      await session.setPermissionMode(mode);
       return session.summary();
     })
   );

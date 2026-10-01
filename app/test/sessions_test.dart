@@ -1,5 +1,6 @@
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/session_models.dart';
@@ -15,17 +16,28 @@ class _RecordingSessions extends MockSessionsRepository {
   final cwds = <String?>[];
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) {
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) {
     created.add((project, command));
     cwds.add(cwd);
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
   }
 }
 
 class _NoCwdSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async =>
-      throw const SessionsException(_noCwd, statusCode: 400);
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async => throw const SessionsException(_noCwd, statusCode: 400);
 }
 
 const _longCommand =
@@ -67,6 +79,44 @@ class _OrgActivitySessions extends MockSessionsRepository {
       ...list,
     ],
   );
+}
+
+class _RefusingModeSessions extends MockSessionsRepository {
+  @override
+  Future<void> setPermissionMode(String id, PermissionMode mode) async {
+    setPermissionModeCalls.add((id, mode));
+    throw const SessionsException('bypass_disabled', statusCode: 409);
+  }
+}
+
+/// A detached session in bypass, known only from the list (its detail stream never emits).
+class _DetachedBypassSessions extends MockSessionsRepository {
+  @override
+  Stream<List<SessionSummary>> watchSessions() => super.watchSessions().map(
+    (list) => [
+      const SessionSummary(
+        id: 'detached-bypass',
+        project: 'demo-app',
+        command: '/status',
+        title: 'Sessão antiga em bypass',
+        status: SessionStatus.detached,
+        createdAt: '2026-03-10T14:41:00Z',
+        permissionMode: PermissionMode.bypassPermissions,
+      ),
+      ...list,
+    ],
+  );
+}
+
+final _headerMode = find.byKey(const ValueKey('session-permission-mode'));
+
+Finder _headerModeText(String label) => find.descendant(of: _headerMode, matching: find.text(label));
+
+Future<void> _chooseHeaderMode(WidgetTester tester, String label) async {
+  await tester.tap(_headerMode);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(label).last);
+  await tester.pumpAndSettle();
 }
 
 Finder _paletteField() => find.byType(TextField).last;
@@ -226,6 +276,55 @@ void main() {
     expect(tester.getSize(command).height, lessThan(20));
   });
 
+  group('permission mode in the session header', () {
+    testWidgets('a bypass session shows the red badge; switching to padrão calls the engine and drops it', (
+      tester,
+    ) async {
+      final sessions = MockSessionsRepository();
+      await openSessions(tester, sessions: sessions);
+      await tester.tap(find.text('Nova conversa'));
+      await tester.pumpAndSettle();
+      await tester.enterText(_paletteField(), 'resuma o plano');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(sessions.createCalls.single.$5, PermissionMode.bypassPermissions);
+      expect(_headerModeText('bypass'), findsOneWidget);
+      expect(find.byKey(const ValueKey('session-bypass-mock-1')), findsOneWidget);
+
+      await _chooseHeaderMode(tester, 'padrão');
+
+      expect(sessions.setPermissionModeCalls, [('mock-1', PermissionMode.defaultMode)]);
+      expect(_headerModeText('bypass'), findsNothing);
+      expect(_headerModeText('padrão'), findsOneWidget);
+      expect(find.byKey(const ValueKey('session-bypass-mock-1')), findsNothing);
+    });
+
+    testWidgets('a refused change goes back to the previous mode and shows the engine error', (tester) async {
+      final sessions = _RefusingModeSessions();
+      await openSessions(tester, sessions: sessions);
+      expect(_headerModeText('padrão'), findsOneWidget);
+
+      await _chooseHeaderMode(tester, 'bypass');
+
+      expect(sessions.setPermissionModeCalls, [('s-fix-sync', PermissionMode.bypassPermissions)]);
+      expect(_headerModeText('padrão'), findsOneWidget);
+      expect(_headerModeText('bypass'), findsNothing);
+      expect(find.text('bypass_disabled'), findsOneWidget);
+    });
+
+    testWidgets('a detached session in bypass keeps the badge in the header and the tile', (tester) async {
+      await openSessions(tester, sessions: _DetachedBypassSessions());
+      expect(find.byKey(const ValueKey('session-bypass-detached-bypass')), findsOneWidget);
+      expect(find.byKey(const ValueKey('session-bypass-s-fix-sync')), findsNothing);
+
+      await tester.tap(find.text('Sessão antiga em bypass'));
+      await tester.pumpAndSettle();
+      expect(find.text('desanexada'), findsOneWidget);
+      expect(_headerModeText('bypass'), findsOneWidget);
+    });
+  });
+
   group('command palette', () {
     testWidgets('arrows move the selection, enter picks the skill and runs it with arguments', (tester) async {
       final sessions = _RecordingSessions();
@@ -284,7 +383,13 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
 
-      expect(sessions.createCalls.single, ('demo-app', 'resuma o plano', '~/development/demo-app', 'acct-a'));
+      expect(sessions.createCalls.single, (
+        'demo-app',
+        'resuma o plano',
+        '~/development/demo-app',
+        'acct-a',
+        PermissionMode.bypassPermissions,
+      ));
     });
 
     testWidgets('escape closes the palette', (tester) async {

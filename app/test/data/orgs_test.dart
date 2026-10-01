@@ -965,4 +965,142 @@ void main() {
       expect((both.name, both.divergence), ('remote-name', null));
     });
   });
+
+  group('permission mode', () {
+    Map<String, dynamic> withModes({Object? global, Object? r10}) {
+      final raw = _raw();
+      if (global != null) raw['permissionMode'] = global;
+      if (r10 != null) ((raw['orgs'] as List).first as Map)['permissionMode'] = r10;
+      return raw;
+    }
+
+    Map<String, dynamic> orgEntry(Map<String, dynamic> out, int i) => (out['orgs'] as List)[i] as Map<String, dynamic>;
+
+    test('global and org modes parse; absent or invalid global is bypass, absent or invalid org inherits', () {
+      final config = DashboardConfig.fromMap(withModes(global: 'acceptEdits', r10: 'auto'));
+      expect(config.permissionMode, PermissionMode.acceptEdits);
+      expect(config.orgs.first.permissionMode, PermissionMode.auto);
+      expect(config.orgs.last.permissionMode, isNull);
+
+      expect(DashboardConfig.fromMap(_raw()).permissionMode, PermissionMode.bypassPermissions);
+      final invalid = DashboardConfig.fromMap(withModes(global: 'plan', r10: 'dontAsk'));
+      expect(invalid.permissionMode, PermissionMode.bypassPermissions);
+      expect(invalid.orgs.first.permissionMode, isNull);
+      expect(DashboardConfig.fromMap(withModes(r10: 7)).orgs.first.permissionMode, isNull);
+      expect(PermissionMode.parse('default'), PermissionMode.defaultMode);
+      expect(PermissionMode.values.map((m) => m.wire), ['default', 'acceptEdits', 'auto', 'bypassPermissions']);
+    });
+
+    test('setGlobalPermissionMode writes the key at the end and keeps the rest', () {
+      final raw = _raw();
+      final out = setGlobalPermissionMode(PermissionMode.defaultMode)(raw);
+      expect(out.keys.last, 'permissionMode');
+      expect(out['permissionMode'], 'default');
+      expect(out['unknown'], {'keep': true});
+      expect(raw.containsKey('permissionMode'), isFalse);
+      expect(applyConfigMutation(withModes(global: 'auto'), setGlobalPermissionMode(PermissionMode.auto)), isNull);
+      expect(setGlobalPermissionMode(PermissionMode.auto)(withModes(global: 'plan'))['permissionMode'], 'auto');
+    });
+
+    test('updateOrg writes the org mode and inheriting removes the key, never writing null', () {
+      final set = updateOrg(
+        'r10',
+        const OrgConfig(name: 'r10', roots: ['/dev/r10'], permissionMode: PermissionMode.acceptEdits),
+      )(_raw());
+      expect(orgEntry(set, 0), {
+        'name': 'r10',
+        'roots': ['/dev/r10'],
+        'color': 'red',
+        'permissionMode': 'acceptEdits',
+      });
+
+      final inherit = updateOrg('r10', const OrgConfig(name: 'r10', roots: ['/dev/r10']))(set);
+      expect(orgEntry(inherit, 0).containsKey('permissionMode'), isFalse);
+      expect(orgEntry(inherit, 0)['color'], 'red');
+    });
+
+    test('an invalid raw org mode survives other saves until the org gets a mode', () {
+      final raw = withModes(r10: 'plan');
+      final other = updateOrg('abm', const OrgConfig(name: 'abm', roots: ['/dev/abm2']))(raw);
+      expect(orgEntry(other, 0)['permissionMode'], 'plan');
+      final same = updateOrg('r10', const OrgConfig(name: 'r10', roots: ['/dev/r10', '/vol/r10']))(raw);
+      expect(orgEntry(same, 0)['permissionMode'], 'plan');
+
+      final fixed = updateOrg(
+        'r10',
+        const OrgConfig(name: 'r10', roots: ['/dev/r10'], permissionMode: PermissionMode.defaultMode),
+      )(raw);
+      expect(orgEntry(fixed, 0)['permissionMode'], 'default');
+    });
+
+    test('an equal org mode is not rewritten, so nothing changes', () {
+      const same = OrgConfig(name: 'r10', roots: ['/dev/r10'], permissionMode: PermissionMode.auto);
+      expect(applyConfigMutation(withModes(r10: 'auto'), updateOrg('r10', same)), isNull);
+    });
+
+    test('createOrg writes permissionMode only when given', () {
+      final out = createOrg('p', ['/dev/p'], permissionMode: PermissionMode.defaultMode)(_raw());
+      expect((out['orgs'] as List).last, {
+        'name': 'p',
+        'roots': ['/dev/p'],
+        'permissionMode': 'default',
+      });
+      expect(((createOrg('q', ['/dev/q'])(_raw())['orgs'] as List).last as Map).containsKey('permissionMode'), isFalse);
+    });
+
+    test('a mode change is presentation only', () {
+      final before = DashboardConfig.fromMap(_raw());
+      final after = DashboardConfig.fromMap(withModes(global: 'default', r10: 'auto'));
+      expect(diffConfig(before, after), ConfigChange.reemit);
+    });
+
+    test('effectivePermissionMode: session choice > org > global', () {
+      final config = DashboardConfig.fromMap(withModes(global: 'acceptEdits', r10: 'auto'));
+      expect(effectivePermissionMode(PermissionMode.defaultMode, 'r10', config), PermissionMode.defaultMode);
+      expect(effectivePermissionMode(null, 'r10', config), PermissionMode.auto);
+      expect(effectivePermissionMode(null, 'abm', config), PermissionMode.acceptEdits);
+      expect(effectivePermissionMode(null, kNoOrg, config), PermissionMode.acceptEdits);
+      expect(effectivePermissionMode(null, 'ghost', config), PermissionMode.acceptEdits);
+      expect(effectivePermissionMode(null, null, config), PermissionMode.acceptEdits);
+      expect(effectivePermissionMode(null, 'r10', DashboardConfig.fromMap(_raw())), PermissionMode.bypassPermissions);
+      expect(effectivePermissionMode(null, 'r10', null), PermissionMode.bypassPermissions);
+      expect(effectivePermissionMode(PermissionMode.auto, null, null), PermissionMode.auto);
+    });
+
+    test('launchOrg: org and mode for launching from a cwd', () {
+      const projects = [
+        Project(name: 'score', path: '/dev/r10/score', org: 'r10'),
+        Project(name: 'site', path: '/elsewhere/site', org: 'abm'),
+      ];
+      final config = DashboardConfig.fromMap(withModes(global: 'acceptEdits', r10: 'auto'));
+
+      // Project at exact path: use its org and mode.
+      var result = launchOrg('/dev/r10/score', projects, config);
+      expect(result.org, 'r10');
+      expect(result.mode, PermissionMode.auto);
+
+      // CWD under a root: use that org's mode.
+      result = launchOrg('/dev/r10/score/src', projects, config);
+      expect(result.org, 'r10');
+      expect(result.mode, PermissionMode.auto);
+
+      // CWD not in any org: use global mode.
+      result = launchOrg('/unrelated/path', projects, config);
+      expect(result.org, kNoOrg);
+      expect(result.mode, PermissionMode.acceptEdits);
+
+      // No config: global mode defaults to bypass.
+      result = launchOrg('/dev/r10/score', projects, null);
+      expect(result.org, 'r10');
+      expect(result.mode, PermissionMode.bypassPermissions);
+
+      // Exact path match takes precedence over root containment.
+      const singleProject = [
+        Project(name: 'app', path: '/src/app', org: 'p1'),
+        Project(name: 'p2', path: '/src/app/sub', org: 'p2'),
+      ];
+      result = launchOrg('/src/app', singleProject, DashboardConfig.fromMap(_raw()));
+      expect(result.org, 'p1');
+    });
+  });
 }

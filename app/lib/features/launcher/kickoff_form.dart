@@ -8,19 +8,22 @@ import 'package:go_router/go_router.dart';
 import '../../app/config_cubit.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/kickoff.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
+import '../../engine/engine_config.dart';
 
 /// Without a [project] there is nowhere to start the session, so nothing opens.
 Future<void> showKickoffForm(BuildContext context, Project? project) async {
   if (project == null) return;
   final router = GoRouter.of(context);
   final sessions = SessionsScope.of(context);
-  final githubAccount = githubFor(project.org, context.read<ConfigCubit>().state.data).account;
+  final config = context.read<ConfigCubit>().state.data;
+  final githubAccount = githubFor(project.org, config).account;
   await showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
@@ -28,6 +31,7 @@ Future<void> showKickoffForm(BuildContext context, Project? project) async {
       project: project,
       sessions: sessions,
       githubAccount: githubAccount,
+      permissionMode: effectivePermissionMode(null, project.org, config),
       onCreated: (s) => router.go('/p/${s.project}/sessions/${s.id}'),
     ),
   );
@@ -38,6 +42,7 @@ class _KickoffForm extends StatefulWidget {
     required this.project,
     required this.sessions,
     required this.githubAccount,
+    required this.permissionMode,
     required this.onCreated,
   });
 
@@ -46,6 +51,9 @@ class _KickoffForm extends StatefulWidget {
 
   /// Of the project's org; `null` keeps the `gh` active account.
   final String? githubAccount;
+
+  /// Effective mode of the project's org; changing it in the form applies to this session only.
+  final PermissionMode permissionMode;
   final void Function(SessionSummary session) onCreated;
 
   @override
@@ -60,6 +68,7 @@ class _KickoffFormState extends State<_KickoffForm> {
   String? _descriptionError;
   String? _error;
   bool _creating = false;
+  late PermissionMode _permissionMode = widget.permissionMode;
 
   bool get _hasId => _id.text.trim().isNotEmpty;
 
@@ -103,6 +112,7 @@ class _KickoffFormState extends State<_KickoffForm> {
         command,
         cwd: project.path,
         githubAccount: widget.githubAccount,
+        permissionMode: _permissionMode,
       );
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -216,6 +226,19 @@ class _KickoffFormState extends State<_KickoffForm> {
                         const SizedBox(width: 12),
                         const Flexible(child: Muted('ignorado com ID', size: 11)),
                       ],
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Flexible(child: Muted('Permissões desta sessão', size: 11)),
+                      const SizedBox(width: 10),
+                      PermissionModeMenu(
+                        key: const ValueKey('kickoff-permission-mode'),
+                        mode: _permissionMode,
+                        tooltip: 'Permissões desta sessão',
+                        onSelected: _creating ? null : (m) => setState(() => _permissionMode = m),
+                      ),
                     ],
                   ),
                   if (_error case final error?)

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer';
 
+import '../engine/engine_config.dart';
 import 'session_models.dart';
 import 'sse.dart';
 
@@ -35,6 +36,7 @@ SessionSummary parseSummary(Map<String, dynamic> json) => SessionSummary(
   cwd: json['cwd'] as String?,
   org: json['org'] as String?,
   additionalDirectories: [if (json['additionalDirectories'] case final List<dynamic> dirs) ...dirs.whereType<String>()],
+  permissionMode: PermissionMode.parse(json['permissionMode']) ?? PermissionMode.defaultMode,
 );
 
 /// Badge "aguardando você": only sessions whose process can still act on the answer.
@@ -248,6 +250,9 @@ SessionDetail _applyEvent(SessionDetail state, Map<String, dynamic> e, int seq) 
       );
     case 'error':
       return state.copyWith(events: [...events, SessionError(at, e['message'] as String? ?? '')]);
+    case 'permission_mode':
+      final mode = PermissionMode.parse(e['mode']);
+      return mode == null ? state : state.copyWith(summary: state.summary.copyWith(permissionMode: mode));
     case 'init':
       final model = e['model'] as String?;
       return model == null ? state : state.copyWith(summary: state.summary.copyWith(model: model));

@@ -26,16 +26,28 @@ class _SlowSessions extends MockSessionsRepository {
   final gate = Completer<void>();
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
   }
 }
 
 class _FailingSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
-    createCalls.add((project, command, cwd, githubAccount));
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async {
+    createCalls.add((project, command, cwd, githubAccount, permissionMode));
     throw const SessionsException('cwd fora das raízes', statusCode: 400);
   }
 }
@@ -207,7 +219,13 @@ void main() {
     await tester.tap(_review(7));
     await tester.pumpAndSettle();
 
-    expect(sessions.createCalls.single, ('my-repo', '/review 7', '/tmp/my_repo', null));
+    expect(sessions.createCalls.single, (
+      'my-repo',
+      '/review 7',
+      '/tmp/my_repo',
+      null,
+      PermissionMode.bypassPermissions,
+    ));
     expect(_location(tester), startsWith('/p/my-repo/sessions/'));
   });
 
@@ -223,7 +241,7 @@ void main() {
     await tester.tap(_review(7));
     await tester.pumpAndSettle();
 
-    expect(sessions.createCalls.single, ('x', '/review 7', '/dev/org/x', null));
+    expect(sessions.createCalls.single, ('x', '/review 7', '/dev/org/x', null, PermissionMode.bypassPermissions));
     expect(_location(tester), startsWith('/p/x/sessions/'));
   });
 
@@ -485,7 +503,39 @@ void main() {
 
       await tester.tap(_review(7));
       await tester.pumpAndSettle();
-      expect(sessions.createCalls.single, ('y', '/review 7', '/dev/b/y', 'acct-a'));
+      expect(sessions.createCalls.single, ('y', '/review 7', '/dev/b/y', 'acct-a', PermissionMode.bypassPermissions));
+    });
+
+    testWidgets('Revisar uses the mode of the org of the cwd, not of the listing scope', (tester) async {
+      final config = _twoOrgs();
+      config['permissionMode'] = 'default';
+      ((config['orgs'] as List)[1] as Map)['permissionMode'] = 'acceptEdits';
+      final sessions = MockSessionsRepository();
+      final github = MockGitHubRepository(
+        inboxData: Inbox(
+          items: [
+            _item(number: 7, repo: 'y', cwd: '/dev/b/y'),
+            _item(number: 8, repo: 'x', cwd: '/dev/a/x'),
+          ],
+        ),
+      );
+      await _open(
+        tester,
+        github,
+        sessions: sessions,
+        repository: MockFlowRepository(data: _orgProjects, config: config),
+      );
+
+      await tester.tap(_review(7));
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single.$5, PermissionMode.acceptEdits);
+
+      _router(tester).go('/p/x/inbox');
+      await tester.pumpAndSettle();
+      await tester.tap(_review(8));
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.last.$3, '/dev/a/x');
+      expect(sessions.createCalls.last.$5, PermissionMode.defaultMode);
     });
 
     testWidgets('owner whose SSH authenticates as another account shows the alert', (tester) async {

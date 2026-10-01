@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/config_cubit.dart';
 import '../../app/projects_cubit.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/config_mutations.dart';
 import '../../data/flow_repository.dart';
@@ -58,6 +59,8 @@ class SettingsPage extends StatelessWidget {
                       _OrgsSection(config: config),
                       const SizedBox(height: 28),
                       _ProjectsSection(config: config, projects: projects),
+                      const SizedBox(height: 28),
+                      _PermissionsSection(config: config),
                     ],
                   ),
           ),
@@ -75,6 +78,73 @@ class _SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       Padding(padding: const EdgeInsets.only(bottom: 10), child: Muted(text, size: 11));
+}
+
+/// Global mode of new sessions; orgs and the session itself override it, and open sessions keep their own.
+class _PermissionsSection extends StatefulWidget {
+  const _PermissionsSection({required this.config});
+
+  final DashboardConfig config;
+
+  @override
+  State<_PermissionsSection> createState() => _PermissionsSectionState();
+}
+
+class _PermissionsSectionState extends State<_PermissionsSection> {
+  String? _error;
+
+  Future<void> _write(PermissionMode mode) async {
+    setState(() => _error = null);
+    try {
+      await RepositoryScope.of(context).updateConfig(setGlobalPermissionMode(mode));
+    } on ConfigWriteException catch (e, st) {
+      log('permission mode write rejected', name: 'SettingsPage', error: e, stackTrace: st);
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final mode = widget.config.permissionMode;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _SectionTitle('PERMISSÕES'),
+        Panel(
+          key: const ValueKey('settings-permissions'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Expanded(child: Text('Modo das sessões novas', style: TextStyle(fontSize: 13))),
+                  PermissionModeMenu(
+                    key: const ValueKey('settings-permission-mode'),
+                    mode: mode,
+                    tooltip: 'Modo global de permissões',
+                    onSelected: _write,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              if (mode == PermissionMode.bypassPermissions)
+                Text(permissionModeHint(mode), style: TextStyle(fontSize: 12, color: c.warn))
+              else
+                Muted(permissionModeHint(mode), size: 12),
+              const SizedBox(height: 4),
+              const Muted('a org e a própria sessão podem trocar; sessões abertas mantêm o modo', size: 11),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(_error!, style: TextStyle(fontSize: 12, color: c.fail)),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _OrgsSection extends StatefulWidget {
