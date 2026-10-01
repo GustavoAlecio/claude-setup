@@ -98,8 +98,8 @@ Backtracks e blockers já entram pelo `import-run`; use `decision` só para esco
 Depois, por `status`:
 
 - **done** → `status: "implemented"`. Auto on: siga para `/verify`. Auto off: "Implementado. Verificar? `/verify`".
-- **backtrack** → o dev-implementer declarou o plano inviável na task `blocked_task`. Aplique o **protocolo de desvio**: mostre o `reason`, proponha o ajuste no `plan.md` (e `spec.md` se for o caso), peça OK, registre em `backtracks` e rode `/implement` de novo (retoma das pendentes). Mesmo com auto on, peça OK.
-- **blocked** → escada esgotada, falha repetida entre tiers ou gate quebrado. Mostre o `reason` e as hipóteses do `diagnosis` ordenadas por confidence (lente, hipótese, evidência, ação recomendada). Ofereça: corrigir spec → `/challenge-spec`; replanejar → `/plan`; corrigir ambiente e retomar → `/implement`; assumir a task manualmente. Não decida sozinho, nem com auto on.
+- **backtrack** → o dev-implementer declarou o plano inviável na task `blocked_task`. Aplique o **protocolo de desvio**: mostre o `reason`, proponha o ajuste no `plan.md` (e `spec.md` se for o caso) e faça um `AskUserQuestion` (parada incondicional, mesmo com auto on) com "Aplicar o ajuste (Recommended)", "Ajustar" e "Rejeitar". Aprovado, registre em `backtracks` e rode `/implement` de novo (retoma das pendentes).
+- **blocked** → escada esgotada, falha repetida entre tiers ou gate quebrado. Mostre o `reason` e as hipóteses do `diagnosis` ordenadas por confidence (lente, hipótese, evidência, ação recomendada). Parada incondicional: faça um `AskUserQuestion` com as opções corrigir spec → `/challenge-spec`; replanejar → `/plan`; corrigir ambiente e retomar → `/implement`; assumir a task manualmente. Não decida sozinho, nem com auto on.
 
 ## Não fazer
 

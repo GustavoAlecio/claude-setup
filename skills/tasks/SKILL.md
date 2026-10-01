@@ -129,17 +129,20 @@ Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$
 python3 ~/.claude/bin/wf-report.py stage-end tasks --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
 ```
 
-## 7. Verificar piloto automatico e finalizar
-
-```bash
-test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO_ON" || echo "AUTO_OFF"
-```
+## 7. Gate `tasks`
 
 Apresente o resumo: "N tasks criadas (Xs S, Xm M, Xl L) · tier0: Xh haiku, Ys sonnet, Zo opus · K de risco alto."
 
-- Se `AUTO_ON`: avance automaticamente executando `/implement`.
-- Se `AUTO_OFF`: **pare** e finalize com "Tasks criadas. Seguir para implementacao? Se sim: `/implement`".
+Gate `tasks` (decisão determinística; nunca leia `gates.json`):
 
-> Este gate existe pelo mesmo motivo do `/specify` e do `/plan`: `/implement`
-> escreve codigo. Encadear sem OK com auto off era inconsistente com as outras
-> etapas do fluxo.
+```bash
+python3 ~/.claude/bin/wf-report.py gate tasks
+```
+
+- `skip`: informe em 1 linha e execute `/implement`.
+- `ask`: o `stage-end` acima já rodou; faça um `AskUserQuestion` ("Tasks aprovadas para implementar?") com as opções:
+  - **Aprovar (Recommended)**: execute `/implement` na mesma sessão.
+  - **Ajustar**: o usuário escreve o ajuste em Other; aplique o texto e repita este mesmo gate.
+  - **Rejeitar**: rode `stage-end tasks --status blocked` (mesmo `--summary-file`), mantenha o `status` do `current.json` e encerre o turno.
+- A resposta do usuário vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision tasks --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.
+

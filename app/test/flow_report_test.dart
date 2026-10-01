@@ -43,7 +43,13 @@ class _Sessions extends MockSessionsRepository {
   Stream<List<SessionSummary>> watchSessions() => Stream.value(list);
 }
 
-Future<void> _open(WidgetTester tester, List<Project> data, String location, {SessionsRepository? sessions}) async {
+Future<void> _open(
+  WidgetTester tester,
+  List<Project> data,
+  String location, {
+  SessionsRepository? sessions,
+  bool settle = true,
+}) async {
   tester.view.physicalSize = const Size(1600, 3200);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -54,9 +60,15 @@ Future<void> _open(WidgetTester tester, List<Project> data, String location, {Se
       engine: const MockEngineController(),
     ),
   );
-  await tester.pumpAndSettle();
+  await tester.pump();
   _router(tester).go(location);
-  await tester.pumpAndSettle();
+  // The Fluxo side panel shows a running session, whose typing indicator never settles.
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 GoRouter _router(WidgetTester tester) => GoRouter.of(tester.element(find.byType(Scaffold).first));
@@ -70,7 +82,8 @@ Finder _inStage(Stage s, Finder matching) => find.descendant(of: _stage(s), matc
 Finder _inPanel(String key, Finder matching) => find.descendant(of: find.byKey(ValueKey(key)), matching: matching);
 
 Future<void> _expand(WidgetTester tester, Stage s) async {
-  await tester.tap(_inStage(s, find.text(s.label)));
+  final chevron = find.byKey(ValueKey('timeline-chevron-${s.name}'));
+  await tester.tap(chevron.evaluate().isNotEmpty ? chevron : _inStage(s, find.text(s.label)));
   await tester.pumpAndSettle();
 }
 
@@ -294,6 +307,7 @@ void main() {
           _session('s-old', createdAt: '2026-03-10T09:00:00Z', command: '/specify'),
           _session('s-kick', command: '/kickoff --manual'),
         ]),
+        settle: false,
       );
 
       final banner = find.text('Etapa em andamento: /kickoff --manual (rodando)');

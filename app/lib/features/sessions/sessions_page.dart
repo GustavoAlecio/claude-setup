@@ -1,7 +1,4 @@
-import 'dart:developer';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
@@ -10,18 +7,15 @@ import '../../app/projects_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_models.dart';
-import '../../data/sessions_repository.dart';
 import '../../data/workflow_parser.dart';
 import '../../engine/engine_config.dart';
 import '../launcher/command_palette.dart';
 import '../shell/shell_scope.dart';
-import 'session_cubit.dart';
-import 'session_events.dart';
+import 'session_view.dart';
 import 'session_labels.dart';
 
 class SessionsPage extends StatefulWidget {
@@ -79,7 +73,6 @@ class _SessionsPageState extends State<SessionsPage> {
           selected: selected?.id,
         );
     }
-    final sessions = SessionsScope.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -87,11 +80,7 @@ class _SessionsPageState extends State<SessionsPage> {
         Expanded(
           child: switch (selected) {
             null => const Center(child: Muted('Nenhuma sessão. Rode uma skill com ⌘K.', size: 13)),
-            final selected => BlocProvider(
-              key: ValueKey(selected.id),
-              create: (_) => SessionCubit(sessions, selected.id),
-              child: _SessionPanel(session: selected),
-            ),
+            final selected => SessionPanel(session: selected),
           },
         ),
       ],
@@ -108,26 +97,6 @@ class _SessionsPageState extends State<SessionsPage> {
     return selected;
   }
 }
-
-/// Engine errors (stopped engine, 404, invalid request) surface as a snackbar instead of failing silently.
-Future<void> _act(BuildContext context, Future<void> Function() action) async {
-  final messenger = ScaffoldMessenger.of(context);
-  try {
-    await action();
-  } on Exception catch (e, st) {
-    log('session action failed', name: 'SessionsPage', error: e, stackTrace: st);
-    messenger.showSnackBar(SnackBar(content: Text('$e')));
-  }
-}
-
-Color statusColor(AppColors c, SessionStatus s) => switch (s) {
-  SessionStatus.starting || SessionStatus.running => c.running,
-  SessionStatus.waitingPermission => c.warn,
-  SessionStatus.idle => c.accent,
-  SessionStatus.done => c.pass,
-  SessionStatus.error => c.fail,
-  SessionStatus.stopped || SessionStatus.detached => c.idle,
-};
 
 class _SessionList extends StatelessWidget {
   _SessionList.project({required Project? project, required this.mine, required this.others, required this.selected})
@@ -174,10 +143,18 @@ class _SessionList extends StatelessWidget {
               ),
             ),
           header(org == null ? 'ESTE PROJETO' : 'ATIVIDADES DA ORG'),
-          for (final s in mine) _SessionTile(session: s, org: org, selected: s.id == selected),
+          for (final s in mine)
+            LiveSessionSummary(
+              session: s,
+              builder: (_, live) => _SessionTile(session: live, org: org, selected: live.id == selected),
+            ),
           if (others.isNotEmpty) ...[
             header('OUTROS PROJETOS'),
-            for (final s in others) _SessionTile(session: s, selected: s.id == selected),
+            for (final s in others)
+              LiveSessionSummary(
+                session: s,
+                builder: (_, live) => _SessionTile(session: live, selected: live.id == selected),
+              ),
           ],
         ],
       ),
@@ -261,6 +238,17 @@ class _SessionTile extends StatelessWidget {
                           ),
                         ],
                       ),
+                      if (session.showsInterrupted)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            kInterruptedLabel,
+                            key: ValueKey('session-interrupted-${session.id}'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: c.warn),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -297,331 +285,6 @@ class _SessionTile extends StatelessWidget {
       ),
     );
   }
-}
-
-const _live = {SessionStatus.running, SessionStatus.waitingPermission, SessionStatus.idle};
-const _interruptible = {SessionStatus.starting, SessionStatus.running, SessionStatus.waitingPermission};
-
-class _SessionPanel extends StatelessWidget {
-  const _SessionPanel({required this.session});
-
-  /// List entry: shown until the session stream delivers its first detail.
-  final SessionSummary session;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final detail = context.watch<SessionCubit>().state.data;
-    final s = detail?.summary ?? session;
-    final sessions = SessionsScope.of(context);
-    final events = detail?.events ?? const <SessionEvent>[];
-    final partialText = detail?.partialText ?? '';
-    final partialThinking = detail?.partialThinking ?? '';
-    Future<void> answer(String requestId, PermissionDecision decision, {Map<String, String>? answers}) =>
-        _act(context, () => sessions.answer(s.id, requestId, decision, answers: answers));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          height: 52,
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: c.border)),
-          ),
-          child: Row(
-            children: [
-              Pill(label: statusLabel(s.status), color: statusColor(c, s.status)),
-              const SizedBox(width: 12),
-              Flexible(child: Mono(s.command, color: c.textPrimary, size: 13)),
-              const SizedBox(width: 12),
-              if (s.model case final model?) Pill(label: model, color: _modelColor(c, model), mono: true, dot: false),
-              const SizedBox(width: 8),
-              _PermissionModeSelector(key: ValueKey('mode-${s.id}'), session: s),
-              const Spacer(),
-              Mono('\$${s.cost.toStringAsFixed(2)}', size: 12),
-              const SizedBox(width: 16),
-              if (_interruptible.contains(s.status))
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: c.fail,
-                    side: BorderSide(color: c.fail.withValues(alpha: 0.5)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                  ),
-                  onPressed: () => _act(context, () => sessions.interrupt(s.id)),
-                  icon: const Icon(Icons.stop_rounded, size: 16),
-                  label: const Text('Interromper', style: TextStyle(fontSize: 12)),
-                ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
-            children: [
-              if (s.isOrgSession) ...[_Directories(session: s), const SizedBox(height: 16)],
-              if (s.status == SessionStatus.detached) ...[
-                _DetachedBanner(resumable: s.resumable, onResume: () => _act(context, () => sessions.resume(s.id))),
-                const SizedBox(height: 16),
-              ],
-              for (final e in events)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: SessionEventView(e, onAnswer: answer),
-                ),
-              if (partialThinking.isNotEmpty)
-                Padding(padding: const EdgeInsets.only(bottom: 12), child: Muted('pensando… $partialThinking')),
-              if (partialText.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: SessionEventView(AssistantText('', partialText), onAnswer: answer),
-                ),
-              if (s.status == SessionStatus.running && partialText.isEmpty) const _Typing(),
-            ],
-          ),
-        ),
-        _Composer(
-          enabled: _live.contains(s.status) && s.status != SessionStatus.waitingPermission,
-          waiting: s.status == SessionStatus.waitingPermission,
-          onSend: (text) => _act(context, () => sessions.send(s.id, text)),
-        ),
-      ],
-    );
-  }
-}
-
-/// The session's own mode, changed live through the engine. On a refusal the pill goes back to the previous mode
-/// and the engine text shows in a snackbar.
-class _PermissionModeSelector extends StatefulWidget {
-  const _PermissionModeSelector({super.key, required this.session});
-
-  final SessionSummary session;
-
-  @override
-  State<_PermissionModeSelector> createState() => _PermissionModeSelectorState();
-}
-
-class _PermissionModeSelectorState extends State<_PermissionModeSelector> {
-  /// Chosen mode until the summary catches up; the summary stays the source of truth.
-  PermissionMode? _pending;
-  bool _busy = false;
-
-  @override
-  void didUpdateWidget(_PermissionModeSelector oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.session.permissionMode != oldWidget.session.permissionMode) _pending = null;
-  }
-
-  Future<void> _change(PermissionMode mode) async {
-    final current = _pending ?? widget.session.permissionMode;
-    if (_busy || mode == current) return;
-    final sessions = SessionsScope.of(context);
-    final messenger = ScaffoldMessenger.of(context);
-    setState(() {
-      _busy = true;
-      _pending = mode;
-    });
-    try {
-      await sessions.setPermissionMode(widget.session.id, mode);
-    } on Exception catch (e, st) {
-      log('cannot change permission mode', name: 'SessionsPage', error: e, stackTrace: st);
-      if (mounted) setState(() => _pending = null);
-      messenger.showSnackBar(SnackBar(content: Text('$e')));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => PermissionModeMenu(
-    key: const ValueKey('session-permission-mode'),
-    mode: _pending ?? widget.session.permissionMode,
-    tooltip: 'Permissões da sessão',
-    onSelected: _busy ? null : _change,
-  );
-}
-
-/// Where an org session runs: its `cwd` (the org's first root) and the other roots it can reach.
-class _Directories extends StatelessWidget {
-  const _Directories({required this.session});
-
-  final SessionSummary session;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Column(
-      key: const ValueKey('session-directories'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Muted('DIRETÓRIOS', size: 10),
-        const SizedBox(height: 6),
-        if (session.cwd case final cwd?) Mono(cwd, color: c.textPrimary, size: 12),
-        for (final dir in session.additionalDirectories)
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: Mono(dir, color: c.textSecondary, size: 12),
-          ),
-      ],
-    );
-  }
-}
-
-class _DetachedBanner extends StatelessWidget {
-  const _DetachedBanner({required this.resumable, required this.onResume});
-
-  final bool resumable;
-  final VoidCallback onResume;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: c.borderStrong),
-        color: c.elevated,
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.link_off, size: 16, color: c.textSecondary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'O processo desta sessão terminou com o app. Retomar reanexa com o histórico completo; '
-              'uma permissão que estava pendente é refeita pelo modelo.',
-              style: TextStyle(fontSize: 12.5, color: c.textSecondary),
-            ),
-          ),
-          if (resumable)
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: c.accent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              ),
-              onPressed: onResume,
-              child: const Text('Retomar', style: TextStyle(fontSize: 12)),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Typing extends StatelessWidget {
-  const _Typing();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Row(
-      children: [
-        SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5, color: c.running)),
-        const SizedBox(width: 10),
-        const Muted('trabalhando…'),
-      ],
-    );
-  }
-}
-
-class _Composer extends StatefulWidget {
-  const _Composer({required this.enabled, required this.waiting, required this.onSend});
-
-  final bool enabled;
-  final bool waiting;
-  final Future<void> Function(String text) onSend;
-
-  @override
-  State<_Composer> createState() => _ComposerState();
-}
-
-class _ComposerState extends State<_Composer> {
-  final _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _send() {
-    final text = _controller.text.trim();
-    if (!widget.enabled || text.isEmpty) return;
-    _controller.clear();
-    widget.onSend(text);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final enabled = widget.enabled;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: c.border)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: CallbackShortcuts(
-              bindings: {const SingleActivator(LogicalKeyboardKey.enter, meta: true): _send},
-              child: TextField(
-                controller: _controller,
-                enabled: enabled,
-                minLines: 1,
-                maxLines: 5,
-                style: const TextStyle(fontSize: 13),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: widget.waiting
-                      ? 'Decida a permissão acima para continuar'
-                      : enabled
-                      ? 'Responder à sessão…  (⌘↵ envia)'
-                      : 'Sessão encerrada',
-                  hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                  filled: true,
-                  fillColor: c.surface,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.border),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.border),
-                  ),
-                  disabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.border),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.accent),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          IconButton.filled(
-            style: IconButton.styleFrom(
-              backgroundColor: c.accent,
-              disabledBackgroundColor: c.elevated,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            onPressed: enabled ? _send : null,
-            icon: Icon(Icons.arrow_upward, size: 18, color: enabled ? Colors.white : c.textMuted),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Color _modelColor(AppColors c, String model) {
-  final tier = Tier.values.where((t) => model.contains(t.name)).firstOrNull;
-  return tier == null ? c.idle : c.tier(tier);
 }
 
 String _createdAt(String iso) {

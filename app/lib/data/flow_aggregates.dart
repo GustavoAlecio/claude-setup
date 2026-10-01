@@ -1,4 +1,7 @@
 import 'models.dart';
+import 'report_models.dart';
+import 'session_models.dart';
+import 'session_reducer.dart';
 
 /// Uma linha da tabela de tasks: o plano do `current.json` somado ao que os runs (`result.json`) registraram.
 class TaskRow {
@@ -120,4 +123,31 @@ Map<Stage, StageState> derivedStageStates(Cycle cycle) {
           ? (blocked ? StageState.blocked : StageState.current)
           : StageState.pending,
   };
+}
+
+/// A `running` stage whose session the engine already ended (done, stopped, error or detached). A session missing from
+/// [sessions] is not reported: the list may still be loading.
+class EndedStageSession {
+  const EndedStageSession(this.stage, this.session);
+
+  final Stage stage;
+  final SessionSummary session;
+}
+
+bool _ended(SessionStatus status) => status != SessionStatus.starting && !isLive(status);
+
+List<EndedStageSession> endedStageSessions(ReportDoc? report, List<SessionSummary> sessions) => [
+  for (final s in report?.stages ?? const <StageReport>[])
+    if (s.status == ReportStatus.running)
+      if (sessions.where((x) => x.id == s.sessionId).firstOrNull case final session?)
+        if (_ended(session.status)) EndedStageSession(s.stage, session),
+];
+
+/// Session the Fluxo side panel shows. [stage] is `?stage=`: the session that stage reported, `null` when it has none
+/// (the panel then shows the placeholder). Without it, [runningStage] (the project's live pipeline session), else the
+/// session of the report's `running` stage.
+String? flowPanelSessionId({required Stage? stage, required SessionSummary? runningStage, required ReportDoc? report}) {
+  if (stage != null) return report?.stage(stage)?.sessionId;
+  return runningStage?.id ??
+      report?.stages.where((s) => s.status == ReportStatus.running && s.sessionId != null).firstOrNull?.sessionId;
 }

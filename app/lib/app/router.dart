@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/claude_home.dart';
+import '../data/models.dart';
 import '../data/orgs.dart';
 import '../features/about/about_page.dart';
 import '../features/adrs/adrs_page.dart';
@@ -86,7 +87,10 @@ GoRouter buildRouter(EffectivePaths paths) {
               final project = state.pathParameters['project']!;
               final query = state.uri.queryParameters;
               return _instant(state, switch (AppTab.parse(state.pathParameters['tab'])) {
-                AppTab.flow => FlowPage(projectName: project),
+                AppTab.flow => FlowPage(
+                  projectName: project,
+                  stage: Stage.values.where((s) => s.name == query['stage']).firstOrNull,
+                ),
                 AppTab.runs => RunsPage(projectName: project),
                 AppTab.sessions => SessionsPage(scope: ShellProjectScope(project)),
                 AppTab.artifacts => ArtifactsPage(key: ValueKey(project), projectName: project, doc: query['doc']),

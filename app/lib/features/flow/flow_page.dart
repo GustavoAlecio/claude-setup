@@ -11,15 +11,20 @@ import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
+import '../../data/session_reducer.dart';
 import '../../data/session_models.dart';
 import '../launcher/kickoff_form.dart';
 import 'flow_panels.dart';
+import 'flow_side_panel.dart';
 import 'stage_timeline.dart';
 
 class FlowPage extends StatelessWidget {
-  const FlowPage({super.key, required this.projectName});
+  const FlowPage({super.key, required this.projectName, this.stage});
 
   final String projectName;
+
+  /// `?stage=`: the stage selected in the timeline; its session is the one the side panel shows.
+  final Stage? stage;
 
   @override
   Widget build(BuildContext context) {
@@ -31,22 +36,115 @@ class FlowPage extends StatelessWidget {
       child: BlocBuilder<StreamCubit<Project?>, AsyncSnapshot<Project?>>(
         builder: (context, snapshot) => snapshot.connectionState == ConnectionState.waiting
             ? const SizedBox.shrink()
-            : _FlowView(project: snapshot.data),
+            : _FlowView(projectName: projectName, project: snapshot.data, stage: stage),
       ),
     );
   }
 }
 
 class _FlowView extends StatelessWidget {
-  const _FlowView({required this.project});
+  const _FlowView({required this.projectName, required this.project, required this.stage});
 
+  final String projectName;
   final Project? project;
+  final Stage? stage;
+
+  @override
+  Widget build(BuildContext context) {
+    final project = this.project;
+    final report = project?.cycle?.report;
+    final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
+    final shownId = flowPanelSessionId(
+      stage: stage,
+      runningStage: project == null ? null : runningStageSession(sessions, project),
+      report: report,
+    );
+    final side = FlowSidePanel(
+      projectName: projectName,
+      project: project,
+      report: report,
+      session: sessions.where((s) => s.id == shownId).firstOrNull,
+    );
+    final main = _FlowMain(projectName: projectName, project: project, sessions: sessions, selected: stage);
+    final c = context.colors;
+    return LayoutBuilder(
+      builder: (context, constraints) => constraints.maxWidth >= kFlowSplitWidth
+          ? _split(c, main, side)
+          : _withDrawer(
+              c,
+              main,
+              side,
+              (pendingByProject(sessions)[projectName] ?? 0) + endedStageSessions(report, sessions).length,
+            ),
+    );
+  }
+
+  Widget _split(AppColors c, Widget main, Widget side) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Expanded(child: main),
+      Container(
+        width: kFlowSidePanelWidth,
+        decoration: BoxDecoration(
+          border: Border(left: BorderSide(color: c.border)),
+        ),
+        child: side,
+      ),
+    ],
+  );
+
+  Widget _withDrawer(AppColors c, Widget main, Widget side, int pending) => Scaffold(
+    backgroundColor: Colors.transparent,
+    endDrawer: Drawer(
+      width: kFlowSidePanelWidth,
+      backgroundColor: c.canvas,
+      shape: const RoundedRectangleBorder(),
+      child: side,
+    ),
+    body: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Builder(
+              builder: (context) => OutlinedButton.icon(
+                key: const ValueKey('flow-drawer-toggle'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: c.textPrimary,
+                  side: BorderSide(color: c.borderStrong),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                ),
+                onPressed: () => Scaffold.of(context).openEndDrawer(),
+                icon: const Icon(Icons.forum_outlined, size: 15),
+                label: Text(
+                  pending > 0 ? 'Sessão da etapa · $pending aguardando' : 'Sessão da etapa',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: main),
+      ],
+    ),
+  );
+}
+
+/// Left side of the Fluxo: the stage timeline and the cycle panels, or the empty state without a cycle.
+class _FlowMain extends StatelessWidget {
+  const _FlowMain({required this.projectName, required this.project, required this.sessions, required this.selected});
+
+  final String projectName;
+  final Project? project;
+  final List<SessionSummary> sessions;
+  final Stage? selected;
 
   @override
   Widget build(BuildContext context) {
     final project = this.project;
     final cycle = project?.cycle;
-    final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     final stageSession = project == null ? null : runningStageSession(sessions, project);
     final banner = stageSession == null ? null : StageBanner(session: stageSession);
     if (project == null || cycle == null) {
@@ -78,37 +176,49 @@ class _FlowView extends StatelessWidget {
       );
     }
     final run = cycle.latestRun;
+    final report = cycle.report;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
         if (banner != null) ...[banner, const SizedBox(height: 16)],
         StageTimeline(
-          report: cycle.report,
+          report: report,
           derived: derivedStageStates(cycle),
           stageMinutes: cycle.stageMinutes,
           project: project.name,
+          selected: selected,
+          onSelect: (stage) => context.go(
+            Uri(pathSegments: ['', 'p', projectName, 'flow'], queryParameters: {'stage': stage.name}).toString(),
+          ),
         ),
         const SizedBox(height: 16),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 2,
-              child: _CycleCard(project: project, cycle: cycle),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              flex: 3,
-              child: run == null ? const _NoRun() : _RunSummary(project: project.name, run: run),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final cycleCard = _CycleCard(project: project, cycle: cycle);
+            final runCard = run == null ? const _NoRun() : _RunSummary(project: project.name, run: run);
+            // Next to the side panel the left column is too narrow for both cards side by side.
+            if (constraints.maxWidth < 960) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [cycleCard, const SizedBox(height: 16), runCard],
+              );
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 2, child: cycleCard),
+                const SizedBox(width: 16),
+                Expanded(flex: 3, child: runCard),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 16),
         TasksPanel(cycle: cycle),
         const SizedBox(height: 16),
         VerifyPanel(runs: cycle.runs),
         const SizedBox(height: 16),
-        DecisionsPanel(report: cycle.report),
+        DecisionsPanel(report: report),
       ],
     );
   }

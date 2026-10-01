@@ -18,6 +18,7 @@ class SessionSummary {
     this.org,
     this.additionalDirectories = const [],
     this.permissionMode = PermissionMode.defaultMode,
+    this.interrupted = false,
   });
 
   final String id;
@@ -44,7 +45,14 @@ class SessionSummary {
   /// `default`.
   final PermissionMode permissionMode;
 
+  /// The last process event is `reattached` (the engine restarted and killed the previous process) and no message
+  /// was sent since. Known only from the session's own event log, never from the list.
+  final bool interrupted;
+
   bool get isOrgSession => org != null;
+
+  /// Only an idle session can be waiting on a message after the engine killed its process.
+  bool get showsInterrupted => interrupted && status == SessionStatus.idle;
 
   SessionSummary copyWith({
     SessionStatus? status,
@@ -52,6 +60,7 @@ class SessionSummary {
     int? pendingPermissions,
     String? model,
     PermissionMode? permissionMode,
+    bool? interrupted,
   }) => SessionSummary(
     id: id,
     project: project,
@@ -67,6 +76,7 @@ class SessionSummary {
     org: org,
     additionalDirectories: additionalDirectories,
     permissionMode: permissionMode ?? this.permissionMode,
+    interrupted: interrupted ?? this.interrupted,
   );
 }
 

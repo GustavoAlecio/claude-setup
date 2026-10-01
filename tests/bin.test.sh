@@ -249,6 +249,35 @@ expect_exit 3 stage-start specify --workflow-dir "$N"
 expect_exit 3 reset --workflow-dir "$N"
 [ ! -e "$N/report.json" ] || fail "report.json written without current.json"
 
+echo "- wf-report: stage-start records session_id only when --session is given"
+S=$(tmp)
+printf '{"feature":"Feat S","start_date":"2026-02-01T00:00:00Z"}' > "$S/current.json"
+wfr stage-start plan --workflow-dir "$S"
+wfr stage-start tasks --workflow-dir "$S" --session sess-42
+python3 -c "
+import json; st={x['stage']:x for x in json.load(open('$S/report.json'))['stages']}
+assert 'session_id' not in st['plan'], st['plan']
+assert st['tasks']['session_id']=='sess-42', st['tasks']
+" || fail "session_id in stage-start"
+
+echo "- wf-report: gate asks with autopilot off, follows gates.json with it on, exit 2 on unknown name"
+GATE_HOME=$(tmp); mkdir -p "$GATE_HOME/.claude/workflow"; ln -s "$BIN" "$GATE_HOME/.claude/bin"
+gate() { HOME="$GATE_HOME" python3 "$BIN/wf-report.py" gate "$1"; }
+gates_are() { local want="$1" got=""; for g in spec plan tasks pr; do got="$got$g=$(gate "$g") "; done; [ "$got" = "$want" ] || fail "gate: want '$want', got '$got' ($2)"; }
+gates_are "spec=ask plan=ask tasks=ask pr=ask " "autopilot off"
+printf '{"required":["plan"]}' > "$GATE_HOME/.claude/workflow/gates.json"
+gates_are "spec=ask plan=ask tasks=ask pr=ask " "autopilot off ignores gates.json"
+rm "$GATE_HOME/.claude/workflow/gates.json"; touch "$GATE_HOME/.claude/workflow/auto_mode.flag"
+gates_are "spec=ask plan=skip tasks=skip pr=ask " "no gates.json"
+printf '{"required":["plan"]}' > "$GATE_HOME/.claude/workflow/gates.json"
+gates_are "spec=skip plan=ask tasks=skip pr=skip " "required plan"
+for bad in '{not json' '[]' '{"required":"plan"}' '{"required":[1]}' '{}'; do
+  printf '%s' "$bad" > "$GATE_HOME/.claude/workflow/gates.json"
+  gates_are "spec=ask plan=skip tasks=skip pr=ask " "invalid gates.json: $bad"
+done
+got=0; gate deploy >/dev/null 2>&1 || got=$?; [ "$got" = 2 ] || fail "gate deploy: expected exit 2, got $got"
+got=0; HOME="$GATE_HOME" python3 "$BIN/wf-report.py" gate >/dev/null 2>&1 || got=$?; [ "$got" = 2 ] || fail "gate without name: expected exit 2, got $got"
+
 echo "- wf-report: shell metacharacters in text files are stored verbatim and never run"
 rm -f /tmp/pwn-wfr
 printf '%s\n' 'crase `x` e $(touch /tmp/pwn-wfr) com "aspas" e '"'"'simples'"'" > "$W/evil.md"
@@ -351,5 +380,53 @@ done
 [ -z "$(grep -rln 'wf-report.py reset' "$SKILLS" | grep -v '/\(kickoff\|specify\)/' || true)" ] || fail "reset used outside kickoff/specify"
 PRIV='Grupo''OTG\|loss''-control\|r10''-mobile\|R10 Score Dev\|/development/r10\|/development/abm'
 [ -z "$(grep -rn "$PRIV" "$SKILLS" || true)" ] || fail "private names in skills"
+
+echo "- skills: gates are AskUserQuestion with the three options, no 'Seguir para', stage-start carries --session"
+for f in "$SKILLS"/*/SKILL.md; do
+  for n in $(grep -n 'wf-report.py gate ' "$f" | cut -d: -f1); do
+    win=$(sed -n "${n},$((n + 15))p" "$f")
+    for opt in 'Aprovar (Recommended)' 'Ajustar' 'Rejeitar'; do
+      printf '%s\n' "$win" | grep -q "$opt" || fail "$f:$n: gate without '$opt' within 15 lines"
+    done
+  done
+done
+for s in challenge-spec plan tasks; do
+  [ "$(grep -c 'wf-report.py gate ' "$SKILLS/$s/SKILL.md")" = "1" ] || fail "$s: expected exactly one gate"
+done
+[ -z "$(grep -ln 'Seguir para' "$SKILLS"/{specify,challenge-spec,plan,tasks}/SKILL.md || true)" ] || fail "'Seguir para' still in skills"
+for s in kickoff specify challenge-spec plan tasks implement verify; do
+  grep 'wf-report.py stage-start ' "$SKILLS/$s/SKILL.md" | grep -qv -- '--session "\$CLAUDE_FLOW_SESSION_ID"' && fail "$s: stage-start without --session"
+done
+grep -q 'gates.json' "$SKILLS/auto/SKILL.md" || fail "auto: does not explain gates"
+
+echo "- app/install.sh: running sessions stop the install, --force skips the check, unreachable engine only warns"
+INSTALL="$(cd "$(dirname "$0")/../app" && pwd)/install.sh"
+ROOT=$(tmp); SRV=$(tmp); mkdir -p "$ROOT/.dashboard/engine-sessions" "$SRV/api"
+printf '%s' '[{"id":"s-run","status":"running","project":"demo","command":"/plan"},{"id":"s-perm","status":"waiting_permission","project":"demo","command":"/fix"},{"id":"s-idle","status":"idle","project":"demo","command":"/status"}]' > "$SRV/api/sessions"
+python3 -m http.server 0 --bind 127.0.0.1 --directory "$SRV" >/dev/null 2>&1 &
+FAKE_ENGINE=$!
+trap 'kill "$FAKE_ENGINE" 2>/dev/null || true' EXIT
+echo "$FAKE_ENGINE" > "$ROOT/.dashboard/engine-sessions/engine.pid"
+for _ in $(seq 1 50); do
+  lsof -nP -a -p "$FAKE_ENGINE" -iTCP -sTCP:LISTEN >/dev/null 2>&1 && break
+  sleep 0.1
+done
+# Belt and braces: if the source guard ever regresses, main() must die on the stub before touching /Applications.
+STUBS=$(tmp); for b in flutter osascript open; do printf '#!/bin/sh\necho "stub $0 called" >&2\nexit 97\n' > "$STUBS/$b"; chmod +x "$STUBS/$b"; done
+guard() { PATH="$STUBS:$PATH" WORKFLOW_ROOT="$1" bash -c 'source "$1"; shift; guard_sessions "$@"' guard "$INSTALL" "${@:2}"; }
+PATH="$STUBS:$PATH" bash -c 'source "$1" --force; echo sourced-ok' guard "$INSTALL" 2>"$ROOT/src" | grep -q sourced-ok || fail "install.sh: sourcing ran main"
+! grep -q "stub" "$ROOT/src" || fail "install.sh: sourcing reached a build/quit command" 
+got=0; guard "$ROOT" 2>"$ROOT/err" || got=$?
+[ "$got" = 1 ] || fail "install guard: expected exit 1 with running sessions, got $got"
+grep -q "s-run	running	demo	/plan" "$ROOT/err" || fail "install guard: running session not listed"
+grep -q "s-perm	waiting_permission" "$ROOT/err" || fail "install guard: waiting_permission session not listed"
+! grep -q "s-idle" "$ROOT/err" || fail "install guard: idle session listed"
+guard "$ROOT" --force 2>/dev/null || fail "install guard: --force must pass"
+printf '%s' '[{"id":"s-idle","status":"idle"}]' > "$SRV/api/sessions"
+guard "$ROOT" 2>/dev/null || fail "install guard: idle-only engine must pass"
+kill "$FAKE_ENGINE"; wait "$FAKE_ENGINE" 2>/dev/null || true
+guard "$ROOT" 2>"$ROOT/err" || fail "install guard: unreachable engine must pass"
+grep -q "engine inacessível" "$ROOT/err" || fail "install guard: no warning for an unreachable engine"
+guard "$(tmp)" 2>/dev/null || fail "install guard: missing engine.pid must pass"
 
 echo "OK"
