@@ -7,8 +7,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/theme/app_theme.dart';
+import '../data/docs_repository.dart';
 import '../data/flow_repository.dart';
 import '../data/inventory_repository.dart';
+import '../data/mock_docs_repository.dart';
 import '../data/mock_inventory_repository.dart';
 import '../data/orgs.dart';
 import '../data/session_models.dart';
@@ -31,6 +33,7 @@ class ClaudeFlowApp extends StatefulWidget {
     required this.engine,
     this.pickDirectory = getDirectoryPath,
     this.inventory = const MockInventoryRepository.empty(),
+    this.docs,
     this.paths,
   });
 
@@ -39,6 +42,9 @@ class ClaudeFlowApp extends StatefulWidget {
   final SessionsRepository sessions;
   final EngineController engine;
   final InventoryRepository inventory;
+
+  /// `null` is [MockDocsRepository.empty].
+  final DocsRepository? docs;
 
   /// `null` reads the real environment.
   final EffectivePaths? paths;
@@ -50,6 +56,7 @@ class ClaudeFlowApp extends StatefulWidget {
 class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
   late final GoRouter _router = buildRouter(widget.paths ?? EffectivePaths.fromEnvironment());
   late final AppLifecycleListener _lifecycle;
+  static final _fallbackDocs = MockDocsRepository.empty();
 
   @override
   void initState() {
@@ -71,29 +78,34 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
 
   @override
   Widget build(BuildContext context) {
+    final docs = widget.docs ?? _fallbackDocs;
     return RepositoryScope(
       repository: widget.repository,
       pickDirectory: widget.pickDirectory,
       child: InventoryScope(
         repository: widget.inventory,
-        child: SessionsScope(
-          sessions: widget.sessions,
-          engine: widget.engine,
-          child: MultiBlocProvider(
-            providers: [
-              BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
-              BlocProvider(create: (_) => ConfigCubit(widget.repository)),
-              BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
-              BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
-            ],
-            child: MaterialApp.router(
-              title: 'Claude Flow',
-              debugShowCheckedModeBanner: false,
-              theme: buildTheme(Brightness.light),
-              darkTheme: buildTheme(Brightness.dark),
-              themeMode: ThemeMode.dark,
-              routerConfig: _router,
-              builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
+        child: DocsScope(
+          repository: docs,
+          opener: docs.open,
+          child: SessionsScope(
+            sessions: widget.sessions,
+            engine: widget.engine,
+            child: MultiBlocProvider(
+              providers: [
+                BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
+                BlocProvider(create: (_) => ConfigCubit(widget.repository)),
+                BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
+                BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
+              ],
+              child: MaterialApp.router(
+                title: 'Claude Flow',
+                debugShowCheckedModeBanner: false,
+                theme: buildTheme(Brightness.light),
+                darkTheme: buildTheme(Brightness.dark),
+                themeMode: ThemeMode.dark,
+                routerConfig: _router,
+                builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
+              ),
             ),
           ),
         ),

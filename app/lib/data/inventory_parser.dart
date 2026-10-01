@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'front_matter.dart';
 import 'inventory_models.dart';
 
 const _knownKeys = {'name', 'description', 'model', 'tools', 'id', 'title', 'status'};
@@ -13,11 +14,8 @@ String _unreadable(String path, String reason) => 'não foi possível ler ${_bas
 
 ({List<String> lines, int end})? _frontmatterBounds(String raw) {
   final lines = raw.replaceAll('\r\n', '\n').split('\n');
-  if (lines.isEmpty || lines.first.trimRight() != '---') return null;
-  for (var i = 1; i < lines.length; i++) {
-    if (lines[i].trimRight() == '---') return (lines: lines, end: i);
-  }
-  return (lines: lines, end: -1);
+  final end = frontMatterEnd(lines);
+  return end == -2 ? null : (lines: lines, end: end);
 }
 
 /// Subconjunto de YAML aceito pelas skills/agentes/ADRs. Chaves desconhecidas são ignoradas por inteiro
