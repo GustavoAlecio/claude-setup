@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { HttpError } from "./data.mjs";
+import { redact, redactDeep, sessionEnv } from "./gh_env.mjs";
 
 const TITLE_MAX = 60;
 
@@ -43,13 +45,18 @@ function createInputStream() {
 }
 
 class Session {
-  constructor({ project, org = null, cwd, additionalDirectories = [], command, model, restored }, { query, store, changed }) {
+  constructor(
+    { project, org = null, githubAccount = null, cwd, additionalDirectories = [], command, model, restored },
+    { query, store, changed, tokens }
+  ) {
     this.queryFn = query;
     this.store = store;
+    this.tokens = tokens;
     this.changed = () => changed(this);
     this.id = restored?.id ?? randomUUID();
     this.project = project;
     this.org = org;
+    this.githubAccount = githubAccount;
     this.cwd = cwd;
     this.additionalDirectories = additionalDirectories;
     this.command = command;
@@ -68,6 +75,9 @@ class Session {
     this.abort = null;
     this.input = null;
     this.consuming = null;
+    this.attaching = null;
+    // So em memoria: o snapshot guarda a conta, e o resume pede o token de novo.
+    this.token = null;
   }
 
   snapshot() {
@@ -75,6 +85,7 @@ class Session {
       id: this.id,
       project: this.project,
       org: this.org,
+      githubAccount: this.githubAccount,
       cwd: this.cwd,
       additionalDirectories: this.additionalDirectories,
       command: this.command,
@@ -89,8 +100,13 @@ class Session {
     this.store.persist(this.id, () => this.snapshot());
   }
 
+  get secrets() {
+    return this.token ? [this.token] : [];
+  }
+
+  /** Redige antes de guardar: o mesmo objeto vai para o snapshot e para o SSE. */
   emit(event) {
-    const stored = { seq: this.events.length + 1, at: new Date().toISOString(), ...event };
+    const stored = redactDeep({ seq: this.events.length + 1, at: new Date().toISOString(), ...event }, this.secrets);
     this.events.push(stored);
     this.broadcast("event", stored);
     this.save();
@@ -116,6 +132,7 @@ class Session {
       id: this.id,
       project: this.project,
       org: this.org,
+      githubAccount: this.githubAccount,
       cwd: this.cwd,
       additionalDirectories: this.additionalDirectories,
       command: this.command,
@@ -226,8 +243,11 @@ class Session {
       case "stream_event": {
         const event = message.event;
         if (event?.type !== "content_block_delta") return;
-        if (event.delta?.type === "text_delta") this.broadcast("delta", { kind: "text", text: event.delta.text });
-        else if (event.delta?.type === "thinking_delta") this.broadcast("delta", { kind: "thinking", text: event.delta.thinking });
+        if (event.delta?.type === "text_delta") {
+          this.broadcast("delta", { kind: "text", text: redact(event.delta.text, this.secrets) });
+        } else if (event.delta?.type === "thinking_delta") {
+          this.broadcast("delta", { kind: "thinking", text: redact(event.delta.thinking, this.secrets) });
+        }
         return;
       }
 
@@ -237,14 +257,16 @@ class Session {
   }
 
   /** Liga (ou religa) um processo a esta sessao. `resume` reaproveita o transcript no disco. */
-  attach({ resume = false } = {}) {
+  attach({ resume = false, token = null } = {}) {
     this.input = createInputStream();
     this.abort = new AbortController();
+    this.token = token;
 
     this.query = this.queryFn({
       prompt: this.input,
       options: {
         cwd: this.cwd,
+        env: sessionEnv(process.env, token),
         ...(this.additionalDirectories.length ? { additionalDirectories: this.additionalDirectories } : {}),
         canUseTool: this.canUseTool,
         abortController: this.abort,
@@ -290,12 +312,34 @@ class Session {
     }
   }
 
-  /** "attached" quando ja ha processo — chamar de novo nao religa nem emite `reattached`. */
+  /**
+   * "attached" quando ja ha processo — chamar de novo nao religa nem emite `reattached`. Chamadas
+   * concorrentes esperam a mesma `attaching`, entao o token e pedido uma vez e ha um so `attach`.
+   * Conta que nao loga mais e 409 e a sessao fica como estava: nunca cai para a conta ativa.
+   */
   resume() {
-    if (this.query) return "attached";
-    if (!this.sdkSessionId) return "not_resumable";
-    this.attach({ resume: true });
-    return "resumed";
+    if (this.query) return Promise.resolve("attached");
+    if (!this.sdkSessionId) return Promise.resolve("not_resumable");
+    if (this.attaching) return this.attaching;
+    const attaching = (async () => {
+      // Sem `githubAccount` o corpo seria sincrono e o `finally` rodaria antes da atribuicao,
+      // deixando em `attaching` uma promise ja resolvida que nunca mais religa o processo.
+      await null;
+      try {
+        let token = null;
+        if (this.githubAccount) {
+          token = await this.tokens.tokenFor(this.githubAccount).catch((err) => {
+            throw new HttpError(409, err.message);
+          });
+        }
+        this.attach({ resume: true, token });
+        return "resumed";
+      } finally {
+        if (this.attaching === attaching) this.attaching = null;
+      }
+    })();
+    this.attaching = attaching;
+    return attaching;
   }
 
   async interrupt() {
@@ -322,7 +366,7 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref());
 
 const changeKey = (s) => JSON.stringify([s.status, s.pendingPermissions, s.cost, s.model]);
 
-export function createSessions({ query, store }) {
+export function createSessions({ query, store, tokens }) {
   const sessions = new Map();
   const listeners = new Set();
   const lastKeys = new Map();
@@ -341,17 +385,19 @@ export function createSessions({ query, store }) {
     publish({ type: "summary", summary });
   }
 
-  const deps = { query, store, changed };
+  const deps = { query, store, changed, tokens };
 
   function flushAll() {
     return Promise.all([...sessions.values()].map((s) => store.flush(s.id, s.snapshot())));
   }
 
   return {
-    create(params) {
+    /** Com `githubAccount`, o token vem antes da sessao existir: conta que nao loga e 400 sem sessao orfa. */
+    async create(params) {
+      const token = params.githubAccount ? await tokens.tokenFor(params.githubAccount) : null;
       const session = new Session(params, deps);
       sessions.set(session.id, session);
-      session.attach();
+      session.attach({ token });
       return session;
     },
 
@@ -389,6 +435,7 @@ export function createSessions({ query, store }) {
           {
             project: snapshot.project,
             org: snapshot.org ?? null,
+            githubAccount: typeof snapshot.githubAccount === "string" ? snapshot.githubAccount : null,
             cwd: snapshot.cwd,
             additionalDirectories: snapshot.additionalDirectories ?? [],
             command: snapshot.command,
