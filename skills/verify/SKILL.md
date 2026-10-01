@@ -92,7 +92,7 @@ Por `status`:
 
 - **verified** → marque os critérios PASS como `[x]` na `spec.md`, rode `capture-metrics.sh end verify` (seta `verified`). Liste os UNTESTABLE explicitamente — são o que o QA humano precisa olhar. Auto on: siga para `/complete`. Auto off: "Verificado. Fechar o ciclo? `/complete`".
 - **inconclusive** → o QA não conseguiu validar (device, backend, credencial). Mostre o motivo; não marque nada. Ofereça rodar de novo depois de resolver o ambiente.
-- **blocked / backtrack** → mesmo tratamento do `/implement` (diagnosis ToT, protocolo de desvio). Nunca decida sozinho.
+- **blocked / backtrack** → mesmo tratamento do `/implement` (diagnosis ToT, protocolo de desvio), sempre como `AskUserQuestion` (parada incondicional, mesmo com auto on). Nunca decida sozinho.
 
 Findings minor/nit dos reviewers: liste no fim como "não bloqueantes", sem abrir task.
 
