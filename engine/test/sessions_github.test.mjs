@@ -132,6 +132,7 @@ test("ambiente da sessao: sem token herdado, GH_TOKEN da conta, prompts desligad
       GH_HOST: "example.invalid",
       SSH_AUTH_SOCK: "/tmp/fake-agent.sock",
       GIT_SSH_COMMAND: undefined,
+      CLAUDE_FLOW_SESSION_ID: "inherited-session",
     },
     async () => {
       const { port, queries, gh } = await start();
@@ -140,8 +141,9 @@ test("ambiente da sessao: sem token herdado, GH_TOKEN da conta, prompts desligad
       assert.equal(withAccount.githubAccount, "acct-a");
       const env = queries[0].env;
       for (const [key, value] of Object.entries(process.env)) {
-        if (!STRIPPED.includes(key)) assert.equal(env[key], value, key);
+        if (!STRIPPED.includes(key) && key !== "CLAUDE_FLOW_SESSION_ID") assert.equal(env[key], value, key);
       }
+      assert.equal(env.CLAUDE_FLOW_SESSION_ID, withAccount.id);
       assert.equal(env.GH_TOKEN, TOKENS["acct-a"]);
       assert.equal("GITHUB_TOKEN" in env, false);
       assert.equal("GH_HOST" in env, false);
@@ -157,6 +159,7 @@ test("ambiente da sessao: sem token herdado, GH_TOKEN da conta, prompts desligad
       assert.equal("GH_TOKEN" in plain, false);
       assert.equal("GITHUB_TOKEN" in plain, false);
       assert.equal(plain.GIT_TERMINAL_PROMPT, "0");
+      assert.equal(plain.CLAUDE_FLOW_SESSION_ID, without.id);
 
       const org = await api(port, "POST", "/api/sessions", {
         org: "org-app",
@@ -238,6 +241,7 @@ test("resume: token pedido de novo, attach unico em inputs concorrentes, conta r
   assert.equal(second.queries.length, 1);
   assert.equal(second.queries[0].env.GH_TOKEN, TOKENS["acct-a"]);
   assert.equal(second.queries[0].resume, saved.sdkSessionId);
+  assert.equal(second.queries[0].env.CLAUDE_FLOW_SESSION_ID, id);
   await second.engine.sessions.shutdown({ waitMs: 200 });
 
   const third = await start({ sessionsDir: first.sessionsDir });
@@ -285,5 +289,6 @@ test("snapshot antigo sem githubAccount: resume sem GH_TOKEN e sem pedir token",
   assert.equal((await api(port, "POST", `/api/sessions/${id}/input`, { text: "volta" })).status, 200);
   assert.equal(queries.length, 1);
   assert.equal("GH_TOKEN" in queries[0].env, false);
+  assert.equal(queries[0].env.CLAUDE_FLOW_SESSION_ID, id);
   assert.equal(gh.calls.length, 0);
 });

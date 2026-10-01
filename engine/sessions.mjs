@@ -283,7 +283,8 @@ class Session {
       prompt: this.input,
       options: {
         cwd: this.cwd,
-        env: sessionEnv(process.env, token),
+        // As skills gravam este id no relatório (`stage-start --session`) para o app ligar etapa e sessão.
+        env: { ...sessionEnv(process.env, token), CLAUDE_FLOW_SESSION_ID: this.id },
         ...(this.additionalDirectories.length ? { additionalDirectories: this.additionalDirectories } : {}),
         canUseTool: this.canUseTool,
         abortController: this.abort,

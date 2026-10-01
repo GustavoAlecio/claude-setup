@@ -8,6 +8,10 @@ Stage report for the smart pipeline: $WF_DIR/report.json, written only by this s
   wf-report.py findings    <stage> --workflow-dir W --source X --file JSON
   wf-report.py import-run  <stage> --workflow-dir W --run-dir D
   wf-report.py reset       --workflow-dir W
+  wf-report.py gate        spec|plan|tasks|pr
+
+`gate` prints `ask` or `skip`: autopilot off always asks; on, it asks only for names in
+~/.claude/workflow/gates.json {"required": [...]} (missing or invalid file: spec and pr).
 
 Free text only ever arrives through files, so nothing the user or an agent wrote is
 interpolated by a shell. Exit 2: invalid value or missing input file. Exit 3: no current.json.
@@ -31,6 +35,8 @@ MAX_TEXT = 32 * 1024
 TRUNC = "…[truncado]"
 BLOCKING = ("critical", "major")
 CLOSED_WITHOUT_REPORT = "encerrada sem relatório"
+GATES = ["spec", "plan", "tasks", "pr"]
+DEFAULT_REQUIRED = ["spec", "pr"]
 
 
 class InputError(Exception):
@@ -282,6 +288,24 @@ def cmd_import_run(a, report, result, current):
             add_decision(cs, "user", x)
 
 
+def required_gates(workflow_root: Path) -> list:
+    try:
+        data = json.loads((workflow_root / "gates.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return DEFAULT_REQUIRED
+    required = data.get("required") if isinstance(data, dict) else None
+    if not isinstance(required, list) or not all(isinstance(x, str) for x in required):
+        return DEFAULT_REQUIRED
+    return required
+
+
+def cmd_gate(name: str) -> str:
+    root = Path.home() / ".claude" / "workflow"
+    if not (root / "auto_mode.flag").exists():
+        return "ask"
+    return "ask" if name in required_gates(root) else "skip"
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -310,6 +334,8 @@ def parse_args():
     sp.add_argument("--run-dir", required=True)
     sp = sub.add_parser("reset")
     sp.add_argument("--workflow-dir", required=True)
+    sp = sub.add_parser("gate")
+    sp.add_argument("name", choices=GATES)
     return p.parse_args()
 
 
@@ -337,6 +363,9 @@ def load_inputs(a):
 
 def main():
     a = parse_args()
+    if a.cmd == "gate":
+        print(cmd_gate(a.name))
+        return
     try:
         inputs = load_inputs(a)
     except InputError as e:
