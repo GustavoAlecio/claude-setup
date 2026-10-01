@@ -4,6 +4,7 @@ import 'package:flutter_driver/driver_extension.dart';
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/docs_from_environment.dart';
 import 'package:claude_flow/app/inventory_from_environment.dart';
+import 'package:claude_flow/app/metrics_from_environment.dart';
 import 'package:claude_flow/app/repository_from_environment.dart';
 import 'package:claude_flow/app/sessions_from_environment.dart';
 
@@ -17,6 +18,7 @@ void main() {
       engine: engine,
       github: github,
       inventory: inventoryFromEnvironment(),
+      metrics: metricsFromEnvironment(),
       docs: docsFromEnvironment(),
     ),
   );
