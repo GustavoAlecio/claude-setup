@@ -6,8 +6,10 @@ import '../data/orgs.dart';
 import '../features/about/about_page.dart';
 import '../features/artifacts/artifacts_page.dart';
 import '../features/flow/flow_page.dart';
+import '../features/inbox/inbox_page.dart';
 import '../features/landing/landing_page.dart';
 import '../features/placeholder/planned_page.dart';
+import '../features/prs/prs_page.dart';
 import '../features/reviews/reviews_page.dart';
 import '../features/runs/runs_page.dart';
 import '../features/runs/task_detail_page.dart';
@@ -92,6 +94,8 @@ GoRouter buildRouter(EffectivePaths paths) {
                   projectName: project,
                   pr: int.tryParse(query['pr'] ?? ''),
                 ),
+                AppTab.prs => PrsPage(key: ValueKey(project), projectName: project),
+                AppTab.inbox => const InboxPage(),
                 final tab => PlannedPage(tab: tab),
               });
             },
