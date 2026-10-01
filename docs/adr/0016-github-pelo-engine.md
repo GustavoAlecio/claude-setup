@@ -1,11 +1,11 @@
 ---
 id: 0016
 title: GitHub consultado pelo engine com cache, fallback e checkout validado pelo remote
-status: accepted
+status: superseded
 date: 2026-10-01
 affects: ["engine/github.mjs", "engine/engine.mjs", "app/lib/data/github_parser.dart", "app/lib/data/http_github_repository.dart", "app/lib/features/prs/**", "app/lib/features/inbox/**"]
 supersedes: []
-superseded_by: []
+superseded_by: ["0017"]
 tags: [engine, github, flutter]
 ---
 

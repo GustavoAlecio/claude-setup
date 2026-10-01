@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
@@ -6,11 +7,27 @@ import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/config_mutations.dart';
 import '../../data/flow_repository.dart';
+import '../../data/github_models.dart';
+import '../../data/github_parser.dart';
+import '../../data/github_repository.dart';
 import '../../data/orgs.dart';
 import '../../engine/engine_config.dart';
 
+const _kSshTimeout = Duration(seconds: 10);
+
+/// State of the `ssh -T` check of one owner; `null` identity means it could not be verified.
+class _Ssh {
+  const _Ssh.pending() : pending = true, identity = null;
+  const _Ssh.done(this.identity) : pending = false;
+  const _Ssh.failed() : pending = false, identity = null;
+
+  final bool pending;
+  final SshIdentity? identity;
+}
+
 /// Name + folders of one org, validated against [others] before [onSave]. Shared by the landing's
-/// "Criar org" (`maxRoots: 1`, with [suggestions]) and each org in Configurações.
+/// "Criar org" (`maxRoots: 1`, with [suggestions]) and each org in Configurações. The GitHub section edits
+/// `OrgConfig.github` (account, owners) and blocks saving while an owner's SSH identity contradicts the account.
 class OrgForm extends StatefulWidget {
   const OrgForm({
     super.key,
@@ -46,13 +63,136 @@ class OrgForm extends StatefulWidget {
 class _OrgFormState extends State<OrgForm> {
   late final _name = TextEditingController(text: widget.initial?.name ?? '');
   late List<String> _roots = [...?widget.initial?.roots];
+  final _ownerInput = TextEditingController();
+  late String? _account = widget.initial?.github?.account;
+  late List<String> _owners = [...?widget.initial?.github?.owners];
+  bool _githubTouched = false;
   String? _error;
+  String? _ownerError;
   bool _busy = false;
+
+  late GitHubRepository _github;
+  bool _githubStarted = false;
+  int _generation = 0;
+  int _suggestionsGeneration = 0;
+  List<GithubAccount>? _accounts;
+  List<String> _suggested = const [];
+  String? _githubError;
+  String? _protocol;
+  final _ssh = <String, _Ssh>{};
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _github = GitHubScope.of(context);
+    if (_githubStarted) return;
+    _githubStarted = true;
+    unawaited(_loadGithub());
+    for (final owner in _owners) {
+      unawaited(_verify(owner));
+    }
+  }
 
   @override
   void dispose() {
     _name.dispose();
+    _ownerInput.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadGithub() async {
+    final generation = ++_generation;
+    setState(() => _githubError = null);
+    await Future.wait([
+      _guard(generation, () async {
+        final accounts = await _github.accounts();
+        if (mounted && generation == _generation) setState(() => _accounts = accounts);
+      }, 'accounts'),
+      _guard(generation, () async {
+        final protocol = await _github.protocol();
+        if (mounted && generation == _generation) setState(() => _protocol = protocol);
+      }, 'protocol'),
+      _loadSuggestions(),
+    ]);
+  }
+
+  Future<void> _guard(int generation, Future<void> Function() body, String what) async {
+    try {
+      await body();
+    } on GitHubException catch (e, st) {
+      log('github $what failed', name: 'OrgForm', error: e, stackTrace: st);
+      if (mounted && generation == _generation) setState(() => _githubError = e.message);
+    }
+  }
+
+  Future<void> _loadSuggestions() async {
+    final generation = ++_suggestionsGeneration;
+    try {
+      final suggested = await _github.orgs(_account);
+      if (mounted && generation == _suggestionsGeneration) setState(() => _suggested = suggested);
+    } on GitHubException catch (e, st) {
+      log('github orgs failed', name: 'OrgForm', error: e, stackTrace: st);
+      if (mounted && generation == _suggestionsGeneration) setState(() => _suggested = const []);
+    }
+  }
+
+  Future<void> _verify(String owner) async {
+    final key = owner.toLowerCase();
+    setState(() => _ssh[key] = const _Ssh.pending());
+    _Ssh result;
+    try {
+      result = _Ssh.done(await _github.sshIdentity(owner: owner, fresh: true).timeout(_kSshTimeout));
+    } on Exception catch (e, st) {
+      log('ssh identity unavailable', name: 'OrgForm', error: e, stackTrace: st);
+      result = const _Ssh.failed();
+    }
+    if (mounted && _owners.any((o) => o.toLowerCase() == key)) setState(() => _ssh[key] = result);
+  }
+
+  bool _diverges(SshIdentity? identity) => identity != null && sshDivergence(identity, _account) != null;
+
+  bool get _blocked => _owners.any((o) {
+    final ssh = _ssh[o.toLowerCase()];
+    return ssh != null && (ssh.pending || _diverges(ssh.identity));
+  });
+
+  void _setAccount(String? account) {
+    setState(() {
+      _githubTouched = true;
+      _account = account;
+      _error = null;
+    });
+    unawaited(_loadSuggestions());
+  }
+
+  void _addOwner(String raw) {
+    final text = raw.trim();
+    if (text.isEmpty) return;
+    final canonical = _suggested.where((s) => s.toLowerCase() == text.toLowerCase()).firstOrNull ?? text;
+    final error = validateOwners([..._owners, canonical]);
+    if (error != null) {
+      setState(() => _ownerError = error);
+      return;
+    }
+    _ownerInput.clear();
+    setState(() {
+      _githubTouched = true;
+      _ownerError = null;
+      _error = null;
+      _owners = [..._owners, canonical];
+    });
+    unawaited(_verify(canonical));
+  }
+
+  void _removeOwner(String owner) => setState(() {
+    _githubTouched = true;
+    _owners = [..._owners]..remove(owner);
+    _ssh.remove(owner.toLowerCase());
+    _error = null;
+  });
+
+  Future<void> _verifyAll() async {
+    await Future.wait([for (final owner in _owners) _verify(owner)]);
   }
 
   bool get _full => widget.maxRoots != null && _roots.length >= widget.maxRoots!;
@@ -81,13 +221,19 @@ class _OrgFormState extends State<OrgForm> {
   }
 
   Future<void> _save() async {
-    final draft = OrgConfig(name: _name.text.trim(), roots: _roots);
+    if (_busy || _blocked) return;
+    final github = _githubTouched ? OrgGithub(account: _account, owners: _owners) : widget.initial?.github;
+    final draft = OrgConfig(name: _name.text.trim(), roots: _roots, github: github);
     final error = _roots.isEmpty ? 'escolha uma pasta para a org' : validateOrgs([...widget.others, draft]);
     if (error != null) {
       setState(() => _error = error);
       return;
     }
-    await _run(() => widget.onSave(draft));
+    await _run(() async {
+      await _verifyAll();
+      if (!mounted || _blocked) return;
+      await widget.onSave(draft);
+    });
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -105,6 +251,169 @@ class _OrgFormState extends State<OrgForm> {
     }
   }
 
+  Widget _githubSection(AppColors c) {
+    final accounts = _accounts;
+    final known = {for (final a in accounts ?? const <GithubAccount>[]) a.login};
+    final account = _account;
+    final selected = accounts?.where((a) => a.login == account).firstOrNull;
+    final note = account == null
+        ? null
+        : accounts == null
+        ? null
+        : selected == null
+        ? 'não logada'
+        : selected.valid
+        ? null
+        : 'token inválido ou sem rede';
+    final addable = [
+      for (final s in _suggested)
+        if (!_owners.any((o) => o.toLowerCase() == s.toLowerCase())) s,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Expanded(child: Muted('GITHUB', size: 10)),
+            IconButton(
+              key: const ValueKey('org-github-reload'),
+              tooltip: 'Recarregar contas',
+              iconSize: 14,
+              visualDensity: VisualDensity.compact,
+              onPressed: _loadGithub,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        if (_githubError != null) Text(_githubError!, style: TextStyle(fontSize: 12, color: c.warn)),
+        const SizedBox(height: 6),
+        InputDecorator(
+          decoration: const InputDecoration(labelText: 'Conta do gh', isDense: true),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String?>(
+              key: const ValueKey('org-github-account'),
+              isDense: true,
+              isExpanded: true,
+              value: account,
+              style: TextStyle(fontSize: 13, color: c.textPrimary),
+              items: [
+                const DropdownMenuItem<String?>(value: null, child: Text('conta ativa do gh')),
+                for (final a in accounts ?? const <GithubAccount>[])
+                  DropdownMenuItem<String?>(value: a.login, child: Text(a.login)),
+                if (account != null && !known.contains(account))
+                  DropdownMenuItem<String?>(value: account, child: Text(account)),
+              ],
+              onChanged: _busy ? null : _setAccount,
+            ),
+          ),
+        ),
+        if (note != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(note, style: TextStyle(fontSize: 12, color: c.warn)),
+          ),
+        const SizedBox(height: 10),
+        const Muted('ORGS DO GITHUB', size: 10),
+        const SizedBox(height: 6),
+        if (_owners.isNotEmpty)
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final owner in _owners)
+                InputChip(
+                  label: Text(owner, style: const TextStyle(fontSize: 12)),
+                  deleteButtonTooltipMessage: 'Remover $owner',
+                  onDeleted: _busy ? null : () => _removeOwner(owner),
+                ),
+            ],
+          ),
+        for (final owner in _owners) _sshLine(c, owner),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                key: const ValueKey('org-github-owner-input'),
+                controller: _ownerInput,
+                onChanged: (_) => setState(() => _ownerError = null),
+                onSubmitted: _addOwner,
+                style: const TextStyle(fontSize: 13),
+                decoration: const InputDecoration(labelText: 'Adicionar org do GitHub', isDense: true),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Adicionar org do GitHub',
+              iconSize: 16,
+              onPressed: () => _addOwner(_ownerInput.text),
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+        if (_ownerError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(_ownerError!, style: TextStyle(fontSize: 12, color: c.fail)),
+          ),
+        if (addable.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final s in addable)
+                ActionChip(
+                  label: Text(s, style: const TextStyle(fontSize: 12)),
+                  tooltip: 'Adicionar $s',
+                  onPressed: () => _addOwner(s),
+                ),
+            ],
+          ),
+        ],
+        if (_protocol != null || accounts != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'git_protocol do gh: ${_protocol ?? 'não definido'}${_protocol == 'https' ? ' (recomendado: ssh)' : ''}',
+            style: TextStyle(fontSize: 12, color: _protocol == 'https' ? c.warn : c.textSecondary),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _sshLine(AppColors c, String owner) {
+    final ssh = _ssh[owner.toLowerCase()];
+    final identity = ssh?.identity;
+    final alert = identity == null ? null : sshDivergence(identity, _account);
+    final String text;
+    final Color color;
+    if (ssh == null || ssh.pending) {
+      text = 'verificando SSH…';
+      color = c.textMuted;
+    } else if (alert != null) {
+      text = alert;
+      color = c.fail;
+    } else if (identity?.login case final login?) {
+      text = 'SSH: @$login via ${identity!.host ?? 'github.com'}';
+      color = c.textSecondary;
+    } else {
+      text = 'SSH não verificado';
+      color = c.warn;
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        children: [
+          Mono(owner, color: c.textMuted, size: 11),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text, style: TextStyle(fontSize: 12, color: color)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -115,7 +424,7 @@ class _OrgFormState extends State<OrgForm> {
         TextField(
           controller: _name,
           onChanged: (_) => setState(() => _error = null),
-          onSubmitted: (_) => _busy ? null : _save(),
+          onSubmitted: (_) => _save(),
           style: const TextStyle(fontSize: 13),
           decoration: const InputDecoration(labelText: 'Nome', isDense: true),
         ),
@@ -164,6 +473,8 @@ class _OrgFormState extends State<OrgForm> {
             ],
           ),
         ],
+        const SizedBox(height: 14),
+        _githubSection(c),
         if (_error != null) ...[
           const SizedBox(height: 8),
           Text(_error!, style: TextStyle(fontSize: 12, color: c.fail)),
@@ -173,7 +484,7 @@ class _OrgFormState extends State<OrgForm> {
           children: [
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: c.accent, foregroundColor: Colors.white),
-              onPressed: _busy ? null : _save,
+              onPressed: _busy || _blocked ? null : _save,
               child: Text(widget.saveLabel, style: const TextStyle(fontSize: 12)),
             ),
             if (widget.onRemove case final remove?) ...[

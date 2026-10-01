@@ -407,6 +407,163 @@ void main() {
     });
   });
 
+  group('org github', () {
+    Map<String, dynamic> withGithub() {
+      final raw = _raw();
+      ((raw['orgs'] as List).first as Map)['github'] = {
+        'account': 'acct-a',
+        'owners': ['org-x', 'bad owner'],
+        'note': 'keep',
+      };
+      return raw;
+    }
+
+    test('updateOrg with a new name and github writes once, keeping unknown keys', () {
+      const draft = OrgConfig(
+        name: 'r10score',
+        roots: ['/dev/r10'],
+        github: OrgGithub(account: 'acct-b', owners: ['org-y', 'Org-Z']),
+      );
+      final raw = withGithub();
+      final out = applyConfigMutation(raw, updateOrg('r10', draft))!;
+      expect((out['orgs'] as List).first, {
+        'name': 'r10score',
+        'roots': ['/dev/r10'],
+        'color': 'red',
+        'github': {
+          'account': 'acct-b',
+          'owners': ['org-y', 'Org-Z'],
+          'note': 'keep',
+        },
+      });
+      expect((out['orgs'] as List).last, {
+        'name': 'abm',
+        'roots': ['/dev/abm'],
+      });
+      expect(out['lastOrg'], 'r10score');
+      expect(out['unknown'], {'keep': true});
+      expect(DashboardConfig.fromMap(out).orgs.first.github, draft.github);
+    });
+
+    test('a null draft github keeps the raw entry, invalid owners included', () {
+      final out = updateOrg('r10', const OrgConfig(name: 'r10', roots: ['/dev/r10', '/vol/r10']))(withGithub());
+      expect(((out['orgs'] as List).first as Map)['github'], withGithub()['orgs'][0]['github']);
+    });
+
+    test('saving another org leaves an untouched github raw', () {
+      final out = updateOrg('abm', const OrgConfig(name: 'abm', roots: ['/dev/abm2']))(withGithub());
+      expect(((out['orgs'] as List).first as Map)['github'], {
+        'account': 'acct-a',
+        'owners': ['org-x', 'bad owner'],
+        'note': 'keep',
+      });
+    });
+
+    test('an equal github is not rewritten, so nothing changes', () {
+      const same = OrgConfig(
+        name: 'r10',
+        roots: ['/dev/r10'],
+        github: OrgGithub(account: 'acct-a', owners: ['org-x']),
+      );
+      expect(applyConfigMutation(withGithub(), updateOrg('r10', same)), isNull);
+    });
+
+    test('an account that is not a login parses as null', () {
+      expect(
+        OrgGithub.fromRaw({
+          'account': '@foo',
+          'owners': ['org-x'],
+        })?.account,
+        isNull,
+      );
+      expect(OrgGithub.fromRaw({'account': 'foo', 'owners': []})?.account, 'foo');
+    });
+
+    test('validateOrgs rejects an account that is not a login', () {
+      const orgs = [
+        OrgConfig(
+          name: 'a',
+          github: OrgGithub(account: '@foo'),
+        ),
+      ];
+      expect(validateOrgs(orgs), contains('@foo'));
+    });
+
+    test('a null account is written as null', () {
+      const draft = OrgConfig(
+        name: 'abm',
+        roots: ['/dev/abm'],
+        github: OrgGithub(owners: ['org-x']),
+      );
+      final out = updateOrg('abm', draft)(_raw());
+      expect(((out['orgs'] as List).last as Map)['github'], {
+        'account': null,
+        'owners': ['org-x'],
+      });
+    });
+
+    test('an invalid or case-insensitively repeated owner is a ConfigWriteException', () {
+      for (final owners in [
+        ['a b'],
+        ['org-x', 'ORG-X'],
+        ['-lead'],
+      ]) {
+        expect(
+          () => applyConfigMutation(
+            _raw(),
+            updateOrg(
+              'r10',
+              OrgConfig(
+                name: 'r10',
+                github: OrgGithub(owners: owners),
+              ),
+            ),
+          ),
+          throwsA(isA<ConfigWriteException>().having((e) => e.message, 'message', contains('"r10"'))),
+          reason: '$owners',
+        );
+      }
+    });
+
+    test('createOrg writes github only when given and validates its owners', () {
+      final out = createOrg('p', ['/dev/p'], github: const OrgGithub(account: 'acct-a', owners: ['org-x']))(_raw());
+      expect((out['orgs'] as List).last, {
+        'name': 'p',
+        'roots': ['/dev/p'],
+        'github': {
+          'account': 'acct-a',
+          'owners': ['org-x'],
+        },
+      });
+      expect(((createOrg('q', ['/dev/q'])(_raw())['orgs'] as List).last as Map).containsKey('github'), isFalse);
+      expect(
+        () => createOrg('p', ['/dev/p'], github: const OrgGithub(owners: ['x y']))(_raw()),
+        throwsA(isA<ConfigValidationException>()),
+      );
+    });
+
+    test('githubFor reads the org scope; Sem org, unknown and unconfigured orgs are the active account', () {
+      final config = DashboardConfig.fromMap(withGithub());
+      expect(githubFor('r10', config), const GithubScope(account: 'acct-a', owners: ['org-x']));
+      expect(githubFor('abm', config), GithubScope.none);
+      expect(githubFor(kNoOrg, config), const GithubScope());
+      expect(githubFor('ghost', config), GithubScope.none);
+      expect(githubFor(null, config), GithubScope.none);
+      expect(githubFor('r10', null), GithubScope.none);
+      expect(GithubScope.none.account, isNull);
+      expect(GithubScope.none.owners, isEmpty);
+    });
+
+    test('GithubScope equality follows account and owners in order', () {
+      expect(const GithubScope(account: 'a', owners: ['x', 'y']), const GithubScope(account: 'a', owners: ['x', 'y']));
+      expect(
+        const GithubScope(account: 'a', owners: ['x', 'y']),
+        isNot(const GithubScope(account: 'a', owners: ['y', 'x'])),
+      );
+      expect(const GithubScope(account: 'a'), isNot(const GithubScope(account: 'b')));
+    });
+  });
+
   group('diffConfig', () {
     final base = DashboardConfig.fromMap(_raw());
 
@@ -496,6 +653,38 @@ void main() {
     test('rejects a slash in the name, which would break the /o/<org> route', () {
       expect(validateOrgs(const [OrgConfig(name: 'r10/app')]), 'o nome da org não pode ter "/"');
       expect(validateOrgs(const [OrgConfig(name: 'ABM Soluções')]), isNull);
+    });
+
+    test('validates github owners by login format and case-insensitive duplicates', () {
+      expect(
+        validateOrgs(const [
+          OrgConfig(
+            name: 'a',
+            github: OrgGithub(owners: ['org-x', 'Org-Y']),
+          ),
+        ]),
+        isNull,
+      );
+      expect(
+        validateOrgs(const [
+          OrgConfig(
+            name: 'a',
+            github: OrgGithub(owners: ['a b']),
+          ),
+        ]),
+        'org do GitHub inválida: "a b" em "a"',
+      );
+      expect(
+        validateOrgs(const [
+          OrgConfig(
+            name: 'a',
+            github: OrgGithub(owners: ['org-x', 'ORG-x']),
+          ),
+        ]),
+        'org do GitHub repetida: "ORG-x" em "a"',
+      );
+      expect(validateOwners(['a' * 39]), isNull);
+      expect(validateOwners(['a' * 40]), isNotNull);
     });
   });
 
@@ -672,6 +861,35 @@ void main() {
   });
 
   group('DashboardConfig.parse with orgs', () {
+    OrgGithub? githubOf(Object? github) => DashboardConfig.fromMap({
+      'orgs': [
+        {'name': 'o', 'github': github},
+      ],
+    }).orgs.single.github;
+
+    test('github absent, partial and invalid', () {
+      expect(githubOf(null), isNull);
+      expect(githubOf('acct-a'), isNull);
+      expect(githubOf(['acct-a']), isNull);
+      final partial = githubOf({'account': 'acct-a'})!;
+      expect(partial, const OrgGithub(account: 'acct-a'));
+      expect(
+        githubOf({
+          'owners': ['org-x'],
+        }),
+        const OrgGithub(owners: ['org-x']),
+      );
+      expect(githubOf({'account': '', 'owners': 'org-x'}), const OrgGithub());
+      expect(githubOf({'account': 3, 'owners': null}), const OrgGithub());
+      expect(
+        githubOf({
+          'account': 'acct-b',
+          'owners': ['org-x', 'a b', 7, '', 'ORG-X', '-x', 'org-y'],
+        }),
+        const OrgGithub(account: 'acct-b', owners: ['org-x', 'org-y']),
+      );
+    });
+
     test('reads orgs, projects, hidden and lastOrg, skipping invalid entries', () {
       final config = DashboardConfig.parse(
         jsonEncode({
@@ -702,6 +920,7 @@ void main() {
       ]);
       expect(config.hidden, ['old']);
       expect(config.lastOrg, kNoOrg);
+      expect(config.orgs.single.github, isNull);
       final empty = DashboardConfig.parse('{}');
       expect(empty.orgs, isEmpty);
       expect(empty.projects, isEmpty);

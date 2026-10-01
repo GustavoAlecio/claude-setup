@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -13,7 +14,9 @@ import '../../core/widgets/session_launcher.dart';
 import '../../data/docs_repository.dart';
 import '../../data/github_models.dart';
 import '../../data/github_parser.dart';
+import '../../data/github_repository.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
 
 const _logName = 'InboxPage';
 
@@ -25,32 +28,83 @@ class InboxPage extends StatefulWidget {
 }
 
 class _InboxPageState extends State<InboxPage> with SessionLauncher {
+  GithubScope? _sshScope;
+  bool _sshChecked = false;
+  List<String> _sshAlerts = const [];
+
   @override
   String get logName => _logName;
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _checkSsh(context.read<InboxCubit>().state);
+  }
+
   static String _keyOf(InboxItem item) => item.url ?? '${item.nameWithOwner}#${item.number}';
 
-  void _review(InboxItem item, List<Project> projects, String cwd) =>
-      unawaited(launchSession(_keyOf(item), reviewProjectName(item, projects), '/review ${item.number}', cwd: cwd));
+  /// The account is the one of the scope that listed [item], not the org of the project it opens in.
+  void _review(InboxItem item, List<Project> projects, String cwd, String? account) => unawaited(
+    launchSession(
+      _keyOf(item),
+      reviewProjectName(item, projects),
+      '/review ${item.number}',
+      cwd: cwd,
+      githubAccount: account,
+    ),
+  );
+
+  /// Once per scope, after a successful listing (so the engine is up): owners whose SSH login is not the account.
+  /// A scope change drops the previous alerts right away.
+  void _checkSsh(InboxState state) {
+    final scope = state.scope;
+    if (scope != _sshScope) {
+      _sshScope = scope;
+      _sshChecked = false;
+      if (_sshAlerts.isNotEmpty) setState(() => _sshAlerts = const []);
+    }
+    if (scope == null || _sshChecked || state.inbox == null) return;
+    _sshChecked = true;
+    if (scope.account == null || scope.owners.isEmpty) return;
+    unawaited(_loadSsh(GitHubScope.of(context), scope));
+  }
+
+  Future<void> _loadSsh(GitHubRepository github, GithubScope scope) async {
+    final alerts = await Future.wait([for (final owner in scope.owners) _sshAlert(github, owner, scope.account)]);
+    if (mounted && _sshScope == scope) setState(() => _sshAlerts = alerts.nonNulls.toList());
+  }
+
+  Future<String?> _sshAlert(GitHubRepository github, String owner, String? account) async {
+    try {
+      return sshDivergence(await github.sshIdentity(owner: owner), account);
+    } on GitHubException catch (e, st) {
+      log('ssh identity unavailable for $owner', name: _logName, error: e, stackTrace: st);
+      return null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<InboxCubit>().state;
     final hasEndpoint = context.select<EngineCubit, bool>((c) => c.state.data?.endpoint != null);
     final projects = context.select<ProjectsCubit, List<Project>>((c) => c.state.data ?? const []);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _toolbar(context, state, hasEndpoint),
-        Expanded(child: _body(context, state, hasEndpoint, projects)),
-      ],
+    return BlocListener<InboxCubit, InboxState>(
+      listenWhen: (previous, current) => previous.scope != current.scope || previous.inbox != current.inbox,
+      listener: (_, state) => _checkSsh(state),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _toolbar(context, state, hasEndpoint),
+          Expanded(child: _body(context, state, hasEndpoint, projects)),
+        ],
+      ),
     );
   }
 
   Widget _toolbar(BuildContext context, InboxState state, bool hasEndpoint) {
     final c = context.colors;
     final cubit = context.read<InboxCubit>();
-    final login = state.inbox?.login;
+    final label = inboxScopeLabel(state.inbox?.login ?? state.scope?.account, state.scope?.owners ?? const []);
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
       child: Column(
@@ -58,7 +112,7 @@ class _InboxPageState extends State<InboxPage> with SessionLauncher {
         children: [
           Row(
             children: [
-              Expanded(child: login == null ? const SizedBox.shrink() : Muted('conta do gh: @$login', size: 12)),
+              Expanded(child: label == null ? const SizedBox.shrink() : Muted(label, size: 12)),
               TextButton.icon(
                 style: TextButton.styleFrom(foregroundColor: c.textSecondary),
                 onPressed: hasEndpoint ? () => unawaited(cubit.refresh()) : null,
@@ -67,6 +121,11 @@ class _InboxPageState extends State<InboxPage> with SessionLauncher {
               ),
             ],
           ),
+          for (final alert in _sshAlerts)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(alert, style: TextStyle(fontSize: 12, color: c.warn)),
+            ),
           if (state.error case final error?)
             ErrorRetryRow(error, onRetry: hasEndpoint ? () => unawaited(cubit.refresh()) : null),
         ],
@@ -104,7 +163,7 @@ class _InboxPageState extends State<InboxPage> with SessionLauncher {
             now: now,
             creating: isCreating(_keyOf(item)),
             createError: createError(_keyOf(item)),
-            onReview: (cwd) => _review(item, projects, cwd),
+            onReview: (cwd) => _review(item, projects, cwd, state.scope?.account),
             onLink: openLink,
           ),
         if (footer.missing.isNotEmpty || footer.ambiguous.isNotEmpty)

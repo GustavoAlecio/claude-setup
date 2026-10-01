@@ -95,3 +95,24 @@ class Inbox {
   /// Account the engine's `gh` is logged in as.
   final String? login;
 }
+
+/// A `gh` keyring account on `github.com`; [valid] is `false` when its token failed (expired or no network).
+class GithubAccount {
+  const GithubAccount({required this.login, this.active = false, this.valid = false});
+
+  final String login;
+  final bool active;
+  final bool valid;
+}
+
+/// Who `ssh -T` authenticates as for [owner]'s effective URL; [login] `null` with the reason in [error].
+class SshIdentity {
+  const SshIdentity({required this.owner, this.host, this.login, this.error});
+
+  final String owner;
+
+  /// Host or `~/.ssh/config` alias the effective URL points at; `null` for an https remote.
+  final String? host;
+  final String? login;
+  final String? error;
+}

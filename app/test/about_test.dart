@@ -39,6 +39,10 @@ Map<String, dynamic> _config() => {
     {
       'name': 'A',
       'roots': ['/dev/a'],
+      'github': {
+        'account': 'acct-a',
+        'owners': ['org-x', 'org-y'],
+      },
     },
     {
       'name': 'B',
@@ -371,6 +375,8 @@ void main() {
     Finder row(String key, String text) => _in(find.byKey(ValueKey(key)), find.textContaining(text));
     expect(row('about-config-org-A', '/dev/a · 3 projetos visíveis'), findsOneWidget);
     expect(row('about-config-org-B', '0 projetos visíveis'), findsOneWidget);
+    expect(row('about-config-org-github-A', 'conta @acct-a · orgs: org-x, org-y'), findsOneWidget);
+    expect(row('about-config-org-github-B', 'conta ativa do gh · todas as orgs'), findsOneWidget);
     expect(row('about-config-project-nopath', 'sem path · org A'), findsOneWidget);
     expect(find.byKey(const ValueKey('about-config-hidden-hid')), findsOneWidget);
     expect(row('about-config-engine-dir', '/engine'), findsOneWidget);

@@ -114,7 +114,11 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
                     BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
                     BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
                     BlocProvider(
-                      create: (_) => InboxCubit(github, widget.engine.watch().map((s) => s.endpoint)),
+                      create: (_) => InboxCubit(
+                        github,
+                        widget.engine.watch().map((s) => s.endpoint),
+                        widget.repository.watchConfig().map((c) => githubFor(c.lastOrg, c)),
+                      ),
                       lazy: false,
                     ),
                   ],
