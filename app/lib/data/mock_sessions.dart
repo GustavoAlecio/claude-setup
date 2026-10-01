@@ -21,6 +21,9 @@ class MockSessionsRepository implements SessionsRepository {
   final _updates = StreamController<void>.broadcast();
   var _created = 0;
 
+  /// Every [create] call, in order, for tests to assert the exact command and cwd.
+  final createCalls = <(String project, String command, String? cwd)>[];
+
   List<SessionSummary> get _list => [for (final id in _order) _details[id]!.summary];
 
   @override
@@ -46,10 +49,12 @@ class MockSessionsRepository implements SessionsRepository {
     PaletteSkill('fix', 'Fluxo leve para bugs'),
     PaletteSkill('status', 'Estado atual do Fluxo Smart'),
     PaletteSkill('review', 'Revisão de um PR aberto'),
+    PaletteSkill('kickoff', 'Entrada do pipeline a partir de um card'),
   ];
 
   @override
   Future<SessionSummary> create(String project, String command, {String? cwd}) async {
+    createCalls.add((project, command, cwd));
     final id = 'mock-${++_created}';
     final summary = SessionSummary(
       id: id,
