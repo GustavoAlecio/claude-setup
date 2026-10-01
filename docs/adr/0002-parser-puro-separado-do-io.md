@@ -1,7 +1,7 @@
 ---
 id: 0002
 title: Parser puro separado do IO e modelos escritos à mão
-status: proposed
+status: accepted
 date: 2026-10-01
 affects: ["app/lib/data/workflow_parser.dart", "app/lib/data/models.dart"]
 supersedes: []

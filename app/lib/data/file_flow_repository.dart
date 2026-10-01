@@ -5,11 +5,12 @@ import 'dart:io';
 
 import 'flow_repository.dart';
 import 'models.dart';
-import 'session_models.dart';
 import 'workflow_parser.dart';
 
 class FileFlowRepository implements FlowRepository {
-  FileFlowRepository(this._requestedRoot, {String? stacksDir}) : _stacksDir = stacksDir ?? '$_claudeHome/stacks';
+  FileFlowRepository(this._requestedRoot, {String? stacksDir, String? checkpointScript})
+    : _stacksDir = stacksDir ?? '$_claudeHome/stacks',
+      _checkpointScript = checkpointScript ?? '$_claudeHome/bin/wf-checkpoint.sh';
 
   static String get defaultRoot => '$_claudeHome/workflow';
 
@@ -19,10 +20,12 @@ class FileFlowRepository implements FlowRepository {
 
   final String _requestedRoot;
   final String _stacksDir;
+  final String _checkpointScript;
   final _updates = StreamController<List<Project>>.broadcast();
 
   String? _root;
   bool _started = false;
+  int _generation = 0;
   StreamSubscription<FileSystemEvent>? _watch;
   Timer? _timer;
   bool _pendingRoot = false;
@@ -56,17 +59,28 @@ class FileFlowRepository implements FlowRepository {
   Stream<Run?> watchRun(String project, String runId) =>
       watchProject(project).map((p) => p?.cycle?.runs.where((r) => r.id == runId).firstOrNull).distinct();
 
-  @override
-  List<SessionSummary> sessions() => const [];
-
-  @override
-  SessionSummary? session(String id) => null;
-
   /// Re-reads everything; restarts the watcher when the root did not exist before.
   @override
   Future<void> reload() async {
     if (_watch == null) _startWatch();
     await _reloadRoot();
+  }
+
+  @override
+  Future<List<FileStat>> numstat(String project, String checkpoint) async {
+    final path = _projects[project]?.path;
+    if (path == null) return const [];
+    try {
+      final result = await Process.run('bash', [_checkpointScript, 'numstat', path, checkpoint]);
+      if (result.exitCode != 0) {
+        log('numstat failed for $path: ${result.stderr}', name: 'FileFlowRepository');
+        return const [];
+      }
+      return parseNumstat(result.stdout as String);
+    } on ProcessException catch (e, st) {
+      log('cannot run $_checkpointScript', name: 'FileFlowRepository', error: e, stackTrace: st);
+      return const [];
+    }
   }
 
   Future<void> dispose() async {
@@ -85,6 +99,7 @@ class FileFlowRepository implements FlowRepository {
       }
       // FSEvents reports canonical paths (/private/var/...); classify must compare against the same form.
       final root = dir.resolveSymbolicLinksSync();
+      _generation++;
       _root = root;
       _watch = Directory(root)
           .watch(recursive: true)
@@ -105,6 +120,7 @@ class FileFlowRepository implements FlowRepository {
   void _stopWatch() {
     unawaited(_watch?.cancel());
     _watch = null;
+    _generation++;
     _root = null;
     _projects.clear();
     _mtimes.clear();
@@ -156,8 +172,10 @@ class FileFlowRepository implements FlowRepository {
         if (entity is Directory && !name.startsWith('.')) names.add(name);
       }
     } on FileSystemException catch (e, st) {
-      log('cannot list $root', name: 'FileFlowRepository', error: e, stackTrace: st);
+      log('cannot list $root; keeping current snapshot', name: 'FileFlowRepository', error: e, stackTrace: st);
+      return;
     }
+    if (_root != root) return;
     for (final gone in _projects.keys.where((k) => !names.contains(k)).toList()) {
       _projects.remove(gone);
       _mtimes.remove(gone);
@@ -176,9 +194,12 @@ class FileFlowRepository implements FlowRepository {
   Future<void> _loadProject(String name) async {
     final root = _root;
     if (root == null) return;
+    final generation = _generation;
+    bool stale() => generation != _generation;
     try {
       final dir = Directory('$root/$name');
       if (!await dir.exists()) {
+        if (stale()) return;
         _projects.remove(name);
         _mtimes.remove(name);
         _lastValidRuns.remove(name);
@@ -186,6 +207,7 @@ class FileFlowRepository implements FlowRepository {
       }
       final currentFile = File('${dir.path}/current.json');
       if (!await currentFile.exists()) {
+        if (stale()) return;
         _projects[name] = Project(name: name);
         _mtimes[name] = null;
         return;
@@ -198,6 +220,7 @@ class FileFlowRepository implements FlowRepository {
         current = decoded;
       } on FormatException catch (e, st) {
         log('invalid ${currentFile.path}', name: 'FileFlowRepository', error: e, stackTrace: st);
+        if (stale()) return;
         _projects.putIfAbsent(name, () => Project(name: name));
         _mtimes[name] = mtime;
         return;
@@ -205,18 +228,17 @@ class FileFlowRepository implements FlowRepository {
 
       final path = _projectPath(root, name, current);
       final titles = taskTitles(current);
-      final runs = await _loadRuns(name, '${dir.path}/runs', titles);
+      final metas = taskMetas(current);
+      final runs = await _loadRuns(name, '${dir.path}/runs', titles, metas);
+      final stack = path == null ? null : await _detectStack(path);
+      final branch = path == null ? null : await _branch(path);
+      final autoMode = await _autoMode(root);
+      if (stale()) return;
       _projects[name] = Project(
         name: name,
         path: path,
-        stack: path == null ? null : await _detectStack(path),
-        cycle: parseCycle(
-          current,
-          projectName: name,
-          branch: path == null ? null : await _branch(path),
-          autoMode: await _autoMode(root),
-          runs: runs,
-        ),
+        stack: stack,
+        cycle: parseCycle(current, projectName: name, branch: branch, autoMode: autoMode, runs: runs, plan: metas),
       );
       _mtimes[name] = mtime;
     } catch (e, st) {
@@ -240,7 +262,7 @@ class FileFlowRepository implements FlowRepository {
     }
   }
 
-  Future<List<Run>> _loadRuns(String project, String runsPath, Map<String, String> titles) async {
+  Future<List<Run>> _loadRuns(String project, String runsPath, Map<String, String> titles, List<TaskMeta> metas) async {
     final runsDir = Directory(runsPath);
     if (!await runsDir.exists()) {
       _lastValidRuns.remove(project);
@@ -257,7 +279,7 @@ class FileFlowRepository implements FlowRepository {
     cache.removeWhere((id, _) => !ids.contains(id));
     final runs = <Run>[];
     for (final id in ids) {
-      final run = await _loadRun('$runsPath/$id', id, titles, cache[id]);
+      final run = await _loadRun('$runsPath/$id', id, titles, metas, cache[id]);
       if (run == null) continue;
       cache[id] = run;
       runs.add(run);
@@ -265,7 +287,7 @@ class FileFlowRepository implements FlowRepository {
     return runs;
   }
 
-  Future<Run?> _loadRun(String dir, String id, Map<String, String> titles, Run? lastValid) async {
+  Future<Run?> _loadRun(String dir, String id, Map<String, String> titles, List<TaskMeta> metas, Run? lastValid) async {
     final result = File('$dir/result.json');
     if (await result.exists()) {
       try {
@@ -283,7 +305,7 @@ class FileFlowRepository implements FlowRepository {
       await events.readAsString(),
       onInvalid: (line, e) => log('invalid line in ${events.path}: $line', name: 'FileFlowRepository', error: e),
     );
-    return parseEventsRun(id, lines, titles: titles);
+    return parseEventsRun(id, lines, tasks: metas);
   }
 
   Future<String?> _detectStack(String path) async {

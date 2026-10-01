@@ -12,6 +12,7 @@ echo staged > "$T/s.txt"; git -C "$T" add s.txt
 CP=$("$BIN/wf-checkpoint.sh" create "$T")
 echo changed >> "$T/a.txt"; echo new > "$T/n.txt"; rm "$T/s.txt"
 [ "$("$BIN/wf-checkpoint.sh" changed "$T" "$CP" | tr '\n' ' ')" = "a.txt n.txt s.txt " ] || fail "changed list"
+[ "$("$BIN/wf-checkpoint.sh" numstat "$T" "$CP" | tr '\n' ' ')" = "$(printf '1\t0\ta.txt\n1\t0\tn.txt\n0\t1\ts.txt\n' | tr '\n' ' ')" ] || fail "numstat"
 "$BIN/wf-checkpoint.sh" restore "$T" "$CP" >/dev/null
 [ "$(cat "$T/a.txt")" = "a" ] || fail "a.txt not restored"
 [ ! -e "$T/n.txt" ] || fail "n.txt not removed"
@@ -40,6 +41,10 @@ echo '{"status":"blocked","checkpoint":"def","tasks":[],"trace":[]}' > "$W/r2.js
 HOME="$HOME_BIN_SHIM" python3 "$BIN/wf-event.py" persist --run-dir "$W/runs/x" --workflow-dir "$W" --result-file "$W/r2.json" >/dev/null
 python3 -c "import json;assert json.load(open('$W/runs/x/result.json'))['checkpoint']=='def'" || fail "result.json overwrite"
 [ -z "$(find "$W/runs/x" -name '*.tmp')" ] || fail ".tmp left behind"
+
+echo "- wf-event: log records the checkpoint"
+python3 "$BIN/wf-event.py" log --run-dir "$W/runs/y" --role dev --task T1 --attempt 1 --tier haiku --verdict start --checkpoint abc123
+python3 -c "import json;e=json.loads(open('$W/runs/y/events.jsonl').readline());assert e['checkpoint']=='abc123' and e['attempt']==1" || fail "event checkpoint"
 
 if command -v dart >/dev/null; then
   echo "- gate_g0: formats, flags analyzer errors and missing tests"

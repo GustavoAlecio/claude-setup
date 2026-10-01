@@ -56,6 +56,7 @@ class Attempt {
     this.tokensOut,
     this.summary,
     this.escalatedTo,
+    this.checkpoint,
     String? label,
   }) : label = label ?? '#$number';
 
@@ -69,6 +70,9 @@ class Attempt {
   final int? tokensOut;
   final String? summary;
   final Tier? escalatedTo;
+
+  /// Tree sha the task started from; lets the UI diff the working tree while the attempt runs.
+  final String? checkpoint;
 
   Verdict get verdict {
     if (gates.any((g) => g.verdict == Verdict.running)) return Verdict.running;
@@ -97,6 +101,23 @@ class Hypothesis {
   final String action;
 }
 
+class LiveStage {
+  const LiveStage(this.label, this.since);
+
+  final String label;
+  final DateTime since;
+}
+
+class FileStat {
+  const FileStat(this.path, this.added, this.deleted);
+
+  final String path;
+
+  /// Null for binary files, which git reports as `-`.
+  final int? added;
+  final int? deleted;
+}
+
 class TaskRun {
   const TaskRun({
     required this.id,
@@ -109,6 +130,8 @@ class TaskRun {
     this.files = const [],
     this.blockedReason,
     this.diagnosis = const [],
+    this.description,
+    this.stage,
   });
 
   final String id;
@@ -121,6 +144,12 @@ class TaskRun {
   final List<String> files;
   final String? blockedReason;
   final List<Hypothesis> diagnosis;
+  final String? description;
+
+  /// Only set for a task that is running, derived from the live event stream.
+  final LiveStage? stage;
+
+  String? get checkpoint => attempts.map((a) => a.checkpoint).nonNulls.lastOrNull;
 
   Tier get tier => attempts.isEmpty ? tier0 : attempts.last.tier;
   int get escalations => attempts.where((a) => a.escalatedTo != null).length;
@@ -157,6 +186,7 @@ class Cycle {
     required this.runs,
     required this.autoMode,
     required this.stageMinutes,
+    this.plan = const [],
     this.feature,
     this.tracker,
     this.branch,
@@ -169,6 +199,9 @@ class Cycle {
   final List<Run> runs;
   final bool autoMode;
   final Map<Stage, int> stageMinutes;
+
+  /// Planned tasks from current.json in plan order, without attempts.
+  final List<TaskRun> plan;
 
   Run? get latestRun => runs.isEmpty ? null : runs.first;
 }

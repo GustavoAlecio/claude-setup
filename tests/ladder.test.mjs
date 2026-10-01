@@ -137,3 +137,42 @@ test('g1/escalate prompts pass --attempt', async () => {
   assert.match(prompts['g1:T1#3'], /--role g1 --task T1 --attempt 3 --tier sonnet /)
   assert.match(prompts['rollback:T1'], /--role escalate --task T1 --attempt 2 --tier sonnet /)
 })
+
+test('dev prompt registers the task checkpoint in the start event', async () => {
+  const prompts = []
+  const agent = async (p, o) => {
+    if (o.label.startsWith('dev')) { prompts.push(p); return { status: 'done', summary: 's', files_changed: ['lib/a.dart'] } }
+    if (o.label.startsWith('g0')) return pass('G0')
+    return pass('G1')
+  }
+  await implement({ args: baseArgs([{ id: 'T1', complexity: 'S' }]), agent })
+  assert.match(prompts[0], /--role dev --task T1 --attempt 1 --tier haiku --verdict start --checkpoint cp0/)
+})
+
+test('dev without structured result: gates judge the diff and the task can still pass', async () => {
+  const agent = async (_p, o) => {
+    if (o.label.startsWith('dev')) throw new Error('subagent completed without calling StructuredOutput')
+    if (o.label.startsWith('g0')) return { ...pass('G0'), changed_files: ['lib/a.dart'] }
+    if (o.label.startsWith('g1')) return pass('G1')
+    throw new Error(`unexpected ${o.label}`)
+  }
+  const r = await implement({ args: baseArgs([{ id: 'T1', complexity: 'S' }]), agent })
+  assert.equal(r.status, 'done')
+  assert.deepEqual(r.tasks[0].files_changed, ['lib/a.dart'])
+})
+
+test('dev without structured result and no changes counts as a failed attempt and escalates', async () => {
+  const calls = []
+  const agent = async (_p, o) => {
+    calls.push(o.label)
+    if (o.label.startsWith('dev') && o.label.includes('@haiku')) throw new Error('no structured output')
+    if (o.label.startsWith('dev')) return { status: 'done', summary: 's', files_changed: ['lib/a.dart'] }
+    if (o.label.startsWith('g0')) return { ...pass('G0'), changed_files: calls.some(c => c.includes('@sonnet')) ? ['lib/a.dart'] : [] }
+    if (o.label.startsWith('g1')) return pass('G1')
+    if (o.label.startsWith('rollback')) return { ok: true, output: 'restored 0 path(s)' }
+    throw new Error(`unexpected ${o.label}`)
+  }
+  const r = await implement({ args: baseArgs([{ id: 'T1', complexity: 'S' }]), agent })
+  assert.equal(r.status, 'done')
+  assert.equal(r.tasks[0].tier, 'sonnet')
+})

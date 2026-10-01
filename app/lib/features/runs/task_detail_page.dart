@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -83,6 +85,20 @@ class _TaskView extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 20),
+        if (task.description != null) ...[
+          Panel(
+            title: 'Descrição',
+            child: SelectableText(
+              task.description!,
+              style: TextStyle(fontSize: 12.5, height: 1.5, color: c.textSecondary),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
+        if (task.status == Verdict.running) ...[
+          _LiveSection(projectName: projectName, task: task),
+          const SizedBox(height: 20),
+        ],
         if (task.status == Verdict.blocked) ...[DiagnosisPanel(task: task), const SizedBox(height: 20)],
         Text('Tentativas', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 10),
@@ -100,6 +116,117 @@ class _TaskView extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+const _refreshEvery = Duration(seconds: 3);
+
+String formatElapsed(Duration d) {
+  final s = d.inSeconds < 0 ? 0 : d.inSeconds;
+  if (s < 60) return '${s}s';
+  if (s < 3600) return '${s ~/ 60}min ${(s % 60).toString().padLeft(2, '0')}s';
+  return '${s ~/ 3600}h ${((s % 3600) ~/ 60).toString().padLeft(2, '0')}min';
+}
+
+class _LiveSection extends StatefulWidget {
+  const _LiveSection({required this.projectName, required this.task});
+
+  final String projectName;
+  final TaskRun task;
+
+  @override
+  State<_LiveSection> createState() => _LiveSectionState();
+}
+
+class _LiveSectionState extends State<_LiveSection> {
+  Timer? _timer;
+  late FlowRepository _repository;
+  bool _started = false;
+  List<FileStat>? _files;
+  bool _fetching = false;
+  int _ticks = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _ticks++;
+      if (_ticks % _refreshEvery.inSeconds == 0) _fetch();
+      setState(() {});
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _repository = RepositoryScope.of(context);
+    if (!_started) {
+      _started = true;
+      _fetch();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetch() async {
+    final checkpoint = widget.task.checkpoint;
+    if (checkpoint == null || _fetching) return;
+    _fetching = true;
+    final files = await _repository.numstat(widget.projectName, checkpoint);
+    _fetching = false;
+    if (mounted) setState(() => _files = files);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final stage = widget.task.stage;
+    final files = _files;
+    return Panel(
+      title: 'Em andamento',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (stage == null)
+            const Muted('aguardando eventos da tentativa', size: 12)
+          else
+            Row(
+              children: [
+                Text(stage.label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                const SizedBox(width: 8),
+                Muted('há ${formatElapsed(DateTime.now().difference(stage.since))}', size: 12),
+              ],
+            ),
+          const SizedBox(height: 14),
+          Text('Arquivos tocados até agora', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          if (widget.task.checkpoint == null)
+            const Muted('checkpoint indisponível para esta tentativa', size: 12)
+          else if (files == null)
+            const Muted('lendo…', size: 12)
+          else if (files.isEmpty)
+            const Muted('nenhuma mudança ainda', size: 12)
+          else
+            for (final f in files)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    Expanded(child: Mono(f.path, size: 11.5, color: c.textPrimary)),
+                    const SizedBox(width: 12),
+                    Mono(f.added == null ? '+?' : '+${f.added}', size: 11.5, color: c.pass),
+                    const SizedBox(width: 8),
+                    Mono(f.deleted == null ? '−?' : '−${f.deleted}', size: 11.5, color: c.fail),
+                  ],
+                ),
+              ),
+        ],
+      ),
     );
   }
 }
