@@ -1,14 +1,22 @@
+import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import express from "express";
 import { readConfig, resolveCwd } from "./cwd.mjs";
 import { HttpError, listSkills, readCurrent } from "./data.mjs";
+import { createGitHub } from "./github.mjs";
 import { createSessions } from "./sessions.mjs";
 import { createStore } from "./store.mjs";
 
 export const VERSION = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
 
 const KEEPALIVE_MS = 20_000;
+
+const execFileAsync = promisify(execFile);
+const runner = (bin) => (args) => execFileAsync(bin, args, { timeout: 20_000, maxBuffer: 8 * 1024 * 1024 });
+const execGh = runner("gh");
+const execGit = runner("git");
 
 function openSse(req, res) {
   res.writeHead(200, {
@@ -45,9 +53,10 @@ function validateOrgDirs(org, cwd, additionalDirectories) {
   return extra;
 }
 
-export function createEngine({ query, sessionsDir, log = () => {} }) {
+export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, git = execGit, now = Date.now }) {
   const store = createStore(sessionsDir, { log });
   const sessions = createSessions({ query, store });
+  const github = createGitHub({ gh, git, now, resolveCwd, log });
   const app = express();
   app.use(express.json());
 
@@ -64,6 +73,10 @@ export function createEngine({ query, sessionsDir, log = () => {} }) {
   app.get("/api/health", route(() => ({ ok: true, version: VERSION })));
 
   app.get("/api/skills", route(paletteSkills));
+
+  app.get("/api/projects/:name/prs", route(async (req) => ({ prs: await github.prs(req.params.name) })));
+
+  app.get("/api/review-inbox", route(() => github.inbox()));
 
   app.get("/api/sessions", route(() => sessions.list()));
 

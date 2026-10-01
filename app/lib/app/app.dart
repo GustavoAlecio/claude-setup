@@ -9,6 +9,8 @@ import 'package:go_router/go_router.dart';
 import '../core/theme/app_theme.dart';
 import '../data/docs_repository.dart';
 import '../data/flow_repository.dart';
+import '../data/github_repository.dart';
+import '../data/mock_github_repository.dart';
 import '../data/inventory_repository.dart';
 import '../data/mock_docs_repository.dart';
 import '../data/mock_inventory_repository.dart';
@@ -21,6 +23,7 @@ import '../core/claude_home.dart';
 import 'config_cubit.dart';
 import 'org_switch.dart';
 import 'engine_cubit.dart';
+import 'inbox_cubit.dart';
 import 'projects_cubit.dart';
 import 'router.dart';
 import 'sessions_cubit.dart';
@@ -34,6 +37,7 @@ class ClaudeFlowApp extends StatefulWidget {
     this.pickDirectory = getDirectoryPath,
     this.inventory = const MockInventoryRepository.empty(),
     this.docs,
+    this.github,
     this.paths,
   });
 
@@ -46,6 +50,9 @@ class ClaudeFlowApp extends StatefulWidget {
   /// `null` is [MockDocsRepository.empty].
   final DocsRepository? docs;
 
+  /// `null` is [MockGitHubRepository.empty].
+  final GitHubRepository? github;
+
   /// `null` reads the real environment.
   final EffectivePaths? paths;
 
@@ -57,6 +64,7 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
   late final GoRouter _router = buildRouter(widget.paths ?? EffectivePaths.fromEnvironment());
   late final AppLifecycleListener _lifecycle;
   static final _fallbackDocs = MockDocsRepository.empty();
+  late final _fallbackGithub = MockGitHubRepository.empty();
 
   @override
   void initState() {
@@ -79,6 +87,7 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
   @override
   Widget build(BuildContext context) {
     final docs = widget.docs ?? _fallbackDocs;
+    final github = widget.github ?? _fallbackGithub;
     return RepositoryScope(
       repository: widget.repository,
       pickDirectory: widget.pickDirectory,
@@ -90,21 +99,28 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
           child: SessionsScope(
             sessions: widget.sessions,
             engine: widget.engine,
-            child: MultiBlocProvider(
-              providers: [
-                BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
-                BlocProvider(create: (_) => ConfigCubit(widget.repository)),
-                BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
-                BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
-              ],
-              child: MaterialApp.router(
-                title: 'Claude Flow',
-                debugShowCheckedModeBanner: false,
-                theme: buildTheme(Brightness.light),
-                darkTheme: buildTheme(Brightness.dark),
-                themeMode: ThemeMode.dark,
-                routerConfig: _router,
-                builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
+            child: GitHubScope(
+              repository: github,
+              child: MultiBlocProvider(
+                providers: [
+                  BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
+                  BlocProvider(create: (_) => ConfigCubit(widget.repository)),
+                  BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
+                  BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
+                  BlocProvider(
+                    create: (_) => InboxCubit(github, widget.engine.watch().map((s) => s.endpoint)),
+                    lazy: false,
+                  ),
+                ],
+                child: MaterialApp.router(
+                  title: 'Claude Flow',
+                  debugShowCheckedModeBanner: false,
+                  theme: buildTheme(Brightness.light),
+                  darkTheme: buildTheme(Brightness.dark),
+                  themeMode: ThemeMode.dark,
+                  routerConfig: _router,
+                  builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
+                ),
               ),
             ),
           ),

@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/config_cubit.dart';
 import '../../app/org_switch.dart';
 import '../../app/engine_cubit.dart';
+import '../../app/inbox_cubit.dart';
 import '../../app/projects_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
@@ -896,6 +897,7 @@ class _Tabs extends StatelessWidget {
       ShellProjectScope(:final name) => '/p/$name/${t.name}',
       ShellOrgScope(:final org) => orgSessionsLocation(org),
     };
+    final inboxBadge = context.select<InboxCubit, int>((c) => c.state.badge);
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -914,13 +916,22 @@ class _Tabs extends StatelessWidget {
                 decoration: BoxDecoration(
                   border: Border(bottom: BorderSide(color: t == active ? c.accent : Colors.transparent, width: 2)),
                 ),
-                child: Text(
-                  t.label,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: t == active ? FontWeight.w600 : FontWeight.w400,
-                    color: t == active ? c.textPrimary : c.textSecondary,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      t.label,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: t == active ? FontWeight.w600 : FontWeight.w400,
+                        color: t == active ? c.textPrimary : c.textSecondary,
+                      ),
+                    ),
+                    if (t == AppTab.inbox && inboxBadge > 0) ...[
+                      const SizedBox(width: 6),
+                      Pill(key: const ValueKey('inbox-badge'), label: '$inboxBadge', color: c.accent, dot: false),
+                    ],
+                  ],
                 ),
               ),
             ),

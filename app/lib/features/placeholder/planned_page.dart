@@ -5,11 +5,6 @@ import '../../core/widgets/primitives.dart';
 import '../shell/shell_page.dart';
 
 const _planned = {
-  AppTab.prs: ('PRs', ['prs.json enriquecido via gh: CI, review, merge', 'Próximo passo por PR']),
-  AppTab.inbox: (
-    'Para revisar',
-    ['gh search prs --review-requested=@me em todos os repos', 'Revisar → /review no checkout local'],
-  ),
   AppTab.metrics: (
     'Métricas',
     [
