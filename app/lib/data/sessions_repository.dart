@@ -7,7 +7,9 @@ abstract interface class SessionsRepository {
   Stream<List<SessionSummary>> watchSessions();
   Stream<SessionDetail> watchSession(String id);
   Future<List<PaletteSkill>> skills();
-  Future<SessionSummary> create(String project, String command);
+
+  /// [cwd] overrides the engine's own lookup (`cwds` + scan); `null` lets the engine resolve it.
+  Future<SessionSummary> create(String project, String command, {String? cwd});
   Future<void> send(String id, String text);
   Future<void> answer(String id, String requestId, PermissionDecision decision, {Map<String, String>? answers});
   Future<void> resume(String id);

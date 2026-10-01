@@ -5,10 +5,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/config_cubit.dart';
+import '../../app/projects_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
 import '../../data/workflow_parser.dart';
@@ -41,8 +45,11 @@ class _SessionsPageState extends State<SessionsPage> {
   Widget build(BuildContext context) {
     final projectName = widget.projectName;
     final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
+    final projects = context.watch<ProjectsCubit>().state.data ?? const <Project>[];
+    final org = currentOrg(projectName, projects, context.watch<ConfigCubit>().state.data);
     final mine = all.where((s) => s.project == projectName).toList();
-    final others = all.where((s) => s.project != projectName).toList();
+    final others = all.where((s) => s.project != projectName && belongsToOrg(s.project, projects, org)).toList();
+    final project = projects.where((p) => p.name == projectName).firstOrNull;
     final selected =
         all.where((s) => s.id == (widget.sessionId ?? _autoSelected)).firstOrNull ??
         mine.where((s) => s.pendingPermissions > 0).firstOrNull ??
@@ -52,7 +59,7 @@ class _SessionsPageState extends State<SessionsPage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SessionList(project: projectName, mine: mine, others: others, selected: selected?.id),
+        _SessionList(project: project, mine: mine, others: others, selected: selected?.id),
         Expanded(
           child: selected == null
               ? const Center(child: Muted('Nenhuma sessão. Rode uma skill com ⌘K.', size: 13))
@@ -101,7 +108,7 @@ String statusLabel(SessionStatus s) => switch (s) {
 class _SessionList extends StatelessWidget {
   const _SessionList({required this.project, required this.mine, required this.others, required this.selected});
 
-  final String project;
+  final Project? project;
   final List<SessionSummary> mine;
   final List<SessionSummary> others;
   final String? selected;
@@ -126,16 +133,16 @@ class _SessionList extends StatelessWidget {
                 side: BorderSide(color: c.borderStrong),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               ),
-              onPressed: () => showCommandPalette(context, project, newConversation: true),
+              onPressed: project == null ? null : () => showCommandPalette(context, project, newConversation: true),
               icon: const Icon(Icons.add, size: 16),
               label: const Text('Nova conversa', style: TextStyle(fontSize: 12)),
             ),
           ),
           header('ESTE PROJETO'),
-          for (final s in mine) _SessionTile(project: project, session: s, selected: s.id == selected),
+          for (final s in mine) _SessionTile(session: s, selected: s.id == selected),
           if (others.isNotEmpty) ...[
             header('OUTROS PROJETOS'),
-            for (final s in others) _SessionTile(project: project, session: s, selected: s.id == selected),
+            for (final s in others) _SessionTile(session: s, selected: s.id == selected),
           ],
         ],
       ),
@@ -144,9 +151,8 @@ class _SessionList extends StatelessWidget {
 }
 
 class _SessionTile extends StatelessWidget {
-  const _SessionTile({required this.project, required this.session, required this.selected});
+  const _SessionTile({required this.session, required this.selected});
 
-  final String project;
   final SessionSummary session;
   final bool selected;
 
@@ -190,12 +196,24 @@ class _SessionTile extends StatelessWidget {
                       const SizedBox(height: 2),
                       Row(
                         children: [
-                          Mono(session.command, size: 11, color: c.textMuted),
+                          Flexible(
+                            child: Tooltip(
+                              message: session.command,
+                              child: Text(
+                                session.command,
+                                maxLines: 1,
+                                softWrap: false,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontFamily: monoFamily, fontSize: 11, color: c.textMuted),
+                              ),
+                            ),
+                          ),
                           const SizedBox(width: 6),
-                          Expanded(
+                          Flexible(
                             child: Text(
                               '· ${session.project} · ${_createdAt(session.createdAt)}',
                               maxLines: 1,
+                              softWrap: false,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 11, color: c.textMuted),
                             ),

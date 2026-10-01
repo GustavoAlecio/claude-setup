@@ -6,11 +6,13 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/models.dart';
 import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
 
-/// [newConversation] skips the skill list and opens straight on the free prompt.
-Future<void> showCommandPalette(BuildContext context, String project, {bool newConversation = false}) {
+/// [newConversation] skips the skill list and opens straight on the free prompt. Without a [project]
+/// (an org with no projects) the palette only lists skills and nothing can be started.
+Future<void> showCommandPalette(BuildContext context, Project? project, {bool newConversation = false}) {
   final router = GoRouter.of(context);
   final sessions = SessionsScope.of(context);
   return showDialog<void>(
@@ -19,7 +21,7 @@ Future<void> showCommandPalette(BuildContext context, String project, {bool newC
     builder: (_) => _CommandPalette(
       project: project,
       sessions: sessions,
-      startOnPrompt: newConversation,
+      startOnPrompt: newConversation && project != null,
       onCreated: (s) => router.go('/p/${s.project}/sessions/${s.id}'),
     ),
   );
@@ -35,7 +37,7 @@ class _CommandPalette extends StatefulWidget {
     required this.onCreated,
   });
 
-  final String project;
+  final Project? project;
   final SessionsRepository sessions;
   final bool startOnPrompt;
   final void Function(SessionSummary session) onCreated;
@@ -97,6 +99,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
   });
 
   void _choose(int index) {
+    if (widget.project == null) return;
     final filtered = _filtered;
     if (index < filtered.length) {
       _enter(_Mode.args, skill: filtered[index]);
@@ -119,13 +122,18 @@ class _CommandPaletteState extends State<_CommandPalette> {
   }
 
   Future<void> _create(String command) async {
-    if (_creating) return;
+    final project = widget.project;
+    if (_creating || project == null) return;
+    if (project.path == null) {
+      setState(() => _error = 'sem pasta para ${project.name}: adicione a pasta em Configurações');
+      return;
+    }
     setState(() {
       _creating = true;
       _error = null;
     });
     try {
-      final session = await widget.sessions.create(widget.project, command);
+      final session = await widget.sessions.create(project.name, command, cwd: project.path);
       if (!mounted) return;
       Navigator.of(context).pop();
       widget.onCreated(session);
@@ -200,9 +208,12 @@ class _CommandPaletteState extends State<_CommandPalette> {
                     decoration: InputDecoration(
                       border: InputBorder.none,
                       hintText: switch (_mode) {
-                        _Mode.list => 'Executar skill em ${widget.project}…',
+                        _Mode.list => switch (widget.project) {
+                          final p? => 'Executar skill em ${p.name}…',
+                          null => 'Skills (sem projeto nesta org)',
+                        },
                         _Mode.args => 'argumentos (opcional)',
-                        _Mode.prompt => 'Nova conversa em ${widget.project}: escreva o prompt',
+                        _Mode.prompt => 'Nova conversa em ${widget.project!.name}: escreva o prompt',
                       },
                       hintStyle: TextStyle(color: c.textMuted),
                       prefixIcon: _mode == _Mode.args
@@ -234,7 +245,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
                         for (final (i, s) in _filtered.indexed)
                           _Item(
                             selected: i == _index,
-                            onTap: () => _choose(i),
+                            onTap: widget.project == null ? null : () => _choose(i),
                             leading: Mono('/${s.name}', color: c.textPrimary, size: 13),
                             description: s.description,
                           ),
@@ -245,12 +256,15 @@ class _CommandPaletteState extends State<_CommandPalette> {
                           ),
                         _Item(
                           selected: _index == _count - 1,
-                          onTap: () => _choose(_count - 1),
+                          onTap: widget.project == null ? null : () => _choose(_count - 1),
                           leading: Text(
-                            'Nova conversa em ${widget.project}',
-                            style: TextStyle(fontSize: 13, color: c.textPrimary),
+                            switch (widget.project) {
+                              final p? => 'Nova conversa em ${p.name}',
+                              null => 'Nova conversa',
+                            },
+                            style: TextStyle(fontSize: 13, color: widget.project == null ? c.textMuted : c.textPrimary),
                           ),
-                          description: 'prompt livre',
+                          description: widget.project == null ? 'nenhum projeto nesta org' : 'prompt livre',
                         ),
                       ],
                     ),
@@ -281,7 +295,9 @@ class _Item extends StatelessWidget {
   const _Item({required this.selected, required this.onTap, required this.leading, required this.description});
 
   final bool selected;
-  final VoidCallback onTap;
+
+  /// `null` renders the entry disabled.
+  final VoidCallback? onTap;
   final Widget leading;
   final String description;
 
@@ -301,7 +317,7 @@ class _Item extends StatelessWidget {
               leading,
               const SizedBox(width: 14),
               Expanded(child: Muted(description)),
-              if (selected) Mono('↵', color: c.textMuted),
+              if (selected && onTap != null) Mono('↵', color: c.textMuted),
             ],
           ),
         ),

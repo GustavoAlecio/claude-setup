@@ -12,6 +12,11 @@ class RootScope extends WatchScope {
   const RootScope();
 }
 
+/// `.dashboard.json` changed; `diffConfig` decides whether to re-emit, rescan or reload.
+class ConfigScope extends WatchScope {
+  const ConfigScope();
+}
+
 class ProjectScope extends WatchScope {
   const ProjectScope(this.project);
 
@@ -31,7 +36,7 @@ WatchScope? classify(String root, String path, {String? destination}) {
   final base = root.endsWith('/') ? root.substring(0, root.length - 1) : root;
   if (target != base && !target.startsWith('$base/')) return null;
   final segments = target.substring(base.length).split('/').where((s) => s.isNotEmpty).toList();
-  if (segments.length == 1 && segments[0] == '.dashboard.json') return const RootScope();
+  if (segments.length == 1 && segments[0] == '.dashboard.json') return const ConfigScope();
   for (final s in segments) {
     if (s.startsWith('.') || s.endsWith('.tmp') || s.endsWith('.lock')) return null;
   }

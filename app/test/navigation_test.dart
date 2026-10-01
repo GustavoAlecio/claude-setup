@@ -4,12 +4,25 @@ import 'package:claude_flow/data/flow_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/engine/engine_supervisor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
-Widget _app(FlowRepository repository) =>
-    ClaudeFlowApp(repository: repository, sessions: MockSessionsRepository(), engine: const MockEngineController());
+Widget _app(FlowRepository repository, {EngineController engine = const MockEngineController()}) =>
+    ClaudeFlowApp(repository: repository, sessions: MockSessionsRepository(), engine: engine);
+
+class _StoppedEngine extends MockEngineController {
+  const _StoppedEngine();
+
+  @override
+  Stream<EngineState> watch() => Stream.value(
+    EngineState.stopped(
+      error: 'engine saiu com código 1: ${'falha ao iniciar o servidor local do engine; ' * 6}',
+      stderrTail: const ['Error: listen EADDRINUSE 127.0.0.1:0'],
+    ),
+  );
+}
 
 void main() {
   setUp(() {
@@ -19,7 +32,7 @@ void main() {
   });
 
   testWidgets('flow → runs → blocked task shows the ToT diagnosis', (tester) async {
-    await tester.pumpWidget(_app(const MockFlowRepository()));
+    await tester.pumpWidget(_app(MockFlowRepository()));
     await tester.pumpAndSettle();
 
     expect(find.text('Favoritos offline'), findsWidgets);
@@ -41,8 +54,26 @@ void main() {
     expect(find.text('→ fable'), findsOneWidget);
   });
 
+  testWidgets('engine footer hugs its content when ok and grows up to its cap on error', (tester) async {
+    final footer = find.byKey(const ValueKey('engine-footer'));
+    await tester.pumpWidget(_app(MockFlowRepository()));
+    await tester.pumpAndSettle();
+    final ok = tester.getSize(footer).height;
+    expect(find.text('engine ok'), findsOneWidget);
+    expect(ok, lessThan(50));
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(_app(MockFlowRepository(), engine: const _StoppedEngine()));
+    await tester.pumpAndSettle();
+    final stopped = tester.getSize(footer).height;
+    expect(find.text('engine parado'), findsOneWidget);
+    expect(stopped, greaterThan(ok));
+    expect(stopped, lessThanOrEqualTo(120));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('pending task row is not navigable', (tester) async {
-    await tester.pumpWidget(_app(const MockFlowRepository()));
+    await tester.pumpWidget(_app(MockFlowRepository()));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Execuções'));
     await tester.pumpAndSettle();
@@ -69,6 +100,7 @@ void main() {
     final data = [
       Project(
         name: 'longo',
+        path: '/dev/longo',
         cycle: Cycle(
           stage: Stage.implement,
           autoMode: false,
@@ -104,6 +136,23 @@ void main() {
     expect(find.text('Task numero 1'), findsNothing);
     expect(tester.getTopLeft(legend), before);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Configurações sits outside the shell and Voltar returns to the last project route', (tester) async {
+    await tester.pumpWidget(_app(MockFlowRepository()));
+    await tester.pumpAndSettle();
+    GoRouter router() => GoRouter.of(tester.element(find.byType(Scaffold).first));
+
+    router().go('/p/notifications-api/runs');
+    await tester.pumpAndSettle();
+    router().go('/settings');
+    await tester.pumpAndSettle();
+    expect(find.text('Configurações'), findsOneWidget);
+    expect(find.text('Execuções'), findsNothing, reason: 'no shell tabs on /settings');
+
+    await tester.tap(find.text('Voltar'));
+    await tester.pumpAndSettle();
+    expect(router().routerDelegate.currentConfiguration.uri.path, '/p/notifications-api/runs');
   });
 
   group('two runs in one cycle', () {
@@ -150,6 +199,7 @@ void main() {
     final data = [
       Project(
         name: 'duplo',
+        path: '/dev/duplo',
         cycle: Cycle(
           stage: Stage.implement,
           autoMode: false,

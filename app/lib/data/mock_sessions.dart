@@ -49,7 +49,7 @@ class MockSessionsRepository implements SessionsRepository {
   ];
 
   @override
-  Future<SessionSummary> create(String project, String command) async {
+  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
     final id = 'mock-${++_created}';
     final summary = SessionSummary(
       id: id,

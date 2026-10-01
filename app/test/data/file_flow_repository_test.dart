@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/file_flow_repository.dart';
 import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/data/orgs.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _fixtures = 'test/fixtures/workflow';
@@ -220,6 +224,190 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 500));
     await sub.cancel();
     expect(emissions.expand((l) => l), isEmpty);
+  });
+
+  group('orgs', () {
+    void writeConfig(Map<String, dynamic> config) =>
+        File('$root/.dashboard.json').writeAsStringSync(const JsonEncoder.withIndent('  ').convert(config));
+
+    Future<DashboardConfig> configWhere(bool Function(DashboardConfig) test) =>
+        repo.watchConfig().firstWhere(test).timeout(const Duration(seconds: 5));
+
+    void expectSameCycles(List<Project> before, List<Project> after) {
+      for (final p in before.where((p) => p.cycle != null)) {
+        expect(identical(_project(after, p.name).cycle, p.cycle), isTrue, reason: '${p.name} was reloaded');
+      }
+    }
+
+    test('project only in projects is listed with cycle null and its explicit org', () async {
+      writeConfig({
+        'orgs': [
+          {
+            'name': 'synthetic',
+            'roots': ['/synthetic'],
+          },
+        ],
+        'projects': [
+          {'name': 'added', 'path': '/elsewhere/added', 'org': 'synthetic'},
+        ],
+      });
+
+      final list = await firstWhere((l) => l.any((p) => p.name == 'added'));
+
+      final added = _project(list, 'added');
+      expect((added.cycle, added.path, added.org, added.registered), (null, '/elsewhere/added', 'synthetic', true));
+      expect(_project(list, 'alpha').org, 'synthetic');
+      expect(_project(list, 'alpha').registered, isFalse);
+    });
+
+    test('path by scanning <root>/a/<name> picks the org; two candidates → no path', () async {
+      final dev = '${tmp.path}/dev';
+      final found = Directory('$dev/r10/a/legacy')..createSync(recursive: true);
+      Directory('$dev/r10/x/twin').createSync(recursive: true);
+      Directory('$dev/r10/y/twin').createSync(recursive: true);
+      Directory('$root/twin').createSync();
+      writeConfig({
+        'orgs': [
+          {
+            'name': 'r10',
+            'roots': ['$dev/r10'],
+          },
+        ],
+      });
+
+      final list = await firstWhere((l) => l.any((p) => p.name == 'twin'));
+
+      expect(_project(list, 'legacy').path, found.path);
+      expect(_project(list, 'legacy').org, 'r10');
+      expect(_project(list, 'twin').path, isNull);
+      expect(_project(list, 'twin').org, kNoOrg);
+      expect(_project(list, 'alpha').org, kNoOrg);
+    });
+
+    test('a new root emits the rescanned projects before the config that adds it', () async {
+      final dev = '${tmp.path}/dev';
+      final found = Directory('$dev/fresh/legacy')..createSync(recursive: true);
+      await settle();
+      List<Project>? latest;
+      final sub = repo.watchProjects().listen((l) => latest = l);
+      addTearDown(sub.cancel);
+
+      final config = jsonDecode(File('$root/.dashboard.json').readAsStringSync()) as Map<String, dynamic>;
+      (config['orgs'] as List).add({
+        'name': 'fresh',
+        'roots': ['$dev/fresh'],
+      });
+      final atConfig = configWhere((c) => c.orgs.any((o) => o.name == 'fresh')).then((_) => latest);
+      writeConfig(config);
+
+      final projects = (await atConfig)!;
+      expect(_project(projects, 'legacy').path, found.path);
+      expect(_project(projects, 'legacy').org, 'fresh');
+    });
+
+    test('config-only change re-emits without reload', () async {
+      await settle();
+      final before = await repo.watchProjects().first;
+
+      final config = jsonDecode(File('$root/.dashboard.json').readAsStringSync()) as Map<String, dynamic>;
+      config['hidden'] = ['alpha'];
+      final staged = File('$root/.dashboard.json.tmp')..writeAsStringSync(jsonEncode(config));
+      final next = firstWhere((l) => _project(l, 'alpha').hidden, timeout: _within * 2);
+      staged.renameSync('$root/.dashboard.json');
+
+      expectSameCycles(before, await next);
+    });
+
+    test('tmp rename reaches watcher: updateConfig lands as ConfigScope; lastOrg alone does not reload', () async {
+      await settle();
+      await repo.updateConfig(createOrg('other', ['${tmp.path}/other']));
+      await configWhere((c) => c.lastOrg == 'other');
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final before = await repo.watchProjects().first;
+
+      await repo.updateConfig(setLastOrg('synthetic'));
+      final config = await configWhere((c) => c.lastOrg == 'synthetic');
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+
+      expect(config.orgs.map((o) => o.name), ['synthetic', 'other']);
+      expect(File('$root/.dashboard.json.tmp').existsSync(), isFalse);
+      expectSameCycles(before, await repo.watchProjects().first);
+    });
+
+    test('updateConfig emits the written config without waiting for the watcher; the echo is a no-op', () async {
+      await settle();
+      final emissions = <DashboardConfig>[];
+      final sub = repo.watchConfig().skip(1).listen(emissions.add);
+      addTearDown(sub.cancel);
+
+      await repo.updateConfig(hideProject('alpha'));
+
+      // Read before the 300 ms debounce could deliver the FSEvents echo.
+      expect((await repo.watchConfig().first).hidden, ['alpha']);
+      expect(_project(await repo.watchProjects().first, 'alpha').hidden, isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      expect(emissions.map((c) => c.hidden), [
+        ['alpha'],
+      ]);
+    });
+
+    test('a slower rescan of an older config never overwrites a newer one', () async {
+      final slow = '${tmp.path}/slow';
+      final fast = '${tmp.path}/fast';
+      final slowStarted = Completer<void>();
+      await repo.dispose();
+      repo = FileFlowRepository(
+        root,
+        stacksDir: _stacksDir,
+        checkpointScript: _script,
+        scanRoots: (roots) async {
+          final base = roots.where((r) => r == slow || r == fast).firstOrNull;
+          if (base == null) return const {};
+          if (base == slow) {
+            if (!slowStarted.isCompleted) slowStarted.complete();
+            await Future<void>.delayed(const Duration(milliseconds: 1500));
+          }
+          return {
+            'legacy': [ScanCandidate('$base/legacy', 0)],
+          };
+        },
+      );
+      await settle();
+      // Same cwds as the fixture so the first change is a rescan and the config is set after the scan.
+      Map<String, dynamic> config(String name, String root) => {
+        'cwds': {'beta': '/synthetic/beta'},
+        'orgs': [
+          {
+            'name': name,
+            'roots': [root],
+          },
+        ],
+      };
+
+      writeConfig(config('slow', slow));
+      await slowStarted.future.timeout(const Duration(seconds: 5));
+      writeConfig(config('fast', fast));
+
+      await configWhere((c) => c.orgs.single.name == 'fast');
+      await Future<void>.delayed(const Duration(milliseconds: 2000));
+      expect((await repo.watchConfig().first).orgs.single.name, 'fast');
+      final legacy = _project(await repo.watchProjects().first, 'legacy');
+      expect((legacy.path, legacy.org), ('$fast/legacy', 'fast'));
+    });
+
+    test('invalid .dashboard.json keeps the last valid config', () async {
+      await settle();
+      final emissions = <DashboardConfig>[];
+      final sub = repo.watchConfig().skip(1).listen(emissions.add);
+
+      File('$root/.dashboard.json').writeAsStringSync('{"orgs": [');
+      await Future<void>.delayed(const Duration(milliseconds: 800));
+      await sub.cancel();
+
+      expect(emissions, isEmpty);
+      expect((await repo.watchConfig().first).lastOrg, 'synthetic');
+      expect(_project(await repo.watchProjects().first, 'alpha').org, 'synthetic');
+    });
   });
 
   group('numstat', () {

@@ -46,6 +46,37 @@ echo "- wf-event: log records the checkpoint"
 python3 "$BIN/wf-event.py" log --run-dir "$W/runs/y" --role dev --task T1 --attempt 1 --tier haiku --verdict start --checkpoint abc123
 python3 -c "import json;e=json.loads(open('$W/runs/y/events.jsonl').readline());assert e['checkpoint']=='abc123' and e['attempt']==1" || fail "event checkpoint"
 
+echo "- get-project: one naming rule (remote, git root, worktree, outside git, divergence)"
+T=$(tmp); H="$T/home"; mkdir -p "$H/workflow"
+gp() { (cd "$1" && CLAUDE_HOME="$H" bash "$BIN/get-project.sh" 2>"$T/err"); }
+git -C "$T" init -q local_name; git -C "$T/local_name" remote add origin git@host:org/My_Repo.git
+mkdir -p "$T/local_name/app/lib"
+[ "$(gp "$T/local_name")" = "My-Repo" ] || fail "remote name"
+[ "$(gp "$T/local_name/app/lib")" = "My-Repo" ] || fail "subdirectory"
+[ ! -s "$T/err" ] || fail "stderr without divergence"
+git -C "$T" init -q main_repo; echo a > "$T/main_repo/a.txt"
+git -C "$T/main_repo" add .; git -C "$T/main_repo" -c user.email=t@t -c user.name=t commit -qm init
+[ "$(gp "$T/main_repo")" = "main-repo" ] || fail "no remote"
+git -C "$T/main_repo" worktree add -q "$T/wt-checkout"
+[ "$(gp "$T/wt-checkout")" = "main-repo" ] || fail "worktree without remote"
+mkdir -p "$T/plain_dir"
+[ "$(gp "$T/plain_dir")" = "plain-dir" ] || fail "outside git"
+git -C "$T" init -q old_name; git -C "$T/old_name" remote add origin https://host/org/new-name.git
+mkdir -p "$H/workflow/old_name"
+[ "$(gp "$T/old_name")" = "old_name" ] || fail "divergence stdout"
+[ "$(cat "$T/err")" = "workflow existente em old_name; usando old_name (remote: new-name)" ] || fail "divergence stderr"
+mkdir -p "$H/workflow/new-name"
+[ "$(gp "$T/old_name")" = "new-name" ] || fail "remote workflow wins when both exist"
+[ "$(cd "$T/local_name" && CLAUDE_HOME="$H" bash -c "source '$BIN/get-project.sh'")" = "" ] || fail "sourcing prints"
+! grep -q CURRENT_PROJECT "$BIN/get-project.sh" || fail "CURRENT_PROJECT still read"
+
+echo "- get-project: the 14 flow skills use it instead of basename"
+SKILLS="$(cd "$BIN/../skills" && pwd)"
+FLOW="specify plan tasks implement verify complete status fix challenge-spec review approve-review post-review refine ado-refine"
+MISSING=$(cd "$SKILLS" && for s in $FLOW; do echo "$s/SKILL.md"; done | xargs grep -L 'source ~/.claude/bin/get-project.sh' || true)
+[ -z "$MISSING" ] || fail "skills without get-project: $MISSING"
+[ -z "$(grep -rn 'basename "\$PROJECT_PATH"\|basename \$(git rev-parse' "$SKILLS" || true)" ] || fail "skills still derive the name by basename"
+
 if command -v dart >/dev/null; then
   echo "- gate_g0: formats, flags analyzer errors and missing tests"
   T=$(tmp); git -C "$T" init -q; mkdir -p "$T/lib"

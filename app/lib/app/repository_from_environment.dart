@@ -7,7 +7,7 @@ FlowRepository repositoryFromEnvironment() {
   const root = String.fromEnvironment('WORKFLOW_ROOT');
   switch (repo) {
     case 'mock':
-      return const MockFlowRepository();
+      return MockFlowRepository();
     case 'file':
       return FileFlowRepository(root.isEmpty ? FileFlowRepository.defaultRoot : root);
     default:

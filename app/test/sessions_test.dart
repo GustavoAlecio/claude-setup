@@ -12,18 +12,40 @@ const _noCwd = 'sem diretório para demo-app: defina cwds.demo-app em ~/.claude/
 
 class _RecordingSessions extends MockSessionsRepository {
   final created = <(String, String)>[];
+  final cwds = <String?>[];
 
   @override
-  Future<SessionSummary> create(String project, String command) {
+  Future<SessionSummary> create(String project, String command, {String? cwd}) {
     created.add((project, command));
-    return super.create(project, command);
+    cwds.add(cwd);
+    return super.create(project, command, cwd: cwd);
   }
 }
 
 class _NoCwdSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command) async =>
+  Future<SessionSummary> create(String project, String command, {String? cwd}) async =>
       throw const SessionsException(_noCwd, statusCode: 400);
+}
+
+const _longCommand =
+    '/implement --tier opus --task T3 sessões com cwd, filtro por org, troca e atalhos em qualquer rota do app';
+
+class _LongCommandSessions extends MockSessionsRepository {
+  @override
+  Stream<List<SessionSummary>> watchSessions() => super.watchSessions().map(
+    (list) => [
+      const SessionSummary(
+        id: 'long',
+        project: 'demo-app',
+        command: _longCommand,
+        title: 'Uma sessão com um título bem longo que também precisa caber em uma linha só',
+        status: SessionStatus.done,
+        createdAt: '2026-03-10T14:41:00Z',
+      ),
+      ...list,
+    ],
+  );
 }
 
 Finder _paletteField() => find.byType(TextField).last;
@@ -55,7 +77,7 @@ void main() {
   Future<void> openSessions(WidgetTester tester, {SessionsRepository? sessions}) async {
     await tester.pumpWidget(
       ClaudeFlowApp(
-        repository: const MockFlowRepository(),
+        repository: MockFlowRepository(),
         sessions: sessions ?? MockSessionsRepository(),
         engine: const MockEngineController(),
       ),
@@ -161,6 +183,20 @@ void main() {
     expect(find.text('aguardando permissão'), findsNothing);
   });
 
+  testWidgets('a long command stays on one ellipsized line with the full text in a tooltip', (tester) async {
+    await openSessions(tester, sessions: _LongCommandSessions());
+
+    expect(tester.takeException(), isNull);
+    final command = find.text(_longCommand).first;
+    final text = tester.widget<Text>(command);
+    expect(text.maxLines, 1);
+    expect(text.overflow, TextOverflow.ellipsis);
+    expect(find.byTooltip(_longCommand), findsOneWidget);
+    final list = find.ancestor(of: command, matching: find.byType(ListView)).first;
+    expect(tester.getRect(command).right, lessThanOrEqualTo(tester.getRect(list).right));
+    expect(tester.getSize(command).height, lessThan(20));
+  });
+
   group('command palette', () {
     testWidgets('arrows move the selection, enter picks the skill and runs it with arguments', (tester) async {
       final sessions = _RecordingSessions();
@@ -197,6 +233,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(sessions.created, [('demo-app', '/status agora')]);
+      expect(sessions.cwds, ['~/development/demo-app']);
       expect(find.text('Nova conversa em demo-app'), findsNothing);
       expect(find.text('/status agora'), findsWidgets);
       expect(find.text('aguardando resposta'), findsOneWidget);
