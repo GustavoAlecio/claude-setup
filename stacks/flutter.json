@@ -1,0 +1,28 @@
+{
+  "name": "flutter",
+  "detect": ["pubspec.yaml"],
+  "source_ext": [".dart"],
+  "generated_suffixes": [".g.dart", ".freezed.dart", ".gr.dart", ".mocks.dart", ".config.dart"],
+  "sdk_prefix_when": [".fvmrc", ".fvm/fvm_config.json"],
+  "sdk_prefix": ["fvm"],
+  "autofix": [["dart", "format", "{files}"]],
+  "codegen": {
+    "when_regex": "^part '.*\\.(freezed|g)\\.dart';",
+    "cmd": ["dart", "run", "build_runner", "build", "--delete-conflicting-outputs"]
+  },
+  "analyze": {
+    "cmd": ["dart", "analyze", "--format=machine", "{files}"],
+    "parser": "dart_machine",
+    "severity_map": {"ERROR": "critical", "WARNING": "major", "INFO": "minor"}
+  },
+  "test": {
+    "cmd": ["flutter", "test", "{files}"],
+    "flaky_retries": 1
+  },
+  "g1_task_reviewer": "flutter-architecture",
+  "g1_reviewers": ["flutter-architecture", "flutter-correctness", "dart-correctness"],
+  "g2_agent": "qa-flutter",
+  "g2_device": "macos",
+  "rules_dir": ".claude/rules",
+  "adr_dir": "docs/adr"
+}

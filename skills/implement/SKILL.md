@@ -1,139 +1,91 @@
 ---
 name: implement
 model: opus
-description: Etapa 4 do Fluxo Smart — executa as tasks em ordem, seguindo o plano tecnico aprovado
+description: Etapa 4 do Fluxo Smart — executa as tasks via workflow smart-implement com escada de modelos (haiku→sonnet→opus→fable) e gates G0/G1 por task
 ---
+
+Esta skill não implementa: ela prepara os args, dispara o workflow `smart-implement` e trata o resultado. Quem escreve código são os `dev-implementer` no tier que a escada decidir.
 
 ## 1. Detectar projeto
 ```bash
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 PROJECT_NAME=$(basename "$PROJECT_PATH")
+WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ```
 
-## 2. Verificar pre-requisitos e detectar retomada
+## 2. Pré-requisitos
 
-Leia `~/.claude/workflow/$PROJECT_NAME/plan.md` e `~/.claude/workflow/$PROJECT_NAME/tasks.md`. Se algum nao existir, informe qual etapa esta faltando.
-Leia `~/.claude/workflow/$PROJECT_NAME/current.json` para contexto.
+Leia `$WF_DIR/plan.md`, `$WF_DIR/tasks.md` e `$WF_DIR/current.json`. Faltando algum, informe a etapa.
 
-> Nao leia spec.md — plan.md ja contem o contexto suficiente.
+Cada item de `tasks.items` precisa de `complexity`, `tier0`, `tests` e `affects` (gerados pelo `/tasks`). Faltando, pare e peça `/tasks` de novo — sem eles a escada e o G0 não funcionam.
 
-### Checkpointing — retomar de onde parou
+## 3. Stack
 
-Verifique `tasks.items` no `current.json`. Se houver tasks com status `"done"`:
+Escolha o profile em `~/.claude/stacks/*.json` cujo `detect` existe na raiz do repo (Flutter: `pubspec.yaml`). Monorepo com mais de uma stack: use a do diretório onde a maioria dos `affects` cai. Nenhum profile casa → pare e diga qual stack falta (o motor não roda sem G0).
 
-1. **Pule tasks ja concluidas** — nao re-execute
-2. Se houver uma task com status `"in_progress"` (`tasks.current_task_id` preenchido):
-   - Verifique no codigo se a implementacao foi parcial (arquivos criados/editados mas incompletos)
-   - Se completa → marque como `"done"` e avance
-   - Se parcial → retome do ponto onde parou
-   - Se nenhuma evidencia → comece a task do zero
-3. Avise: "Retomando implementacao — N tasks ja concluidas, continuando a partir de Task #ID"
+## 4. Preparar run
 
-Apenas tasks com status `"pending"` ou `"in_progress"` serao executadas.
-
-### Context budget
-Se o `plan.md` tiver mais de 200 linhas, leia apenas: "Visao geral", "Arquivos impactados", "Ordem de execucao" e "Estrategia de testes". Use o `tasks.md` como guia primario — ele ja referencia as secoes relevantes do plano.
-
-## 3. Consultar lessons learned
-
-Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, leia-o. Aplique as regras como constraints durante a implementacao. Se uma task pode repetir um erro documentado, evite-o proativamente.
-
-> Lessons sao cross-cycle (propriedade do projeto, nao do ciclo). Vivem em `projects/`, nao em `workflow/`.
-
-## 4. Capturar metricas de inicio — EXECUTE AGORA
 ```bash
 bash ~/.claude/bin/capture-metrics.sh start implement "$PROJECT_NAME" "$PROJECT_PATH"
+RUN_ID="impl-$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DIR="$WF_DIR/runs/$RUN_ID"
+mkdir -p "$RUN_DIR"
 ```
-Guarde o output como `STEP_START_TS`.
 
-## 5. Registrar estado git inicial
-```bash
-git rev-parse HEAD
+Checkpoint base:
+- `current.json.exec.checkpoint` existe (retomada ou execução anterior) → use-o.
+- Senão: `bash ~/.claude/bin/wf-checkpoint.sh create "$PROJECT_PATH"` e grave em `exec.checkpoint` **e** `exec.base_checkpoint` (o verify usa o base para o diff do ciclo inteiro).
+
+Atualize `status` para `"implementing"`.
+
+## 5. Disparar o workflow
+
+Chame a ferramenta **Workflow** com `name: "smart-implement"` e `args` (objeto JSON, não string):
+
+```json
+{
+  "project_path": "<PROJECT_PATH>",
+  "workflow_dir": "<WF_DIR>",
+  "run_dir": "<RUN_DIR>",
+  "stack_name": "flutter",
+  "stack": { "...conteúdo de ~/.claude/stacks/flutter.json..." },
+  "checkpoint": "<exec.checkpoint>",
+  "plan_path": "<WF_DIR>/plan.md",
+  "spec_path": "<WF_DIR>/spec.md",
+  "lessons_path": "<~/.claude/projects/PROJECT_NAME/lessons.md, se existir>",
+  "tasks": [ "...items com status != done, na ordem do tasks.md, com id/title/description/complexity/risk/tier0/tier/attempts/tests/affects..." ],
+  "max_attempts": 5,
+  "per_tier": 2
+}
 ```
-Guarde como `GIT_START_SHA` — sera usado no resumo de impacto.
 
-## 6. Executar tasks
+O workflow roda em background. Informe em 1 linha: "Rodando `smart-implement` (N tasks, run `<RUN_ID>`). Acompanhe em `/workflows`." e encerre o turno.
 
-Liste tasks pendentes com `TaskList`. Execute na ordem do `tasks.md`.
+## 6. Ao receber o resultado
 
-Para cada task:
-1. Anuncie: "**Task #ID — Titulo** `[S/M/L]`"
-2. Atualize `current.json`: set `tasks.current_task_id` para o ID da task e `tasks.items[n].status` para `"in_progress"`
-3. Implemente seguindo o `plan.md`
-4. **Validacao imediata:** se a task tem teste mapeado na tabela "Estrategia de testes (TDD)" do `plan.md`, execute-o agora. Registre resultado no `tasks.items[n]`:
-   ```json
-   { "id": "T2", "status": "done", "test_result": "pass" }
-   ```
-   - Se o teste falhar (`"test_result": "fail"`), corrija antes de avancar
-   - Se nao ha teste mapeado, registre `"test_result": "no_test"`
-5. Atualize status com `TaskUpdate`
-6. Marque `[x]` no `tasks.md`
-7. Atualize `current.json`: set `tasks.items[n].status` para `"done"` e incremente `tasks.completed`
-8. Resumo de 1 linha do que foi feito
-
-### Protocolo de desvio (backtrack)
-
-Se durante a implementacao voce encontrar algo que invalida o plano:
-
-1. **Pare a execucao** — nao force uma implementacao que nao faz sentido
-2. **Documente o problema:** descreva claramente o que encontrou e por que o plano e inviavel nesse ponto
-3. **Proponha a correcao:** sugira o ajuste necessario no plan.md (e na spec.md se for o caso)
-4. **Aguarde aprovacao:** pergunte "Encontrei um desvio necessario. Posso atualizar o plano e continuar?"
-5. **Se aprovado:** atualize os artefatos, registre em `current.json` no campo `backtracks`:
-   ```json
-   "backtracks": [{"task": "#ID", "reason": "...", "resolution": "..."}]
-   ```
-6. **Se rejeitado:** siga com o plano original ou pare conforme o usuario decidir
-
-Regras gerais:
-- Nunca desvie do plano sem consultar o usuario
-- Pause se encontrar algo inesperado
-- Aguarde confirmacao para tasks com risco alto
-
-## 7. Resumo de impacto — EXECUTE AGORA
-
-Apos todas as tasks:
+Grave o JSON retornado em `$RUN_DIR/workflow-result.json` e persista:
 
 ```bash
-git diff --stat <GIT_START_SHA>..HEAD
-```
-
-Se alguma task teve `test_result: "no_test"`, execute a suite de testes completa do projeto como safety net:
-```bash
-# Adapte ao projeto — ex: flutter test, npm test, etc.
-```
-
-Apresente o resumo:
-```
-## Resumo de impacto
-- **Arquivos criados:** N
-- **Arquivos editados:** N
-- **Arquivos removidos:** N
-- **Testes por task:** X pass / Y fail / Z sem teste
-- **Suite completa:** PASS/FAIL/nao executada
-- **Feature:** <nome> implementada
-```
-
-## 8. Capturar metricas finais — EXECUTE AGORA (obrigatorio)
-```bash
+python3 ~/.claude/bin/wf-event.py persist --run-dir "$RUN_DIR" --workflow-dir "$WF_DIR" --result-file "$RUN_DIR/workflow-result.json"
 bash ~/.claude/bin/capture-metrics.sh end implement "$PROJECT_NAME" "$PROJECT_PATH"
 ```
 
-Atualize `current.json`: set `tasks.current_task_id` para `null` e `status` para `"implemented"`.
+Marque `[x]` no `tasks.md` para as tasks `done`. Apresente:
 
-## 9. Verificar phases pendentes
+```
+## Implement — <status>
+| Task | Cx | tier0 → final | Tentativas | Status |
+|---|---|---|---|---|
+- Escaladas: N · tokens de saída (trace): X
+```
 
-Verifique se `~/.claude/workflow/$PROJECT_NAME/phases.md` existe.
+Depois, por `status`:
 
-**Se existir:**
-1. Marque a phase recem-concluida como `[x]`
-2. Verifique se ainda ha phases com `[ ]`:
-   - **Sim, ha phases pendentes:** exiba o resumo e pergunte:
-     "Phase N concluida! Phases restantes:
-     - [ ] Phase N+1: <nome>
+- **done** → `status: "implemented"`. Auto on: siga para `/verify`. Auto off: "Implementado. Verificar? `/verify`".
+- **backtrack** → o dev-implementer declarou o plano inviável na task `blocked_task`. Aplique o **protocolo de desvio**: mostre o `reason`, proponha o ajuste no `plan.md` (e `spec.md` se for o caso), peça OK, registre em `backtracks` e rode `/implement` de novo (retoma das pendentes). Mesmo com auto on, peça OK.
+- **blocked** → escada esgotada, falha repetida entre tiers ou gate quebrado. Mostre o `reason` e as hipóteses do `diagnosis` ordenadas por confidence (lente, hipótese, evidência, ação recomendada). Ofereça: corrigir spec → `/challenge-spec`; replanejar → `/plan`; corrigir ambiente e retomar → `/implement`; assumir a task manualmente. Não decida sozinho, nem com auto on.
 
-     Deseja verificar a implementacao? Execute `/verify`.
-     Ou iniciar a proxima phase? Execute `/specify`."
-   - **Nao, todas concluidas:** delete `phases.md` e informe que o projeto foi implementado por completo.
+## Não fazer
 
-**Se nao existir:** avance automaticamente executando `/verify`.
+- Não implemente tasks no contexto principal "para adiantar" — isso fura a escada e a telemetria.
+- Não commite. O checkpoint é tree object, não commit.

@@ -1,9 +1,12 @@
 # Everything: skills + agents + bin
 @smart-flow
+@smart-flow-flutter
 @review-flow
 @design
 @clean-arch
 @agents-all
 bin/
+workflows/
+stacks/
 skills/orcamento
 @ado-flow

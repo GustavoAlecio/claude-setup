@@ -30,6 +30,8 @@ Se `tasks.items` existir no `current.json`, exiba progresso por task:
 
 Se `current.json` existir, leia-o para mostrar informacoes adicionais (feature name, start_date, status, phases, tokens, backtracks).
 
+Se os items tiverem `tier0`/`tier`, mostre a escada por task: `T2 — Titulo [M] sonnet→opus (3 tentativas) done`. Se `exec.last_status` for `blocked`, mostre o ultimo `blockers[]` e aponte o diagnostico em `runs/<run>/result.json`. Workflow rodando agora: mencione `/workflows`.
+
 ## Verificar piloto automatico
 ```bash
 test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO: ativado" || echo "AUTO: desativado"
@@ -50,7 +52,9 @@ Exiba um resumo no formato:
 - [x] Plan — `plan.md` gerado
 - [x] Tasks — N tasks criadas (X concluidas, Y pendentes) | Complexidade: Ns S, Nm M, Nl L
 - [ ] Implement — em andamento / pendente
-- [ ] Verify — pendente
+- [ ] Challenge-spec — ok / ajustes aplicados / pendente
+- [ ] Verify — pendente (G1 + G2, rodadas)
+- [ ] Complete — pendente
 
 ### Metricas
 
