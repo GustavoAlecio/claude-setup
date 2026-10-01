@@ -3,17 +3,27 @@ import { randomUUID } from "node:crypto";
 /**
  * Substituto de `query` do Agent SDK, roteirizado pelo texto de cada mensagem do usuario:
  * - `perm:Edit`: pede permissao de Edit e reporta o resultado da decisao;
+ * - `perm2`: duas chamadas de Bash em paralelo, cada uma com seu pedido de permissao;
  * - `ask2`: AskUserQuestion com duas perguntas (a segunda multiSelect);
  * - `slow`: um delta a cada 100 ms ate `interrupt()` ou abort;
  * - `leak`: ecoa `options.env.GH_TOKEN` em tool_use, tool_result, delta, texto e result;
  * - qualquer outro: 3 deltas, texto final e result.
  * Abort rejeita como o SDK real; `interrupt()` encerra o turno corrente com um result.
+ * O modo vem de `options.permissionMode` e muda com `setPermissionMode` (registrado em
+ * `permissionModeCalls`); em `bypassPermissions` so o AskUserQuestion chama `canUseTool`.
  */
 export function query({ prompt, options }) {
   const signal = options.abortController?.signal;
   const sessionId = options.resume ?? `fake-${randomUUID()}`;
   let interrupted = false;
   let wakeInterrupt = null;
+  let mode = options.permissionMode ?? "default";
+  const permissionModeCalls = [];
+
+  const decide = (name, input, id) =>
+    mode === "bypassPermissions" && name !== "AskUserQuestion"
+      ? Promise.resolve({ behavior: "allow" })
+      : options.canUseTool(name, input, { signal, suggestions: [], toolUseID: id });
 
   const abortError = () => Object.assign(new Error("aborted by user"), { name: "AbortError" });
 
@@ -66,7 +76,7 @@ export function query({ prompt, options }) {
   async function* askTool(name, input) {
     const id = `tool-${randomUUID()}`;
     yield assistant([{ type: "tool_use", id, name, input }]);
-    const decision = await guard(options.canUseTool(name, input, { signal, suggestions: [], toolUseID: id }));
+    const decision = await guard(decide(name, input, id));
     if (decision.behavior === "allow") {
       const answers = decision.updatedInput?.answers;
       yield toolResult(id, answers ? JSON.stringify(answers) : "ok");
@@ -80,6 +90,17 @@ export function query({ prompt, options }) {
   async function* turn(text) {
     if (text === "perm:Edit") {
       yield* askTool("Edit", { file_path: "/tmp/fake.txt", old_string: "a\nb", new_string: "a\nc" });
+      return;
+    }
+    if (text === "perm2") {
+      const calls = ["a", "b"].map((tag) => ({ id: `tool-${randomUUID()}`, input: { command: `echo ${tag}` } }));
+      yield assistant(calls.map(({ id, input }) => ({ type: "tool_use", id, name: "Bash", input })));
+      const decisions = await guard(Promise.all(calls.map(({ id, input }) => decide("Bash", input, id))));
+      for (const [i, { id }] of calls.entries()) {
+        const allowed = decisions[i].behavior === "allow";
+        yield toolResult(id, allowed ? "ok" : decisions[i].message ?? "negado", !allowed);
+      }
+      yield result("perm2 resolvido");
       return;
     }
     if (text === "ask2") {
@@ -137,17 +158,29 @@ export function query({ prompt, options }) {
       interrupted = true;
       wakeInterrupt?.();
     },
+    permissionModeCalls,
+    async setPermissionMode(next) {
+      permissionModeCalls.push(next);
+      if (next === "bypassPermissions" && options.allowDangerouslySkipPermissions !== true) {
+        throw new Error("bypass_disabled");
+      }
+      mode = next;
+    },
   };
 }
 
-/** Espiao de `options`: registra o que cada `query` recebeu e delega ao fake. */
+/** Espiao de `options`: registra o que cada `query` recebeu e delega ao fake; `queries` guarda os retornos. */
 export function spyQuery() {
   const calls = [];
+  const queries = [];
   return {
     calls,
+    queries,
     query(args) {
       calls.push(args.options);
-      return query(args);
+      const q = query(args);
+      queries.push(q);
+      return q;
     },
   };
 }

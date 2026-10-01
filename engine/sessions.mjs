@@ -4,6 +4,9 @@ import { redact, redactDeep, sessionEnv } from "./gh_env.mjs";
 
 const TITLE_MAX = 60;
 
+/** O que o app oferece; `plan` e `dontAsk` ficam de fora. */
+export const PERMISSION_MODES = new Set(["default", "acceptEdits", "auto", "bypassPermissions"]);
+
 function titleFor(command) {
   const line = command.replace(/\s+/g, " ").trim();
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).trimEnd()}…` : line;
@@ -46,7 +49,17 @@ function createInputStream() {
 
 class Session {
   constructor(
-    { project, org = null, githubAccount = null, cwd, additionalDirectories = [], command, model, restored },
+    {
+      project,
+      org = null,
+      githubAccount = null,
+      cwd,
+      additionalDirectories = [],
+      command,
+      model,
+      permissionMode = "default",
+      restored,
+    },
     { query, store, changed, tokens }
   ) {
     this.queryFn = query;
@@ -62,6 +75,8 @@ class Session {
     this.command = command;
     this.title = titleFor(command);
     this.requestedModel = model ?? null;
+    // Lido pelo `attach`: uma troca durante o `attaching` ja vale para o resume em curso.
+    this.permissionMode = permissionMode;
     this.createdAt = restored?.createdAt ?? new Date().toISOString();
     this.events = restored?.events ?? [];
     this.model = initModel(this.events) ?? this.requestedModel;
@@ -89,6 +104,7 @@ class Session {
       cwd: this.cwd,
       additionalDirectories: this.additionalDirectories,
       command: this.command,
+      permissionMode: this.permissionMode,
       createdAt: this.createdAt,
       sdkSessionId: this.sdkSessionId,
       cost: this.cost,
@@ -141,6 +157,7 @@ class Session {
       createdAt: this.createdAt,
       cost: this.cost,
       model: this.model,
+      permissionMode: this.permissionMode,
       events: this.events.length,
       pendingPermissions: this.pending.size,
       resumable: Boolean(this.sdkSessionId),
@@ -271,7 +288,9 @@ class Session {
         canUseTool: this.canUseTool,
         abortController: this.abort,
         includePartialMessages: true,
-        permissionMode: "default",
+        permissionMode: this.permissionMode,
+        // Sempre ligada: sem ela o CLI recusa trocar para bypass ao vivo. O modo efetivo vem so de `permissionMode`.
+        allowDangerouslySkipPermissions: true,
         skills: "all",
         systemPrompt: { type: "preset", preset: "claude_code" },
         ...(resume && this.sdkSessionId ? { resume: this.sdkSessionId } : {}),
@@ -342,6 +361,22 @@ class Session {
     return attaching;
   }
 
+  /**
+   * Cards pendentes seguem esperando: o modo novo vale da proxima chamada em diante. Recusa do SDK
+   * e 409 sem gravar nem emitir. Sem processo, so grava e vale no proximo `attach`.
+   */
+  async setPermissionMode(mode) {
+    if (this.query) {
+      try {
+        await this.query.setPermissionMode(mode);
+      } catch (err) {
+        throw new HttpError(409, String(err?.message ?? err));
+      }
+    }
+    this.permissionMode = mode;
+    this.emit({ kind: "permission_mode", mode });
+  }
+
   async interrupt() {
     try {
       await this.query?.interrupt();
@@ -364,7 +399,7 @@ class Session {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref());
 
-const changeKey = (s) => JSON.stringify([s.status, s.pendingPermissions, s.cost, s.model]);
+const changeKey = (s) => JSON.stringify([s.status, s.pendingPermissions, s.cost, s.model, s.permissionMode]);
 
 export function createSessions({ query, store, tokens }) {
   const sessions = new Map();
@@ -439,6 +474,7 @@ export function createSessions({ query, store, tokens }) {
             cwd: snapshot.cwd,
             additionalDirectories: snapshot.additionalDirectories ?? [],
             command: snapshot.command,
+            permissionMode: PERMISSION_MODES.has(snapshot.permissionMode) ? snapshot.permissionMode : "default",
             restored: snapshot,
           },
           deps

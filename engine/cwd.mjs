@@ -23,8 +23,22 @@ async function isDir(dir) {
   }
 }
 
-/** `level` e a profundidade abaixo da raiz varrida (`<raiz>/x` e 0), como `ScanCandidate.depth` no app. */
-async function scan(root, target, depth, out, level = 0) {
+/** `.git` como diretorio, arquivo (worktree, submodulo) ou symlink, sem seguir o link. */
+async function hasGit(dir) {
+  try {
+    await fs.lstat(path.join(dir, ".git"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `level` e a profundidade abaixo da raiz varrida (`<raiz>/x` e 0), como `ScanCandidate.depth` no app.
+ * Se `root` ou um ancestral seu desde a raiz da busca (inclusive) tem `.git`, o nome so vale como raiz de
+ * repo; o recusado nao vira candidato, mas a descida continua dentro dele.
+ */
+async function scan(root, target, depth, out, level = 0, insideRepo = false) {
   if (depth < 0 || out.length >= 8) return;
   let entries;
   try {
@@ -32,17 +46,19 @@ async function scan(root, target, depth, out, level = 0) {
   } catch {
     return;
   }
+  const childInsideRepo = insideRepo || entries.some((e) => e.name === ".git");
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || SKIP.has(entry.name)) continue;
     const full = path.join(root, entry.name);
-    if (entry.name === target) out.push({ dir: full, level });
-    else await scan(full, target, depth - 1, out, level + 1);
+    if (entry.name === target && (!childInsideRepo || (await hasGit(full)))) out.push({ dir: full, level });
+    else await scan(full, target, depth - 1, out, level + 1, childInsideRepo);
   }
 }
 
 /**
  * project_path do current.json > override salvo pelo usuario > varredura das raizes de dev. Na varredura
- * vence o candidato mais raso; empate no nivel mais raso nao escolhe nenhum (mesma regra de `resolvePath`).
+ * so entra pasta que e raiz de repo ou que nao esta dentro de um; vence o candidato mais raso e empate no
+ * nivel mais raso nao escolhe nenhum (mesma regra de `resolvePath`).
  */
 export async function resolveCwd(project, current) {
   const name = safeSegment(project);
