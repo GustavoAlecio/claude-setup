@@ -1,0 +1,5 @@
+# Smart Flow + Flutter stack: G0 profile, G1 reviewers and the G2 QA agent
+@smart-flow
+@agents-flutter
+stacks/flutter.json
+agents/qa-flutter.md

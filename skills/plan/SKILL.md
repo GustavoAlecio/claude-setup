@@ -32,6 +32,7 @@ Antes de planejar, explore o codigo real. Nao planeje no vacuo.
 2. **Arquitetura existente:** explore os diretorios e arquivos mencionados na secao "Estado atual" da spec. Leia os arquivos-chave para entender patterns, abstracoes e convencoes do codebase.
 3. **Componentes reutilizaveis:** antes de propor criar algo novo, busque se ja existe componente similar no projeto (grep por nomes, patterns, widgets, services). Liste o que pode ser reutilizado.
 4. **Contratos existentes:** se a feature toca APIs, models, ou interfaces existentes, leia-os para entender os contratos atuais.
+5. **Rules e ADRs:** leia `.claude/rules/` do repo (as que casam com os paths prováveis) e rode `python3 ~/.claude/bin/adr-index.py match "$PROJECT_PATH" <arquivos prováveis>`. ADR `accepted` é restrição do plano; contrariar um exige propor supersede (`/adr supersede`), não ignorar.
 
 > O plano deve ser fundamentado no codigo real, nao em suposicoes.
 
@@ -55,6 +56,21 @@ Apos explorar o codebase, verifique se a spec ainda faz sentido:
 3. Pergunte: "Encontrei gaps na spec apos analisar o codebase. Posso atualizar a spec com as correcoes acima antes de prosseguir?"
 4. Se aprovado, atualize `spec.md` e continue
 5. Se rejeitado, siga com a spec original
+
+## 6b. Modo ToT (Tree of Thoughts orquestrado)
+
+Use o workflow `tot-plan` em vez de planejar sozinho quando **qualquer** um valer:
+- usuário passou `--tot`;
+- mudança de contrato (API, gRPC, WebSocket, schema, evento) ou novo módulo/package;
+- estimativa > 8 arquivos impactados;
+- a spec pede uma decisão estrutural que merece ADR (estado, cache, sincronização real-time, navegação).
+
+Sem gatilho, siga para a seção 7. Com gatilho, anuncie em 1 linha ("Plano via ToT: <motivo>") e chame a ferramenta **Workflow** com `name: "tot-plan"` e `args`:
+```json
+{ "project_path": "<PROJECT_PATH>", "spec_path": "<WF_DIR>/spec.md", "plan_path": "<WF_DIR>/plan.md",
+  "rules_dir": ".claude/rules", "adr_dir": "docs/adr", "lessons_path": "<se existir>" }
+```
+Ao receber o resultado: grave-o em `$WF_DIR/tot-plan.json` (o `/complete` usa os `adr_candidates`), mostre vencedor + placar + enxertos em 3 linhas, confira que o `plan.md` segue o template abaixo e pule para a seção 8.
 
 ## 7. Gerar plano tecnico
 
@@ -91,7 +107,13 @@ Crie `~/.claude/workflow/$PROJECT_NAME/plan.md` com exatamente este formato — 
 | Criterio de aceite | Teste | Arquivo |
 |--------------------|-------|---------|
 | <da spec> | <describe/it> | <path> |
+
+## Decisoes
+- <decisao> — segue [[NNNN-adr]] | nova (candidata a ADR): <alternativas descartadas>
+- <ou "Nenhuma decisao estrutural">
 ```
+
+Os paths da "Estrategia de testes" viram o campo `tests` das tasks e são executados literalmente pelo G0 — use caminhos reais relativos ao repo.
 
 ## 8. Capturar metricas finais — EXECUTE AGORA (obrigatorio)
 ```bash

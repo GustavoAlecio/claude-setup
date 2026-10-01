@@ -114,7 +114,7 @@ update_current_json('$WF_DIR', m, default={'ado_id': <ADO_ID>, 'work_item_type':
 
 **Invoque `/specify`** usando como descrição de entrada: o work item (título + descrição + critérios de aceite) **+ o doc de refino recém-gerado** (`$WF_DIR/details/<slug>.md`). Diga ao `/specify` explicitamente para se basear nesse detalhamento em vez de pedir a descrição ao usuário.
 
-A partir daí o Flow Smart segue seu curso normal (specify → plan → tasks → implement → verify), com os gates conforme `auto_mode.flag`. O `ado_id` já está no `current.json`, então `/pr-open` no fim vincula o PR sozinho.
+A partir daí o Flow Smart segue seu curso normal (specify → challenge-spec → plan → tasks → implement → verify → complete), com os gates conforme `auto_mode.flag`. Implement e verify rodam como workflows com escada de modelos; `blocked`/`backtrack` sempre param para decisão humana. O `ado_id` já está no `current.json`, então `/pr-open` no fim vincula o PR sozinho.
 
 ## 7. Não fazer
 

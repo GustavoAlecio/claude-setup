@@ -1,9 +1,25 @@
-# Smart Flow: spec → plan → tasks → implement → verify
+# Smart Flow: spec → challenge → plan → tasks → implement → verify → complete, with a model-escalation ladder
 skills/specify
+skills/challenge-spec
 skills/plan
 skills/tasks
 skills/implement
 skills/verify
+skills/complete
+skills/adr
 skills/auto
 skills/status
 skills/fix
+agents/dev-implementer.md
+agents/spec-challenger.md
+workflows/
+bin/current_json.py
+bin/capture-metrics.sh
+bin/archive-cycle.sh
+bin/get-project.sh
+bin/to-slug.sh
+bin/wf-checkpoint.sh
+bin/wf-event.py
+bin/gate_g0.py
+bin/adr-index.py
+bin/routing-stats.py
