@@ -4,6 +4,7 @@
 # Usage:
 #   wf-checkpoint.sh create  <repo>           -> prints tree sha
 #   wf-checkpoint.sh changed <repo> <tree>    -> paths changed since tree (incl. untracked)
+#   wf-checkpoint.sh numstat <repo> <tree>    -> added<TAB>deleted<TAB>path per file since tree (incl. untracked)
 #   wf-checkpoint.sh diff    <repo> <tree>    -> unified diff since tree (incl. untracked)
 #   wf-checkpoint.sh restore <repo> <tree>    -> reverts ONLY paths changed since tree
 set -euo pipefail
@@ -31,6 +32,7 @@ require_tree() {
 case "$CMD" in
     create)  snapshot ;;
     changed) require_tree; git diff --name-only --no-renames "$TREE" "$(snapshot)" ;;
+    numstat) require_tree; git diff --numstat --no-renames "$TREE" "$(snapshot)" ;;
     diff)    require_tree; git diff --no-renames "$TREE" "$(snapshot)" ;;
     restore)
         require_tree
@@ -47,5 +49,5 @@ case "$CMD" in
         done < <(git diff --name-status --no-renames "$TREE" "$CUR")
         echo "restored $n path(s) to $TREE"
         ;;
-    *) echo "usage: wf-checkpoint.sh create|changed|diff|restore <repo> [tree]" >&2; exit 2 ;;
+    *) echo "usage: wf-checkpoint.sh create|changed|numstat|diff|restore <repo> [tree]" >&2; exit 2 ;;
 esac

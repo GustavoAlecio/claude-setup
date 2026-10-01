@@ -2,7 +2,7 @@
 """
 Event log for the smart pipeline.
 
-  wf-event.py log     --run-dir D --role R [--task T --attempt N --tier X --verdict V --count C --note S]
+  wf-event.py log     --run-dir D --role R [--task T --attempt N --tier X --verdict V --count C --note S --checkpoint SHA]
   wf-event.py persist --run-dir D --workflow-dir W --result-file F
 
 `log` is the live, best-effort stream (events.jsonl) the dashboard tails.
@@ -32,7 +32,7 @@ def append(path: Path, obj: dict):
 
 def cmd_log(a):
     ev = {"ts": now(), "run_id": Path(a.run_dir).name, "role": a.role}
-    for k in ("task", "tier", "verdict", "note", "stage"):
+    for k in ("task", "tier", "verdict", "note", "stage", "checkpoint"):
         v = getattr(a, k)
         if v is not None:
             ev[k] = v
@@ -91,7 +91,7 @@ def main():
     lg = sub.add_parser("log")
     lg.add_argument("--run-dir", required=True)
     lg.add_argument("--role", required=True)
-    for k in ("task", "attempt", "tier", "verdict", "count", "note", "stage"):
+    for k in ("task", "attempt", "tier", "verdict", "count", "note", "stage", "checkpoint"):
         lg.add_argument(f"--{k}")
     ps = sub.add_parser("persist")
     ps.add_argument("--run-dir", required=True)
