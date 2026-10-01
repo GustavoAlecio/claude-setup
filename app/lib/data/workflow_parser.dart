@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'models.dart';
+import 'report_models.dart';
 
 final runIdPattern = RegExp(r'^(?:impl|verify)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$');
 
@@ -187,6 +188,7 @@ Cycle parseCycle(
   bool autoMode = false,
   List<Run> runs = const [],
   List<TaskMeta> plan = const [],
+  ReportDoc? report,
 }) {
   final phasesRaw = current['phases'];
   final phases = phasesRaw is Map<String, dynamic> ? phasesRaw : <String, dynamic>{};
@@ -203,6 +205,7 @@ Cycle parseCycle(
     runs: runs,
     autoMode: autoMode,
     stageMinutes: stageMinutes(phases),
+    report: report,
     plan: [
       for (final m in plan)
         TaskRun(
@@ -315,8 +318,11 @@ Run parseResultRun(String runId, Map<String, dynamic> result, Map<String, String
     reason: status == 'backtrack' ? 'backtrack' : result['reason'] as String?,
     tasks: tasks,
     gates: runGates.values.toList(),
+    round: isVerify ? _roundOf(result['report']) ?? maxRound : null,
   );
 }
+
+int? _roundOf(Object? report) => report is Map && report['round'] is int ? report['round'] as int : null;
 
 Run parseEventsRun(String runId, List<Map<String, dynamic>> events, {List<TaskMeta> tasks = const [], DateTime? now}) {
   final order = <String>[];

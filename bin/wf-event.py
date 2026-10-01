@@ -30,12 +30,22 @@ def append(path: Path, obj: dict):
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
 
+def resolve_ref(value):
+    """`@<file>` holds a tree sha written by gate_g0.py; store the sha itself."""
+    if isinstance(value, str) and value.startswith("@"):
+        try:
+            return Path(value[1:]).read_text().strip() or value
+        except OSError:
+            return value
+    return value
+
+
 def cmd_log(a):
     ev = {"ts": now(), "run_id": Path(a.run_dir).name, "role": a.role}
     for k in ("task", "tier", "verdict", "note", "stage", "checkpoint"):
         v = getattr(a, k)
         if v is not None:
-            ev[k] = v
+            ev[k] = resolve_ref(v) if k == "checkpoint" else v
     for k in ("attempt", "count"):
         v = getattr(a, k)
         if v is not None:
@@ -74,7 +84,7 @@ def cmd_persist(a):
         if run_dir.name not in ex["runs"]:
             ex["runs"].append(run_dir.name)
         if result.get("checkpoint"):
-            ex["checkpoint"] = result["checkpoint"]
+            ex["checkpoint"] = resolve_ref(result["checkpoint"])
         ex["last_status"] = result.get("status")
         if result.get("status") == "blocked":
             d.setdefault("blockers", []).append({"run": run_dir.name, "task": result.get("blocked_task"), "reason": result.get("reason")})

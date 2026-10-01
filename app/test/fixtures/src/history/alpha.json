@@ -16,6 +16,38 @@
         "backtracks": [],
         "phases": {}
       },
+      "report_start_date": "2026-04-02T07:00:00Z",
+      "report": [
+        {
+          "cmd": "stage-start",
+          "stage": "kickoff"
+        },
+        {
+          "cmd": "stage-end",
+          "stage": "kickoff",
+          "summary": "Triagem do ciclo de métricas.",
+          "status": "done"
+        },
+        {
+          "cmd": "stage-start",
+          "stage": "implement"
+        },
+        {
+          "cmd": "decision",
+          "stage": "implement",
+          "by": "agent:T1",
+          "text": "Escalada para opus após falha de analyze."
+        },
+        {
+          "cmd": "stage-end",
+          "stage": "implement",
+          "summary": "T1 e T2 concluídas.",
+          "status": "done",
+          "artifacts": [
+            "plan.md"
+          ]
+        }
+      ],
       "runs": [
         {
           "id": "impl-20260402T080000Z",

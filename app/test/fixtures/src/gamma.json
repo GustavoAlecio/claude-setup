@@ -413,5 +413,150 @@
         ]
       }
     }
+  ],
+  "report": [
+    {
+      "cmd": "stage-start",
+      "stage": "kickoff"
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "kickoff",
+      "summary": "Feature sintética gamma triada.",
+      "status": "done"
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "specify"
+    },
+    {
+      "cmd": "decision",
+      "stage": "specify",
+      "by": "orchestrator",
+      "text": "Uma tela, sem fluxo de edição."
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "specify",
+      "summary": "Spec da tela gamma aprovada.",
+      "status": "done",
+      "artifacts": [
+        "spec.md"
+      ]
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "challenge"
+    },
+    {
+      "cmd": "findings",
+      "stage": "challenge",
+      "source": "spec-challenger",
+      "payload": {
+        "accepted": [
+          {
+            "id": "C1",
+            "severity": "major",
+            "text_md": "Critério sem **verificação** objetiva."
+          }
+        ],
+        "rejected": [
+          {
+            "id": "C2",
+            "text_md": "Pedir cache offline.",
+            "reason_md": "Fora do escopo da fase."
+          }
+        ]
+      }
+    },
+    {
+      "cmd": "decision",
+      "stage": "challenge",
+      "by": "challenger",
+      "text": "Critério C1 reescrito como verificável."
+    },
+    {
+      "cmd": "decision",
+      "stage": "challenge",
+      "by": "user",
+      "text": "Manter o escopo sem cache offline."
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "challenge",
+      "summary": "1 achado aceito e 1 rejeitado.",
+      "status": "done"
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "plan"
+    },
+    {
+      "cmd": "decision",
+      "stage": "plan",
+      "by": "orchestrator",
+      "text": "Estado em um único cubit.",
+      "alternative": "Um cubit por seção."
+    },
+    {
+      "cmd": "decision",
+      "stage": "plan",
+      "by": "orchestrator",
+      "text": "Plano inicial pedia leitura em widget; corrigido para o repositório.",
+      "mistake": true
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "plan",
+      "summary": "Plano com 2 tasks.",
+      "status": "done",
+      "artifacts": [
+        "plan.md"
+      ]
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "tasks"
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "tasks",
+      "summary": "2 tasks atômicas.",
+      "status": "done",
+      "artifacts": [
+        "tasks.md"
+      ]
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "implement"
+    },
+    {
+      "cmd": "decision",
+      "stage": "implement",
+      "by": "agent:T1",
+      "text": "View sem estado próprio."
+    },
+    {
+      "cmd": "decision",
+      "stage": "implement",
+      "by": "agent:T2",
+      "text": "Modelo imutável escrito à mão."
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "implement",
+      "summary": "T1 e T2 verdes.",
+      "status": "done"
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "verify"
+    },
+    {
+      "cmd": "import-run",
+      "stage": "verify",
+      "run": "verify-20260310T113000Z"
+    }
   ]
 }

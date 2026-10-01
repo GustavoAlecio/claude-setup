@@ -184,3 +184,16 @@ test('verify with skip_g2 never spawns the QA agent', async () => {
   assert.equal(r.status, 'verified')
   assert.ok(!labels.some(l => l.startsWith('g2')))
 })
+
+test('the next task checkpoint is the file gate_g0 wrote, never the relayed sha', async () => {
+  const prompts = []
+  const agent = async (p, o) => {
+    if (o.label.startsWith('dev')) { prompts.push(p); return { status: 'done', summary: 's', files_changed: ['lib/a.dart'] } }
+    if (o.label.startsWith('g0')) return { ...pass('G0'), snapshot: 'corrupted-by-relay' }
+    return pass('G1')
+  }
+  const r = await implement({ args: baseArgs([{ id: 'T1', complexity: 'S' }, { id: 'T2', complexity: 'S' }]), agent })
+  assert.match(prompts[1], /--checkpoint @\/d\/checkpoints\/T1\.tree/)
+  assert.equal(r.checkpoint, '@/d/checkpoints/T2.tree')
+  assert.ok(!prompts.join('\n').includes('corrupted-by-relay'))
+})

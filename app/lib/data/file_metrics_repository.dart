@@ -7,11 +7,11 @@ import 'metrics_parser.dart';
 import 'metrics_repository.dart';
 import 'models.dart' show Project;
 import 'orgs.dart';
+import 'read_capped.dart';
+import 'report_models.dart';
+import 'report_parser.dart';
 
 const _currentDir = 'ciclo-atual';
-
-/// Missing file is `text == null && problem == null`.
-typedef _Read = ({String? text, String? problem});
 
 class FileMetricsRepository implements MetricsRepository {
   FileMetricsRepository(String claudeHome, String workflowRoot)
@@ -36,12 +36,14 @@ class FileMetricsRepository implements MetricsRepository {
     final warnings = <String>[];
     final meta = await _json('$dir/metrics.json', warnings);
     final runs = await _runs(dir, warnings);
+    final report = await _report('$dir/report.json', warnings);
     return aggregateCycle(
       _basename(dir),
       meta,
       runs.traces,
       runsWithoutTrace: runs.withoutTrace,
       extraWarnings: warnings,
+      report: report,
     );
   }
 
@@ -71,7 +73,7 @@ class FileMetricsRepository implements MetricsRepository {
     var withoutTrace = 0;
     for (final run in await _dirs('$cycleDir/runs')) {
       final name = _basename(run);
-      final read = await _read('$run/trace.jsonl');
+      final read = await readCapped('$run/trace.jsonl', kMetricsFileLimit);
       final text = read.text;
       if (text != null) {
         traces[name] = const LineSplitter().convert(text);
@@ -85,7 +87,7 @@ class FileMetricsRepository implements MetricsRepository {
   }
 
   Future<Map<String, Object?>?> _json(String path, List<String> warnings) async {
-    final read = await _read(path);
+    final read = await readCapped(path, kMetricsFileLimit);
     final text = read.text;
     if (text == null) {
       if (read.problem != null) warnings.add('${_basename(path)} ${read.problem}');
@@ -101,16 +103,14 @@ class FileMetricsRepository implements MetricsRepository {
     return null;
   }
 
-  Future<_Read> _read(String path) async {
-    try {
-      final stat = await FileStat.stat(path);
-      if (stat.type != FileSystemEntityType.file) return (text: null, problem: null);
-      if (stat.size > kMetricsFileLimit) return (text: null, problem: 'grande demais');
-      return (text: utf8.decode(await File(path).readAsBytes(), allowMalformed: true), problem: null);
-    } on FileSystemException catch (e, st) {
-      log('cannot read $path', name: 'FileMetricsRepository', error: e, stackTrace: st);
-      return (text: null, problem: 'ilegível');
+  Future<ReportDoc?> _report(String path, List<String> warnings) async {
+    final read = await readCapped(path, kReportFileLimit);
+    final text = read.text;
+    if (text == null) {
+      if (read.problem != null) warnings.add('${_basename(path)} ${read.problem}');
+      return null;
     }
+    return parseReport(text);
   }
 
   /// Sorted subdirectories; empty when [dir] is missing or unreadable.

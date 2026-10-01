@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'metrics_models.dart';
+import 'report_models.dart';
 
 const metricsRoles = ['dev', 'g0', 'g1', 'g2', 'outros'];
 
@@ -94,6 +95,7 @@ CycleMetrics aggregateCycle(
   bool current = false,
   int runsWithoutTrace = 0,
   List<String> extraWarnings = const [],
+  ReportDoc? report,
 }) {
   final meta = metricsJson ?? const <String, Object?>{};
   var ignored = 0;
@@ -192,6 +194,7 @@ CycleMetrics aggregateCycle(
     current: current,
     hasTrace: traces.isNotEmpty,
     lastPersistedAt: lastAt,
+    report: report,
   );
 }
 

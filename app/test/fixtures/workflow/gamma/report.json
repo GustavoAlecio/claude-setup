@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "cycle": {
+    "feature": "Tela gamma",
+    "started_at": "2026-03-10T08:00:00Z"
+  },
+  "stages": [
+    {
+      "stage": "kickoff",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:00:00Z",
+      "summary_md": "Feature sintética gamma triada.",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:10:00Z"
+    },
+    {
+      "stage": "specify",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:15:00Z",
+      "summary_md": "Spec da tela gamma aprovada.",
+      "decisions": [
+        {
+          "id": "3d852d38357610bfe37046cf782f3541e3b60161a797704974a10449e8255c71",
+          "by": "orchestrator",
+          "text_md": "Uma tela, sem fluxo de edição.",
+          "kind": "decision"
+        }
+      ],
+      "findings": [],
+      "artifacts": [
+        "spec.md"
+      ],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:25:00Z"
+    },
+    {
+      "stage": "challenge",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:30:00Z",
+      "summary_md": "1 achado aceito e 1 rejeitado.",
+      "decisions": [
+        {
+          "id": "5529adedd9c714683a398bd65761551621c2abdbfb2c00504b83f8d6bc6bee0c",
+          "by": "challenger",
+          "text_md": "Critério C1 reescrito como verificável.",
+          "kind": "decision"
+        },
+        {
+          "id": "0d401bf86ecc1888d0862a98f67fbb773d111358926701e32c4f7c56712d04e9",
+          "by": "user",
+          "text_md": "Manter o escopo sem cache offline.",
+          "kind": "decision"
+        }
+      ],
+      "findings": [
+        {
+          "source": "spec-challenger",
+          "accepted": [
+            {
+              "id": "C1",
+              "severity": "major",
+              "text_md": "Critério sem **verificação** objetiva."
+            }
+          ],
+          "rejected": [
+            {
+              "id": "C2",
+              "text_md": "Pedir cache offline.",
+              "reason_md": "Fora do escopo da fase."
+            }
+          ]
+        }
+      ],
+      "artifacts": [],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:40:00Z"
+    },
+    {
+      "stage": "plan",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:45:00Z",
+      "summary_md": "Plano com 2 tasks.",
+      "decisions": [
+        {
+          "id": "5dd35300bc709dfc2865e137f1bdc015313239f6edbf10f57ea33ce55326856a",
+          "by": "orchestrator",
+          "text_md": "Estado em um único cubit.",
+          "kind": "decision",
+          "alternative_md": "Um cubit por seção."
+        },
+        {
+          "id": "0e3da15bcf19f1ee8076d32cd29a4694b523837c1096a7d92944f977c30cf12c",
+          "by": "orchestrator",
+          "text_md": "Plano inicial pedia leitura em widget; corrigido para o repositório.",
+          "kind": "mistake"
+        }
+      ],
+      "findings": [],
+      "artifacts": [
+        "plan.md"
+      ],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:55:00Z"
+    },
+    {
+      "stage": "tasks",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T08:00:00Z",
+      "summary_md": "2 tasks atômicas.",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [
+        "tasks.md"
+      ],
+      "run_ids": [],
+      "ended_at": "2026-03-10T08:10:00Z"
+    },
+    {
+      "stage": "implement",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T08:15:00Z",
+      "summary_md": "T1 e T2 verdes.",
+      "decisions": [
+        {
+          "id": "8f7f1beae441b40f5e76b355f572bccf5ea1c4ad775c25dbc70fc5a96a15a8bb",
+          "by": "agent:T1",
+          "text_md": "View sem estado próprio.",
+          "kind": "decision"
+        },
+        {
+          "id": "9ff6db63f2a4642cdb4a9888fe99e3bb98a2adb406f2e139832e6a851ae372b5",
+          "by": "agent:T2",
+          "text_md": "Modelo imutável escrito à mão.",
+          "kind": "decision"
+        }
+      ],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": [],
+      "ended_at": "2026-03-10T08:25:00Z"
+    },
+    {
+      "stage": "verify",
+      "status": "running",
+      "attempt": 1,
+      "started_at": "2026-03-10T08:30:00Z",
+      "summary_md": "",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": [
+        "verify-20260310T113000Z"
+      ],
+      "verify": {
+        "run_id": "verify-20260310T113000Z",
+        "round": 2,
+        "status": "verified",
+        "reason": null,
+        "gates": [
+          {
+            "gate": "g1",
+            "verdict": "pass",
+            "findings": 0,
+            "blocking": 0
+          },
+          {
+            "gate": "G2",
+            "verdict": "pass",
+            "findings": 0,
+            "blocking": 0
+          }
+        ]
+      }
+    }
+  ]
+}

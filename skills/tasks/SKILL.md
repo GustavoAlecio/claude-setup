@@ -9,6 +9,7 @@ description: Etapa 3 do Fluxo Smart — cria tasks ordenadas e atomicas baseadas
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 source ~/.claude/bin/get-project.sh
 PROJECT_NAME=$(get-project-name)
+WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ```
 
 ## 2. Verificar pre-requisito
@@ -29,6 +30,12 @@ Atualize `status` para `"plan_approved"` no `current.json` (gate de aprovacao im
 bash ~/.claude/bin/capture-metrics.sh start tasks "$PROJECT_NAME" "$PROJECT_PATH"
 ```
 Guarde o output como `STEP_START_TS`.
+
+Relatório: início da etapa
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-start tasks --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
+```
 
 ## 4. Criar tasks
 
@@ -115,6 +122,12 @@ Atualize o objeto `tasks` no `current.json`:
 ```
 
 Cada item deve ter todos os campos acima; `tier` comeca igual a `tier0` e e a escada que o altera.
+
+Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode:
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-end tasks --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
+```
 
 ## 7. Verificar piloto automatico e finalizar
 

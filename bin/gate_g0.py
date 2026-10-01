@@ -164,6 +164,10 @@ def main():
 
     verdict = "fail" if any(f["severity"] in BLOCKING for f in findings) else "pass"
     snapshot = checkpoint("create", str(repo)).strip()
+    if a.run_dir and a.task:
+        ref = Path(a.run_dir) / "checkpoints" / f"{a.task}.tree"
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        ref.write_text(snapshot + "\n")
     result = {"gate": "G0", "verdict": verdict, "findings": findings, "evidence": evidence,
               "snapshot": snapshot, "changed_files": changed}
 

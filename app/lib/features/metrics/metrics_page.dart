@@ -10,6 +10,7 @@ import '../../data/inventory_repository.dart';
 import '../../data/metrics_models.dart';
 import '../../data/metrics_repository.dart';
 import '../../data/models.dart';
+import '../flow/stage_timeline.dart';
 
 class MetricsPage extends StatefulWidget {
   /// Built with `ValueKey(projectName)`: a project switch disposes this state, so a late answer for the
@@ -160,6 +161,7 @@ const _cycleColumns = <(String, double?)>[
   ('Rounds', 56),
   ('Tokens', 64),
   ('Status', 110),
+  ('', 96),
 ];
 
 class _Cards extends StatelessWidget {
@@ -290,6 +292,20 @@ class _CycleRow extends StatelessWidget {
                     ),
                     110,
                   ),
+                  cell(
+                    cycle.report == null
+                        ? const SizedBox.shrink()
+                        : TextButton(
+                            key: ValueKey('metrics-report-${cycle.dir}'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: c.accent,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            onPressed: () => _showCycleReport(context, cycle),
+                            child: const Text('ver relatório', style: TextStyle(fontSize: 12)),
+                          ),
+                    96,
+                  ),
                 ],
               ),
             ),
@@ -302,6 +318,45 @@ class _CycleRow extends StatelessWidget {
     );
   }
 }
+
+/// Relatório arquivado no mesmo componente do Fluxo, em modo leitura.
+Future<void> _showCycleReport(BuildContext context, CycleMetrics cycle) => showDialog<void>(
+  context: context,
+  builder: (context) {
+    final size = MediaQuery.sizeOf(context);
+    return Dialog(
+      backgroundColor: context.colors.canvas,
+      child: SizedBox(
+        width: 820,
+        height: size.height * 0.85,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 8, 4),
+              child: Row(
+                children: [
+                  Expanded(child: Text(cycle.feature, style: Theme.of(context).textTheme.titleMedium)),
+                  IconButton(
+                    tooltip: 'Fechar',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+                child: StageTimeline(key: const ValueKey('metrics-report-timeline'), report: cycle.report),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  },
+);
 
 class _TaskRows extends StatelessWidget {
   const _TaskRows({required this.cycle});
