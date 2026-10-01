@@ -195,7 +195,9 @@ Cycle parseCycle(
   final feature = current['feature'];
   return Cycle(
     feature: feature is String && feature.isNotEmpty ? feature : projectName,
-    tracker: ado != null ? '#$ado' : (linear is String && linear.isNotEmpty ? linear : null),
+    tracker: ado != null
+        ? '#$ado'
+        : (linear is String && linear.isNotEmpty ? linear : (current['tracker'] == 'manual' ? 'manual' : null)),
     stage: stageOf(current['status'] as String?, current['challenge'] != null, phases),
     branch: branch == null || branch.isEmpty ? null : branch,
     runs: runs,

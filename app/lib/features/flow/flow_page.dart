@@ -8,6 +8,7 @@ import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
+import '../launcher/kickoff_form.dart';
 
 class FlowPage extends StatelessWidget {
   const FlowPage({super.key, required this.projectName});
@@ -40,7 +41,21 @@ class _FlowView extends StatelessWidget {
     final project = this.project;
     final cycle = project?.cycle;
     if (project == null || cycle == null) {
-      return const Center(child: Muted('Nenhum ciclo ativo. Comece com /kickoff ou /specify.', size: 13));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Muted('Nenhum ciclo ativo. Comece com /kickoff ou /specify.', size: 13),
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: context.colors.accent, foregroundColor: Colors.white),
+              onPressed: project == null ? null : () => showKickoffForm(context, project),
+              icon: const Icon(Icons.rocket_launch_outlined, size: 15),
+              label: const Text('Novo kickoff'),
+            ),
+          ],
+        ),
+      );
     }
     final run = cycle.latestRun;
     return ListView(

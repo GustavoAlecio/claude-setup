@@ -6,9 +6,13 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/kickoff.dart';
 import '../../data/models.dart';
 import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
+import 'kickoff_form.dart';
+
+const _kickoffSkill = 'kickoff';
 
 /// [newConversation] skips the skill list and opens straight on the free prompt. Without a [project]
 /// (an org with no projects) the palette only lists skills and nothing can be started.
@@ -23,6 +27,7 @@ Future<void> showCommandPalette(BuildContext context, Project? project, {bool ne
       sessions: sessions,
       startOnPrompt: newConversation && project != null,
       onCreated: (s) => router.go('/p/${s.project}/sessions/${s.id}'),
+      onKickoff: () => showKickoffForm(context, project),
     ),
   );
 }
@@ -35,12 +40,16 @@ class _CommandPalette extends StatefulWidget {
     required this.sessions,
     required this.startOnPrompt,
     required this.onCreated,
+    required this.onKickoff,
   });
 
   final Project? project;
   final SessionsRepository sessions;
   final bool startOnPrompt;
   final void Function(SessionSummary session) onCreated;
+
+  /// Runs after the palette closes; the kickoff form replaces it.
+  final VoidCallback onKickoff;
 
   @override
   State<_CommandPalette> createState() => _CommandPaletteState();
@@ -88,8 +97,8 @@ class _CommandPaletteState extends State<_CommandPalette> {
     return _skills.where((s) => s.name.toLowerCase().contains(q)).toList();
   }
 
-  /// Skills plus the fixed "Nova conversa" entry at the end.
-  int get _count => _filtered.length + 1;
+  /// Skills plus the fixed "Novo kickoff" and "Nova conversa" entries at the end.
+  int get _count => _filtered.length + 2;
 
   void _enter(_Mode mode, {PaletteSkill? skill}) => setState(() {
     _mode = mode;
@@ -101,10 +110,13 @@ class _CommandPaletteState extends State<_CommandPalette> {
   void _choose(int index) {
     if (widget.project == null) return;
     final filtered = _filtered;
-    if (index < filtered.length) {
-      _enter(_Mode.args, skill: filtered[index]);
-    } else {
+    if (index == filtered.length + 1) {
       _enter(_Mode.prompt);
+    } else if (index == filtered.length || filtered[index].name == _kickoffSkill) {
+      Navigator.of(context).pop();
+      widget.onKickoff();
+    } else {
+      _enter(_Mode.args, skill: filtered[index]);
     }
   }
 
@@ -125,7 +137,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
     final project = widget.project;
     if (_creating || project == null) return;
     if (project.path == null) {
-      setState(() => _error = 'sem pasta para ${project.name}: adicione a pasta em Configurações');
+      setState(() => _error = missingProjectPathError(project));
       return;
     }
     setState(() {
@@ -146,6 +158,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
   }
 
   void _back() {
+    if (_creating) return;
     if (_mode == _Mode.list || widget.startOnPrompt) {
       Navigator.of(context).pop();
     } else {
@@ -179,110 +192,131 @@ class _CommandPaletteState extends State<_CommandPalette> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Align(
-      alignment: const Alignment(0, -0.5),
-      child: Material(
-        color: c.elevated,
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        child: Focus(
-          onKeyEvent: _onKey,
-          child: Container(
-            width: 560,
-            decoration: BoxDecoration(
-              border: Border.all(color: c.borderStrong),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: TextField(
-                    controller: _field,
-                    autofocus: true,
-                    readOnly: _creating,
-                    onChanged: _onChanged,
-                    style: const TextStyle(fontSize: 15),
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      hintText: switch (_mode) {
-                        _Mode.list => switch (widget.project) {
-                          final p? => 'Executar skill em ${p.name}…',
-                          null => 'Skills (sem projeto nesta org)',
+    return PopScope(
+      canPop: !_creating,
+      child: Align(
+        alignment: const Alignment(0, -0.5),
+        child: Material(
+          color: c.elevated,
+          borderRadius: BorderRadius.circular(12),
+          clipBehavior: Clip.antiAlias,
+          child: Focus(
+            onKeyEvent: _onKey,
+            child: Container(
+              width: 560,
+              decoration: BoxDecoration(
+                border: Border.all(color: c.borderStrong),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: TextField(
+                      controller: _field,
+                      autofocus: true,
+                      readOnly: _creating,
+                      onChanged: _onChanged,
+                      style: const TextStyle(fontSize: 15),
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        hintText: switch (_mode) {
+                          _Mode.list => switch (widget.project) {
+                            final p? => 'Executar skill em ${p.name}…',
+                            null => 'Skills (sem projeto nesta org)',
+                          },
+                          _Mode.args => 'argumentos (opcional)',
+                          _Mode.prompt => 'Nova conversa em ${widget.project!.name}: escreva o prompt',
                         },
-                        _Mode.args => 'argumentos (opcional)',
-                        _Mode.prompt => 'Nova conversa em ${widget.project!.name}: escreva o prompt',
-                      },
-                      hintStyle: TextStyle(color: c.textMuted),
-                      prefixIcon: _mode == _Mode.args
-                          ? Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: Center(widthFactor: 1, child: Mono('/${_skill!.name}', color: c.accent, size: 14)),
-                            )
-                          : Icon(
-                              _mode == _Mode.list ? Icons.search : Icons.chat_bubble_outline,
-                              color: c.textMuted,
-                              size: 18,
-                            ),
+                        hintStyle: TextStyle(color: c.textMuted),
+                        prefixIcon: _mode == _Mode.args
+                            ? Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: Center(
+                                  widthFactor: 1,
+                                  child: Mono('/${_skill!.name}', color: c.accent, size: 14),
+                                ),
+                              )
+                            : Icon(
+                                _mode == _Mode.list ? Icons.search : Icons.chat_bubble_outline,
+                                color: c.textMuted,
+                                size: 18,
+                              ),
+                      ),
                     ),
                   ),
-                ),
-                if (_error case final error?)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                    child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
-                  ),
-                if (_mode == _Mode.list) ...[
-                  Divider(height: 1, color: c.border),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 360),
-                    child: ListView(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.all(6),
-                      children: [
-                        for (final (i, s) in _filtered.indexed)
+                  if (_error case final error?)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                      child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
+                    ),
+                  if (_mode == _Mode.list) ...[
+                    Divider(height: 1, color: c.border),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 360),
+                      child: ListView(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.all(6),
+                        children: [
+                          for (final (i, s) in _filtered.indexed)
+                            _Item(
+                              selected: i == _index,
+                              onTap: widget.project == null ? null : () => _choose(i),
+                              leading: Mono('/${s.name}', color: c.textPrimary, size: 13),
+                              description: s.description,
+                            ),
+                          if (_skillsError case final error?)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                              child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
+                            ),
                           _Item(
-                            selected: i == _index,
-                            onTap: widget.project == null ? null : () => _choose(i),
-                            leading: Mono('/${s.name}', color: c.textPrimary, size: 13),
-                            description: s.description,
+                            selected: _index == _count - 2,
+                            onTap: widget.project == null ? null : () => _choose(_count - 2),
+                            leading: Text(
+                              'Novo kickoff',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: widget.project == null ? c.textMuted : c.textPrimary,
+                              ),
+                            ),
+                            description: widget.project == null ? 'sem projeto' : 'ID do card ou descrição',
                           ),
-                        if (_skillsError case final error?)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                            child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
+                          _Item(
+                            selected: _index == _count - 1,
+                            onTap: widget.project == null ? null : () => _choose(_count - 1),
+                            leading: Text(
+                              switch (widget.project) {
+                                final p? => 'Nova conversa em ${p.name}',
+                                null => 'Nova conversa',
+                              },
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: widget.project == null ? c.textMuted : c.textPrimary,
+                              ),
+                            ),
+                            description: widget.project == null ? 'nenhum projeto nesta org' : 'prompt livre',
                           ),
-                        _Item(
-                          selected: _index == _count - 1,
-                          onTap: widget.project == null ? null : () => _choose(_count - 1),
-                          leading: Text(
-                            switch (widget.project) {
-                              final p? => 'Nova conversa em ${p.name}',
-                              null => 'Nova conversa',
-                            },
-                            style: TextStyle(fontSize: 13, color: widget.project == null ? c.textMuted : c.textPrimary),
-                          ),
-                          description: widget.project == null ? 'nenhum projeto nesta org' : 'prompt livre',
-                        ),
-                      ],
+                        ],
+                      ),
+                    ),
+                  ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      border: Border(top: BorderSide(color: c.border)),
+                    ),
+                    child: Muted(
+                      _mode == _Mode.list
+                          ? '↑↓ navegar · ↵ escolher · esc fechar · roda no engine local'
+                          : '↵ iniciar · esc voltar · permissões aparecem na aba Sessões',
+                      size: 11,
                     ),
                   ),
                 ],
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    border: Border(top: BorderSide(color: c.border)),
-                  ),
-                  child: Muted(
-                    _mode == _Mode.list
-                        ? '↑↓ navegar · ↵ escolher · esc fechar · roda no engine local'
-                        : '↵ iniciar · esc voltar · permissões aparecem na aba Sessões',
-                    size: 11,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
