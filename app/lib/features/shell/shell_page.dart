@@ -201,10 +201,15 @@ class _OrgHeader extends StatelessWidget {
   final Map<String, int> pending;
 
   static const _settings = '\u0000settings';
+  static const _about = '\u0000about';
 
   void _onSelected(BuildContext context, String value) {
     if (value == _settings) {
       context.go('/settings');
+      return;
+    }
+    if (value == _about) {
+      context.go('/about');
       return;
     }
     switchOrg(
@@ -252,6 +257,17 @@ class _OrgHeader extends StatelessWidget {
               const SizedBox(width: 24),
               const Expanded(child: Text('Configurações', style: TextStyle(fontSize: 13))),
               Mono('⌘,', color: c.textMuted, size: 11),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: _about,
+          height: 36,
+          child: Row(
+            children: [
+              const SizedBox(width: 24),
+              const Expanded(child: Text('Sobre o app', style: TextStyle(fontSize: 13))),
+              Mono('⌘I', color: c.textMuted, size: 11),
             ],
           ),
         ),
