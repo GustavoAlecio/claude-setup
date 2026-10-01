@@ -1,3 +1,5 @@
+import 'report_models.dart';
+
 class TraceLine {
   const TraceLine({
     required this.role,
@@ -68,6 +70,7 @@ class CycleMetrics {
     required this.current,
     required this.hasTrace,
     this.lastPersistedAt,
+    this.report,
   });
 
   final String dir;
@@ -94,6 +97,11 @@ class CycleMetrics {
   final bool current;
   final bool hasTrace;
   final String? lastPersistedAt;
+
+  /// `report.json` do ciclo arquivado; `null` sem arquivo ou quando ele não vale (inválido, grande demais, `version != 1`).
+  final ReportDoc? report;
+
+  bool get hasReport => report != null;
 
   int get attempts => tasks.fold(0, (a, t) => a + t.attempts);
 

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "cycle": {
+    "feature": null,
+    "started_at": "2026-03-10T07:00:00Z"
+  },
+  "stages": [
+    {
+      "stage": "kickoff",
+      "status": "blocked",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:00:00Z",
+      "summary_md": "Projeto legado triado.",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:10:00Z"
+    }
+  ]
+}

@@ -11,6 +11,9 @@ import 'flow_repository.dart';
 import 'models.dart';
 import 'orgs.dart';
 import 'project_scan.dart' as scan;
+import 'read_capped.dart';
+import 'report_models.dart';
+import 'report_parser.dart';
 import 'workflow_parser.dart';
 
 typedef ScanRoots = Future<Map<String, List<ScanCandidate>>> Function(Iterable<String> roots);
@@ -390,12 +393,21 @@ class FileFlowRepository implements FlowRepository {
       final stack = path == null ? null : await _detectStack(path);
       final branch = path == null ? null : await _branch(path);
       final autoMode = await _autoMode(root);
+      final report = await _readReport('${dir.path}/report.json');
       if (stale()) return;
       _projects[name] = Project(
         name: name,
         path: projectPath,
         stack: stack,
-        cycle: parseCycle(current, projectName: name, branch: branch, autoMode: autoMode, runs: runs, plan: metas),
+        cycle: parseCycle(
+          current,
+          projectName: name,
+          branch: branch,
+          autoMode: autoMode,
+          runs: runs,
+          plan: metas,
+          report: report,
+        ),
       );
       _mtimes[name] = mtime;
     } catch (e, st) {
@@ -487,6 +499,17 @@ class FileFlowRepository implements FlowRepository {
       log('git unavailable for $path', name: 'FileFlowRepository', error: e, stackTrace: st);
       return null;
     }
+  }
+
+  /// `null` when the file is missing, over the limit, unreadable or not a valid `version: 1` report.
+  Future<ReportDoc?> _readReport(String path) async {
+    final read = await readCapped(path, kReportFileLimit);
+    final text = read.text;
+    if (text == null) {
+      if (read.problem != null) log('$path: ${read.problem}; ignoring', name: 'FileFlowRepository');
+      return null;
+    }
+    return parseReport(text);
   }
 
   Future<bool> _autoMode(String root) async {

@@ -6,6 +6,7 @@ import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/file_flow_repository.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/orgs.dart';
+import 'package:claude_flow/data/report_models.dart';
 import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -458,5 +459,67 @@ void main() {
     expect(t.description, 'Implementar o servico beta; criterio: testes do servico passam.');
     expect(t.checkpoint, 'aaaa111');
     expect(t.stage!.label, 'implementando');
+  });
+
+  group('report.json', () {
+    test('lido do diretório do projeto: completo, parcial e legado dos fixtures', () async {
+      final list = await loaded();
+
+      final gamma = _project(list, 'gamma').cycle!.report!;
+      expect(gamma.stages, hasLength(7));
+      expect(gamma.stage(Stage.verify)!.status, ReportStatus.running);
+      expect(identical(_project(list, 'gamma').cycle!.report, gamma), isTrue);
+      expect(_project(list, 'alpha').cycle!.report!.stages.map((s) => s.stage), [
+        Stage.kickoff,
+        Stage.specify,
+        Stage.challenge,
+      ]);
+      expect(_project(list, 'legacy').cycle!.report!.stage(Stage.kickoff)!.status, ReportStatus.blocked);
+    });
+
+    test('projeto sem report.json tem report null e o ciclo continua', () async {
+      final beta = _project(await loaded(), 'beta');
+
+      expect(beta.cycle!.report, isNull);
+      expect(beta.cycle, isNotNull);
+    });
+
+    test('inválido, version 2 e acima de 2 MB viram sem relatório', () async {
+      final bad = {
+        'alpha': '{"version": 1, "stages": [',
+        'gamma': '{"version": 2, "cycle": {}, "stages": []}',
+        'legacy': '{"version": 1, "pad": "${'a' * (2 * 1024 * 1024)}", "stages": []}',
+      };
+      for (final e in bad.entries) {
+        File('$root/${e.key}/report.json').writeAsStringSync(e.value);
+      }
+
+      final list = await loaded();
+
+      for (final name in bad.keys) {
+        expect(_project(list, name).cycle!.report, isNull, reason: name);
+        expect(_project(list, name).cycle, isNotNull, reason: name);
+      }
+    });
+
+    test('só é lido quando há current.json', () async {
+      File('$root/alpha/current.json').deleteSync();
+
+      final alpha = _project(await loaded(), 'alpha');
+
+      expect(alpha.cycle, isNull);
+    });
+
+    test('troca atômica do report.json reemite o projeto com o novo relatório', () async {
+      await settle();
+      final next = firstWhere((l) => _project(l, 'alpha').cycle!.report?.stage(Stage.plan) != null, timeout: _within);
+
+      final doc = jsonDecode(File('$root/alpha/report.json').readAsStringSync()) as Map<String, dynamic>;
+      (doc['stages'] as List).add({'stage': 'plan', 'status': 'running'});
+      File('$root/alpha/report.json.tmp').writeAsStringSync(jsonEncode(doc));
+      File('$root/alpha/report.json.tmp').renameSync('$root/alpha/report.json');
+
+      expect(_project(await next, 'alpha').cycle!.report!.stage(Stage.plan)!.status, ReportStatus.running);
+    });
   });
 }

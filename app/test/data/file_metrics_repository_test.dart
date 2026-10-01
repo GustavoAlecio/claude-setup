@@ -78,6 +78,67 @@ void main() {
     });
   });
 
+  group('report.json do histórico', () {
+    const validReport = '{"version": 1, "cycle": {"feature": "F", "started_at": "x"}, "stages": []}';
+
+    Future<CycleMetrics> load(String? report, {Map<String, Object?>? extra}) async {
+      final home = '${tmp.path}/home';
+      final cycle = '$home/projects/p/history/2026-06-01_com-report';
+      _write('$cycle/metrics.json', jsonEncode({'feature': 'Com report', 'status': 'completed', ...?extra}));
+      if (report != null) _write('$cycle/report.json', report);
+      final m = await FileMetricsRepository(home, '${tmp.path}/workflow').loadProject(const Project(name: 'p'));
+      return m.cycles.single;
+    }
+
+    test('ciclo do fixture com report.json tem hasReport e as etapas; o sem report não', () async {
+      final m = await FileMetricsRepository(_fixtures, '$_fixtures/workflow').loadProject(_alpha);
+
+      final withReport = m.cycles.first;
+      expect(withReport.hasReport, isTrue);
+      expect(withReport.report!.stages.map((s) => s.stage), [Stage.kickoff, Stage.implement]);
+      expect(withReport.report!.stage(Stage.implement)!.decisions.single.by, 'agent:T1');
+      expect(withReport.warnings, isEmpty);
+      expect(m.cycles.last.hasReport, isFalse);
+      expect(m.cycles.last.report, isNull);
+    });
+
+    test('sem arquivo: sem relatório e sem aviso', () async {
+      final c = await load(null);
+
+      expect(c.hasReport, isFalse);
+      expect(c.warnings, isEmpty);
+    });
+
+    test('inválido ou version 2: sem relatório, o resto do ciclo segue', () async {
+      for (final bad in ['{"version": 1, "stages": [', '{"version": 2, "stages": []}', '[]']) {
+        final c = await load(bad);
+        tmp.deleteSync(recursive: true);
+        tmp.createSync();
+
+        expect(c.hasReport, isFalse, reason: bad);
+        expect(c.feature, 'Com report');
+      }
+    });
+
+    test('2 MB exatos valem; 2 MB + 1 byte viram aviso e sem relatório', () async {
+      const limit = 2 * 1024 * 1024;
+      final exact = validReport.replaceFirst(
+        '"stages": []',
+        '"pad": "${'a' * (limit - validReport.length - 11)}", "stages": []',
+      );
+      expect(exact.length, limit);
+      expect((await load(exact)).hasReport, isTrue);
+      tmp.deleteSync(recursive: true);
+      tmp.createSync();
+
+      final c = await load('$exact ');
+
+      expect(c.hasReport, isFalse);
+      expect(c.warnings, ['report.json grande demais']);
+      expect(c.feature, 'Com report');
+    });
+  });
+
   group('ciclo atual', () {
     test('aparece primeiro, "em andamento", com a feature do current.json', () async {
       final wf = '${tmp.path}/workflow';
