@@ -151,3 +151,12 @@ String? flowPanelSessionId({required Stage? stage, required SessionSummary? runn
   return runningStage?.id ??
       report?.stages.where((s) => s.status == ReportStatus.running && s.sessionId != null).firstOrNull?.sessionId;
 }
+
+/// Without a cycle, a session to show, a `?stage=` or pending permissions the Fluxo drops the side panel, so the empty
+/// state is the only Kickoff on screen.
+bool showsFlowSidePanel({
+  required bool hasCycle,
+  required bool hasShownSession,
+  required Stage? stage,
+  required int pending,
+}) => hasCycle || hasShownSession || stage != null || pending > 0;

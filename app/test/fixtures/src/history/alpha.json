@@ -46,6 +46,21 @@
           "artifacts": [
             "plan.md"
           ]
+        },
+        {
+          "cmd": "qa",
+          "qa": [
+            "Abrir a página alpha e conferir a lista de itens.",
+            "Alternar o tema e conferir o contraste."
+          ]
+        },
+        {
+          "cmd": "real-data",
+          "real_data": "Rodado contra dados sintéticos.\n\n- Resultado: **ok**\n- Evidência: `alpha --check`\n"
+        },
+        {
+          "cmd": "pr",
+          "pr_url": "https://github.com/acme/alpha/pull/12"
         }
       ],
       "runs": [

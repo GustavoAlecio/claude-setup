@@ -361,6 +361,70 @@ assert ve["verify"] == {"run_id": "verify-1", "round": 3, "status": "blocked", "
 assert [(d["by"], d["text_md"]) for d in ch["decisions"]] == [("challenger", "Achado aplicado na spec: B1"), ("user", "B1: opcao a")], ch["decisions"]
 PY2
 
+echo "- wf-report: qa, real-data and pr replace their fields, are idempotent and reject bad input untouched"
+W=$(tmp)
+printf '{"feature":"Feat Q","start_date":"2026-02-01T00:00:00Z"}' > "$W/current.json"
+printf '["a","b","c"]' > "$W/qa.json"
+wfr qa --workflow-dir "$W" --file "$W/qa.json"; cp "$W/report.json" "$W/q1.snap"
+wfr qa --workflow-dir "$W" --file "$W/qa.json"
+cmp -s "$W/q1.snap" "$W/report.json" || fail "qa not idempotent"
+python3 -c "
+import json; r=json.load(open('$W/report.json'))
+assert r['qa']==['a','b','c'] and r['version']==1 and r['cycle']['feature']=='Feat Q', r
+" || fail "qa content"
+printf '{"a":1}' > "$W/badqa.json"
+got=0; wfr qa --workflow-dir "$W" --file "$W/badqa.json" 2>/dev/null || got=$?; [ "$got" = 2 ] || fail "qa bad payload: expected exit 2, got $got"
+cmp -s "$W/q1.snap" "$W/report.json" || fail "qa bad payload touched the report"
+rm -f /tmp/pwn-wfr
+printf '%s\n' 'crase `x` e $(touch /tmp/pwn-wfr) fim' > "$W/rd.md"
+wfr real-data --workflow-dir "$W" --file "$W/rd.md"
+[ ! -e /tmp/pwn-wfr ] || fail "real-data executed substitution"
+python3 -c "
+import json; r=json.load(open('$W/report.json'))
+assert r['real_data_md']==open('$W/rd.md').read() and 'real_data_status' not in r and r['qa']==['a','b','c'], r
+" || fail "real-data verbatim"
+wfr real-data --workflow-dir "$W" --not-run
+python3 -c "
+import json; r=json.load(open('$W/report.json'))
+assert r['real_data_md'] is None and r['real_data_status']=='não executado', r
+" || fail "real-data --not-run"
+got=0; wfr real-data --workflow-dir "$W" 2>/dev/null || got=$?; [ "$got" = 2 ] || fail "real-data without input: expected exit 2, got $got"
+wfr pr --workflow-dir "$W" --url https://github.com/o/r/pull/12
+python3 -c "
+import json; r=json.load(open('$W/report.json'))
+assert r['pr']=={'url':'https://github.com/o/r/pull/12','number':12}, r
+" || fail "pr number"
+cp "$W/report.json" "$W/p1.snap"
+for u in https://github.com/o/r/issues/12 https://example.com/pull/12 not-a-url https://github.com/o/r/pull/x; do
+  got=0; wfr pr --workflow-dir "$W" --url "$u" 2>/dev/null || got=$?; [ "$got" = 2 ] || fail "pr $u: expected exit 2, got $got"
+done
+cmp -s "$W/p1.snap" "$W/report.json" || fail "pr invalid url touched the report"
+W2=$(tmp)
+got=0; wfr qa --workflow-dir "$W2" --file "$W/qa.json" 2>/dev/null || got=$?; [ "$got" = 3 ] || fail "qa without current.json: expected exit 3, got $got"
+[ ! -e "$W2/report.json" ] || fail "qa without current.json wrote a report"
+printf '{"feature":"Feat R","start_date":"2026-03-01T00:00:00Z"}' > "$W/current.json"
+wfr qa --workflow-dir "$W" --file "$W/qa.json"
+python3 -c "
+import json; r=json.load(open('$W/report.json'))
+assert r['cycle']['feature']=='Feat R' and 'pr' not in r and 'real_data_md' not in r, r
+" || fail "new cycle must start a fresh report"
+[ -f "$W/report.2026-02-01T00:00:00Z.json" ] || fail "previous cycle not archived by qa"
+
+echo "- archive-cycle: history keeps report.json, the workflow dir keeps only phases.md"
+AH=$(tmp); AW="$AH/.claude/workflow/demo"; mkdir -p "$AW/runs/r1"
+printf '{"feature":"Fechamento do ciclo","start_date":"2026-03-01"}' > "$AW/current.json"
+printf '{"version":1,"stages":[]}' > "$AW/report.json"; echo spec > "$AW/spec.md"; echo "- [ ] fase" > "$AW/phases.md"
+HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+AC=$(ls -d "$AH/.claude/projects/demo/history/"*_fechamento-do-ciclo)
+[ -f "$AC/report.json" ] && [ -f "$AC/spec.md" ] && [ -d "$AC/runs/r1" ] || fail "archive-cycle: history incomplete"
+[ "$(ls "$AW")" = "phases.md" ] || fail "archive-cycle: workflow dir must keep only phases.md"
+rm "$AW/phases.md"; printf '{"feature":"Outro"}' > "$AW/current.json"
+HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+[ ! -e "$AW" ] || fail "archive-cycle: empty workflow dir must go away"
+
+echo "- to-slug: accents are transliterated"
+[ "$(bash "$BIN/to-slug.sh" "Mínimo Ação — Phase 3g.3")" = "minimo-acao-phase-3g-3" ] || fail "to-slug"
+
 echo "- skills: pipeline skills report through wf-report.py"
 for s in kickoff specify challenge-spec plan tasks implement verify complete; do
   f="$SKILLS/$s/SKILL.md"
@@ -378,6 +442,16 @@ for s in kickoff specify; do
   [ "$(grep -c 'wf-report.py reset' "$SKILLS/$s/SKILL.md")" = "1" ] || fail "$s: reset outside the Resetar branch"
 done
 [ -z "$(grep -rln 'wf-report.py reset' "$SKILLS" | grep -v '/\(kickoff\|specify\)/' || true)" ] || fail "reset used outside kickoff/specify"
+ln_of() { grep -n -m1 -- "$1" "$2" | cut -d: -f1; }
+C="$SKILLS/complete/SKILL.md"; prev=0
+for pat in 'wf-report.py qa ' 'wf-report.py gate pr' '/pr-open --from-complete' 'wf-report.py pr ' 'wf-report.py stage-end complete ' 'archive-cycle.sh completed'; do
+  n=$(ln_of "$pat" "$C"); [ -n "$n" ] || fail "complete: missing '$pat'"
+  [ "$n" -gt "$prev" ] || fail "complete: '$pat' out of order"
+  prev=$n
+done
+grep -q 'AskUserQuestion' "$C" || fail "complete: gate pr without AskUserQuestion"
+! grep -q 'wf-report.py' "$SKILLS/pr-open/SKILL.md" || fail "pr-open must not write the report"
+grep -q -- '--from-complete' "$SKILLS/pr-open/SKILL.md" || fail "pr-open: no --from-complete contract"
 PRIV='Grupo''OTG\|loss''-control\|r10''-mobile\|R10 Score Dev\|/development/r10\|/development/abm'
 [ -z "$(grep -rn "$PRIV" "$SKILLS" || true)" ] || fail "private names in skills"
 

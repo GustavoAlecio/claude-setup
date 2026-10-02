@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:developer';
+
 import 'package:flutter/widgets.dart';
 
 import 'docs_parser.dart';
@@ -120,6 +123,15 @@ class DocsScope extends InheritedWidget {
   static DocsRepository of(BuildContext context) => _scope(context).repository;
 
   static LinkOpener openerOf(BuildContext context) => _scope(context).opener;
+
+  /// Abre [uri] no sistema se passar em [opensExternally]; senão só registra em [logName].
+  static void openExternal(BuildContext context, Uri uri, {required String logName}) {
+    if (opensExternally(uri)) {
+      unawaited(openerOf(context)(uri));
+    } else {
+      log('link ignored: $uri', name: logName);
+    }
+  }
 
   static DocsScope _scope(BuildContext context) => context.dependOnInheritedWidgetOfExactType<DocsScope>()!;
 

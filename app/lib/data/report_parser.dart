@@ -26,7 +26,21 @@ ReportDoc? parseReport(String source) {
     feature: cycle is Map ? _string(cycle['feature']) : null,
     startedAt: cycle is Map ? _string(cycle['started_at']) : null,
     stages: [for (final s in Stage.values) ?byStage[s]],
+    qa: [
+      for (final item in _strings(decoded['qa']))
+        if (item.trim().isNotEmpty) item,
+    ],
+    realDataMd: _string(decoded['real_data_md']),
+    realDataStatus: _string(decoded['real_data_status']),
+    pr: _parsePr(decoded['pr']),
   );
+}
+
+ReportPr? _parsePr(Object? raw) {
+  if (raw is! Map) return null;
+  final url = _string(raw['url']);
+  if (url == null || url.isEmpty) return null;
+  return ReportPr(url: url, number: raw['number'] is int ? raw['number'] as int : null);
 }
 
 /// Decisões de todas as etapas na ordem das etapas e, dentro de cada uma, na ordem gravada.
