@@ -208,7 +208,7 @@ void main() {
     }
 
     await _go(tester, '/p/legacy/runs');
-    expect(find.text('sem execuções com escada neste ciclo'), findsOneWidget);
+    expect(find.text('As execuções aparecem a partir do /implement.\nEtapa atual: plan'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

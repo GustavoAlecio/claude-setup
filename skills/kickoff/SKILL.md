@@ -140,12 +140,17 @@ Nunca começar o card na branch de outro trabalho. Prepare o isolamento:
 
 **Base e nome da branch seguem a tabela do passo 0.**
 
-Rota ADO (base = última `release/*`, senão `main`):
+Rota ADO (base = `release/X.Y.Z` ou `release/X.Y.Z/main` da maior versão, via `release-base.sh`; senão `main`):
 ```bash
-BASE=$(git ls-remote --heads origin 'release/*' | awk '{print $2}' | sed 's|refs/heads/||' | sort -V | tail -1)
-BASE=${BASE:-main}
+# helper: 1a linha = base, 2a = versão X.Y.Z; exit 3 = só sufixos não-main (stdout = candidatas); exit 1 = sem release
+RB=$(git ls-remote --heads origin 'release/*' | awk '{print $2}' | sed 's|refs/heads/||' | ~/.claude/bin/release-base.sh) && rc=0 || rc=$?
+case "$rc" in
+  0) BASE=$(sed -n 1p <<<"$RB"); VERSAO=$(sed -n 2p <<<"$RB") ;;
+  3) ;;   # AskUserQuestion com as candidatas em $RB; BASE = escolha, VERSAO = X.Y.Z do nome da branch
+  *) BASE=main ;;
+esac
 git fetch origin "$BASE" --quiet
-# prefixo: bug→fix, feature→feat ; versao extraída da base (release/3.11.0 → 3.11.0)
+# prefixo: bug→fix, feature→feat ; versão X.Y.Z é sempre a do nome da base (release/3.11.0/main → 3.11.0)
 SLUG=$(~/.claude/bin/to-slug.sh "<título curto do card>")
 git checkout -b "<prefixo>/<versao>/<id>-$SLUG" "origin/$BASE"
 ```
@@ -183,6 +188,8 @@ import sys; sys.path.insert(0, '$HOME/.claude/bin')
 from current_json import update_current_json
 seed = {'tracker': 'ado', 'ado_id': <ADO_ID>, 'work_item_type': 'feature', 'status': 'triaged'}
 def m(d):
+    for k in ('feature', 'start_date', 'end_date', 'phases'):
+        d.pop(k, None)
     d.update(seed); d.setdefault('status', 'triaged'); return d
 update_current_json('$WF_DIR', m, default=seed)
 "
@@ -195,6 +202,8 @@ import sys; sys.path.insert(0, '$HOME/.claude/bin')
 from current_json import update_current_json
 seed = {'tracker': 'linear', 'linear_key': '<KEY>', 'linear_url': '<URL>', 'work_item_type': 'feature', 'status': 'triaged'}
 def m(d):
+    for k in ('feature', 'start_date', 'end_date', 'phases'):
+        d.pop(k, None)
     d.update(seed); d.setdefault('status', 'triaged'); return d
 update_current_json('$WF_DIR', m, default=seed)
 "
@@ -345,6 +354,8 @@ desc = open(os.path.join(wf, 'manual-description.md'), encoding='utf-8').read()
 seed = {'tracker': 'manual', 'manual_description': desc, 'work_item_type': 'feature', 'status': 'triaged'}
 def m(d):
     for k in ('ado_id', 'linear_key', 'linear_url'):
+        d.pop(k, None)
+    for k in ('feature', 'start_date', 'end_date', 'phases'):
         d.pop(k, None)
     d.update(seed)
     return d

@@ -102,6 +102,20 @@ Stage stageOf(String? status, bool challenge, Map<String, dynamic> phases) {
   return Stage.kickoff;
 }
 
+/// Same identity rule `bin/wf-report.py` uses to adopt a report: each `cycle` field of the report is null or equal to
+/// the one in `current.json`.
+bool reportMatchesCycle(ReportDoc report, Map<String, dynamic> current) =>
+    (report.feature == null || report.feature == current['feature']) &&
+    (report.startedAt == null || report.startedAt == current['start_date']);
+
+/// `current.json` status lags while a stage runs (e.g. `specifying` during the challenge): a `running` stage of a
+/// report from this cycle ahead of [fromStatus] wins; one behind it never moves the stage back.
+Stage cycleStage(Stage fromStatus, ReportDoc? report, Map<String, dynamic> current) {
+  if (report == null || !reportMatchesCycle(report, current)) return fromStatus;
+  final running = report.stages.where((s) => s.status == ReportStatus.running).lastOrNull?.stage;
+  return running != null && running.index > fromStatus.index ? running : fromStatus;
+}
+
 List<FileStat> parseNumstat(String out) {
   final stats = <FileStat>[];
   for (final line in const LineSplitter().convert(out)) {
@@ -200,7 +214,7 @@ Cycle parseCycle(
     tracker: ado != null
         ? '#$ado'
         : (linear is String && linear.isNotEmpty ? linear : (current['tracker'] == 'manual' ? 'manual' : null)),
-    stage: stageOf(current['status'] as String?, current['challenge'] != null, phases),
+    stage: cycleStage(stageOf(current['status'] as String?, current['challenge'] != null, phases), report, current),
     branch: branch == null || branch.isEmpty ? null : branch,
     runs: runs,
     autoMode: autoMode,

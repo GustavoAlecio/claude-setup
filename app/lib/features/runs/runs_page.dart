@@ -42,7 +42,14 @@ class _RunsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final cycle = this.cycle;
     if (cycle == null || cycle.runs.isEmpty) {
-      return const Center(child: Muted('sem execuções com escada neste ciclo', size: 13));
+      return Center(
+        child: Muted(
+          cycle == null
+              ? 'As execuções aparecem a partir do /implement.'
+              : 'As execuções aparecem a partir do /implement.\nEtapa atual: ${cycle.stage.label}',
+          size: 13,
+        ),
+      );
     }
     return _RunsView(projectName: projectName, cycle: cycle);
   }

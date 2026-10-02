@@ -51,8 +51,9 @@ Future<void> _open(
   String location, {
   SessionsRepository? sessions,
   bool settle = true,
+  Size size = const Size(1600, 3200),
 }) async {
-  tester.view.physicalSize = const Size(1600, 3200);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
@@ -300,7 +301,9 @@ void main() {
   });
 
   group('banner Etapa em andamento', () {
-    testWidgets('com cycle == null e sessão /kickoff rodando, acima do empty state, e abre a sessão', (tester) async {
+    testWidgets('com cycle == null e sessão /kickoff rodando, acima do kickoff em andamento, e abre a sessão', (
+      tester,
+    ) async {
       await _open(
         tester,
         MockFlowRepository().data,
@@ -310,11 +313,13 @@ void main() {
           _session('s-kick', command: '/kickoff --manual'),
         ]),
         settle: false,
+        // In the split the same session is already in the side panel and the banner drops the link.
+        size: const Size(1300, 3200),
       );
 
       final banner = find.text('Etapa em andamento: /kickoff --manual (rodando)');
       expect(banner, findsOneWidget);
-      final empty = find.text('Nenhum ciclo ativo. Comece com /kickoff ou /specify.');
+      final empty = find.text('Kickoff em andamento');
       expect(empty, findsOneWidget);
       expect(tester.getTopLeft(banner).dy, lessThan(tester.getTopLeft(empty).dy));
 

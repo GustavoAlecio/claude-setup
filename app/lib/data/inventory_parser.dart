@@ -156,6 +156,7 @@ final _adrIdPattern = RegExp(r'^[0-9]{4}$');
 /// Leitor próprio do frontmatter de ADR: o genérico ignora listas e `date`. Só lê chaves de topo;
 /// lista de bloco (`- item`) conta como inválida.
 AdrEntry parseAdr(String raw, {required String path}) {
+  if (_frontmatterBounds(raw) == null) return _parseFreeFormAdr(raw, path: path);
   final fm = parseFrontmatter(raw);
   final f = fm.fields;
   final rawId = f['id'];
@@ -186,6 +187,77 @@ AdrEntry parseAdr(String raw, {required String path}) {
     warning: warnings.isEmpty ? null : warnings.join('; '),
     error: error,
   );
+}
+
+final _adrH1 = RegExp(r'^#[ \t]+(.+?)\s*#*\s*$');
+final _adrTitlePrefix = RegExp(r'^ADR[- ]?\d+\s*[—–:-]\s*', caseSensitive: false);
+final _adrStatusLine = RegExp(r'\*\*Status:\*\*[ \t]*(.*)$');
+final _adrDateField = RegExp(r'\*\*Data:\*\*[ \t]*(\d{4}-\d{2}-\d{2})');
+
+/// Formato livre (sem frontmatter): título no primeiro H1, status e data na linha `**Status:**`.
+AdrEntry _parseFreeFormAdr(String raw, {required String path}) {
+  final lines = raw.replaceAll('\r\n', '\n').split('\n');
+  final h1 = _adrFreeH1(lines);
+  final statusAt = _adrFreeStatusLine(lines);
+  final title = h1 < 0 ? '' : _adrH1.firstMatch(lines[h1])!.group(1)!.replaceFirst(_adrTitlePrefix, '').trim();
+  final statusLine = statusAt < 0 ? null : lines[statusAt];
+  final status = statusLine == null ? null : _normalizeAdrStatus(_adrStatusLine.firstMatch(statusLine)!.group(1)!);
+  final fileId = RegExp(r'^[0-9]{4}').firstMatch(_basename(path))?.group(0);
+  final warnings = [
+    'formato sem frontmatter',
+    if (fileId == null) 'id fora do formato de 4 dígitos no nome do arquivo',
+    if (status == null) 'status ausente ou desconhecido',
+  ];
+  return AdrEntry(
+    id: fileId ?? '',
+    title: title,
+    status: status ?? '?',
+    path: path,
+    date: statusLine == null ? null : _adrDateField.firstMatch(statusLine)?.group(1),
+    warning: warnings.join('; '),
+    error: title.isEmpty ? _unreadable(path, 'ADR sem título') : null,
+  );
+}
+
+int _adrFreeH1(List<String> lines) => lines.indexWhere((l) => _adrH1.hasMatch(l));
+
+int _adrFreeStatusLine(List<String> lines) => lines.indexWhere((l) => _adrStatusLine.hasMatch(l));
+
+String? _normalizeAdrStatus(String value) {
+  var end = value.length;
+  for (final sep in [' · ', '|']) {
+    final i = value.indexOf(sep);
+    if (i >= 0 && i < end) end = i;
+  }
+  const accents = {
+    'á': 'a',
+    'à': 'a',
+    'â': 'a',
+    'ã': 'a',
+    'é': 'e',
+    'ê': 'e',
+    'í': 'i',
+    'ó': 'o',
+    'ô': 'o',
+    'õ': 'o',
+    'ú': 'u',
+    'ç': 'c',
+  };
+  final v = value.substring(0, end).trim().toLowerCase().split('').map((ch) => accents[ch] ?? ch).join();
+  const prefixes = {
+    'aceit': 'accepted',
+    'accepted': 'accepted',
+    'propost': 'proposed',
+    'proposed': 'proposed',
+    'substitu': 'superseded',
+    'superseded': 'superseded',
+    'depreciad': 'deprecated',
+    'deprecated': 'deprecated',
+  };
+  for (final MapEntry(:key, :value) in prefixes.entries) {
+    if (v.startsWith(key)) return value;
+  }
+  return null;
 }
 
 ({String? date, Map<String, List<String>> lists, List<String> invalid}) _adrExtraFields(String raw) {
@@ -275,10 +347,19 @@ String _stripListComment(String v) {
   return rest.isEmpty || rest.startsWith('#') ? v.substring(0, close + 1).trim() : v.trim();
 }
 
-/// Corpo = linhas após o `---` de fechamento; sem frontmatter válido, o texto inteiro.
+/// Corpo = linhas após o `---` de fechamento; frontmatter sem fechamento, o texto inteiro. Sem
+/// frontmatter, o texto sem o H1 e a linha de status.
 String adrBody(String raw) {
   final bounds = _frontmatterBounds(raw);
-  if (bounds == null || bounds.end < 0) return raw;
+  if (bounds == null) {
+    final lines = raw.replaceAll('\r\n', '\n').split('\n');
+    final drop = {_adrFreeH1(lines), _adrFreeStatusLine(lines)};
+    return [
+      for (var i = 0; i < lines.length; i++)
+        if (!drop.contains(i)) lines[i],
+    ].join('\n').replaceFirst(RegExp(r'^\n+'), '');
+  }
+  if (bounds.end < 0) return raw;
   return bounds.lines.sublist(bounds.end + 1).join('\n');
 }
 
@@ -696,3 +777,54 @@ List<AdrChainItem> adrChain(String id, List<AdrEntry> adrs) {
   }
   return [for (final n in order) AdrChainItem(id: n, entry: byId[n])];
 }
+
+final _gitmoduleHeader = RegExp(r'^\[submodule\s+"[^"]*"\]$');
+final _gitmoduleKey = RegExp(r'^(\w[\w-]*)\s*=\s*(.*)$');
+
+/// Submódulos de um `.gitmodules`; seção sem `path` ou sem `url` é ignorada.
+List<GitSubmodule> parseGitmodules(String raw) {
+  final out = <GitSubmodule>[];
+  String? path;
+  String? url;
+  var inSection = false;
+  void flush() {
+    if (inSection && path != null && url != null) out.add(GitSubmodule(path: path!, url: url!));
+    path = null;
+    url = null;
+  }
+
+  for (final line in raw.replaceAll('\r\n', '\n').split('\n')) {
+    final t = line.trim();
+    if (_gitmoduleHeader.hasMatch(t)) {
+      flush();
+      inSection = true;
+      continue;
+    }
+    if (t.startsWith('[')) {
+      flush();
+      inSection = false;
+      continue;
+    }
+    final m = _gitmoduleKey.firstMatch(t);
+    if (!inSection || m == null) continue;
+    final value = m.group(2)!.trim();
+    if (m.group(1) == 'path') path = value;
+    if (m.group(1) == 'url') url = value;
+  }
+  flush();
+  return out;
+}
+
+/// Submódulo que contém [adrDir] (`adr_dir == path` ou dentro de `path/`); `null` quando nenhum.
+GitSubmodule? adrSubmoduleFor(String adrDir, List<GitSubmodule> modules) {
+  final dir = adrDir.replaceAll(RegExp(r'/+$'), '');
+  for (final m in modules) {
+    final p = m.path.replaceAll(RegExp(r'/+$'), '');
+    if (p.isNotEmpty && (dir == p || dir.startsWith('$p/'))) return m;
+  }
+  return null;
+}
+
+/// Texto da faixa de ADRs de submódulo; a URL é exibida como está, sem o `.git` final.
+String adrSubmoduleLabel(GitSubmodule m) =>
+    'ADRs da org — submódulo ${m.path} (${m.url.replaceFirst(RegExp(r'\.git$'), '')})';

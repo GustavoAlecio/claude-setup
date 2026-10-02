@@ -184,7 +184,8 @@ PY2
 [ -z "$(find "$T" -name '*.tmp')" ] || fail "update_json left .tmp"
 
 echo "- wf-report: every subcommand is idempotent (byte-identical except ended_at)"
-wfr() { HOME="$HOME_BIN_SHIM" python3 "$BIN/wf-report.py" "$@"; }
+wfr() { env -u CLAUDE_FLOW_SESSION_ID HOME="$HOME_BIN_SHIM" python3 "$BIN/wf-report.py" "$@"; }
+wfe() { local sid=$1; shift; HOME="$HOME_BIN_SHIM" CLAUDE_FLOW_SESSION_ID="$sid" python3 "$BIN/wf-report.py" "$@"; }
 strip_ended() { grep -v '"ended_at"' "$1"; }
 W=$(tmp)
 printf '{"feature":"Feat A","start_date":"2026-01-01T00:00:00Z","status":"specifying"}' > "$W/current.json"
@@ -249,16 +250,53 @@ expect_exit 3 stage-start specify --workflow-dir "$N"
 expect_exit 3 reset --workflow-dir "$N"
 [ ! -e "$N/report.json" ] || fail "report.json written without current.json"
 
-echo "- wf-report: stage-start records session_id only when --session is given"
+echo "- wf-report: session_id comes from --session or CLAUDE_FLOW_SESSION_ID (--session wins)"
 S=$(tmp)
 printf '{"feature":"Feat S","start_date":"2026-02-01T00:00:00Z"}' > "$S/current.json"
 wfr stage-start plan --workflow-dir "$S"
 wfr stage-start tasks --workflow-dir "$S" --session sess-42
+wfe s1 stage-start implement --workflow-dir "$S"
+wfe s1 stage-start verify --workflow-dir "$S" --session s2
+wfe s1 decision complete --workflow-dir "$S" --by user --text-file "$W/dec.md"
+wfe "" stage-start kickoff --workflow-dir "$S"
 python3 -c "
 import json; st={x['stage']:x for x in json.load(open('$S/report.json'))['stages']}
 assert 'session_id' not in st['plan'], st['plan']
 assert st['tasks']['session_id']=='sess-42', st['tasks']
+assert st['implement']['session_id']=='s1', st['implement']
+assert st['verify']['session_id']=='s2', st['verify']
+assert st['complete']['session_id']=='s1', st['complete']
+assert 'session_id' not in st['kickoff'], st['kickoff']
 " || fail "session_id in stage-start"
+
+echo "- wf-report: progressive identity adopts a compatible report, archives a conflicting one"
+A=$(tmp)
+printf '{"feature":null,"start_date":null}' > "$A/current.json"
+wfr stage-start kickoff --workflow-dir "$A"
+printf '{"feature":"Feat P","start_date":"2026-03-01T00:00:00Z"}' > "$A/current.json"
+wfr stage-start specify --workflow-dir "$A"
+python3 -c "
+import json; r=json.load(open('$A/report.json'))
+assert r['cycle']=={'feature':'Feat P','started_at':'2026-03-01T00:00:00Z'}, r['cycle']
+assert [s['stage'] for s in r['stages']]==['kickoff','specify'], r['stages']
+" || fail "adopt null cycle"
+[ -z "$(ls "$A" | grep '^report\..*\.json$')" ] || fail "adoption must not archive"
+C=$(tmp)
+printf '{"feature":"Feat Q","start_date":null}' > "$C/current.json"
+wfr stage-start kickoff --workflow-dir "$C"
+printf '{"feature":null,"start_date":"2026-03-02T00:00:00Z"}' > "$C/current.json"
+wfr stage-start specify --workflow-dir "$C"
+[ -f "$C/report.unknown.json" ] || fail "partial vs partial conflict must archive"
+python3 -c "
+import json; r=json.load(open('$C/report.json'))
+assert [s['stage'] for s in r['stages']]==['specify'], r['stages']
+" || fail "conflict starts fresh report"
+D=$(tmp)
+printf '{"feature":"Feat R","start_date":"2026-03-03T00:00:00Z"}' > "$D/current.json"
+wfr stage-start plan --workflow-dir "$D"
+printf '{"feature":"Feat Z","start_date":"2026-03-03T00:00:00Z"}' > "$D/current.json"
+wfr stage-start plan --workflow-dir "$D"
+[ -f "$D/report.2026-03-03T00:00:00Z.json" ] || fail "different feature must archive"
 
 echo "- wf-report: gate asks with autopilot off, follows gates.json with it on, exit 2 on unknown name"
 GATE_HOME=$(tmp); mkdir -p "$GATE_HOME/.claude/workflow"; ln -s "$BIN" "$GATE_HOME/.claude/bin"
@@ -410,17 +448,54 @@ assert r['cycle']['feature']=='Feat R' and 'pr' not in r and 'real_data_md' not 
 " || fail "new cycle must start a fresh report"
 [ -f "$W/report.2026-02-01T00:00:00Z.json" ] || fail "previous cycle not archived by qa"
 
-echo "- archive-cycle: history keeps report.json, the workflow dir keeps only phases.md"
-AH=$(tmp); AW="$AH/.claude/workflow/demo"; mkdir -p "$AW/runs/r1"
+echo "- archive-cycle: history keeps the cycle; phases.md, prs.json and details/ stay in the workflow"
+AH=$(tmp); AW="$AH/.claude/workflow/demo"; mkdir -p "$AW/runs/r1" "$AW/details"
 printf '{"feature":"Fechamento do ciclo","start_date":"2026-03-01"}' > "$AW/current.json"
 printf '{"version":1,"stages":[]}' > "$AW/report.json"; echo spec > "$AW/spec.md"; echo "- [ ] fase" > "$AW/phases.md"
+echo '{}' > "$AW/prs.json"; echo card > "$AW/details/42.md"; echo old > "$AW/report.2026-01-01T00:00:00Z.json"
 HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
 AC=$(ls -d "$AH/.claude/projects/demo/history/"*_fechamento-do-ciclo)
 [ -f "$AC/report.json" ] && [ -f "$AC/spec.md" ] && [ -d "$AC/runs/r1" ] || fail "archive-cycle: history incomplete"
-[ "$(ls "$AW")" = "phases.md" ] || fail "archive-cycle: workflow dir must keep only phases.md"
+[ -f "$AC/details/42.md" ] && [ -f "$AC/report.2026-01-01T00:00:00Z.json" ] || fail "archive-cycle: details/ or archived report missing from history"
+[ "$(ls "$AW" | tr '\n' ' ')" = "details phases.md prs.json " ] || fail "archive-cycle: workflow dir must keep only phases.md, prs.json, details/"
+[ -f "$AW/details/42.md" ] || fail "archive-cycle: details/ content lost in workflow"
+printf '{"feature":"Fechamento do ciclo","start_date":"2026-03-01"}' > "$AW/current.json"; mkdir -p "$AW/runs/r2"
+HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+[ -d "$AC/runs/r2" ] && [ ! -e "$AC/runs/runs" ] && [ ! -e "$AC/details/details" ] || fail "archive-cycle: same-day rerun must merge, not nest"
+rm -rf "$AW/details" "$AW/prs.json"; printf '{"feature":"Sem extras"}' > "$AW/current.json"
+HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null || fail "archive-cycle: must not fail without details/ or report.*.json"
+AN=$(ls -d "$AH/.claude/projects/demo/history/"*_sem-extras)
+[ ! -e "$AN/details" ] && [ ! -e "$AN/runs" ] || fail "archive-cycle: empty dirs created"
 rm "$AW/phases.md"; printf '{"feature":"Outro"}' > "$AW/current.json"
 HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
 [ ! -e "$AW" ] || fail "archive-cycle: empty workflow dir must go away"
+
+echo "- gate_g0: pkgs, golangci parser and stack_env"
+G0=$(tmp); mkdir -p "$G0/.claude/stacks"; printf '# c\nA=1\nB=2\n' > "$G0/.claude/stacks/t.env"
+HOME="$G0" B=9 PYTHONDONTWRITEBYTECODE=1 python3 - "$BIN" <<'PY' || fail "gate_g0 helpers"
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("gate_g0", Path(sys.argv[1]) / "gate_g0.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+assert m.pkgs(["a/b/x.go", "a/b/y_test.go", "main.go", "c/z.go"]) == [".", "./a/b", "./c"]
+env = m.stack_env("t")
+assert (env["A"], env["B"]) == ("1", "9"), (env.get("A"), env.get("B"))
+import json
+out = "log line\n" + json.dumps({"Issues": [
+    {"FromLinter": "errcheck", "Text": "unchecked ", "Severity": "", "Pos": {"Filename": "pkg/a.go", "Line": 7}},
+    {"FromLinter": "govet", "Text": "bad", "Severity": "warning", "Pos": {"Filename": "pkg/b.go", "Line": 3}},
+]}) + "\n"
+root = Path("/repo"); got = m.parse_golangci_json(out, root, root, {"default": "major", "warning": "minor"})
+assert [(g["id"], g["severity"], g["file"], g["line"]) for g in got] == [
+    ("G0-ANALYZE-errcheck", "major", "pkg/a.go", 7), ("G0-ANALYZE-govet", "minor", "pkg/b.go", 3)], got
+assert m.parse_golangci_json("garbage", root, root, {}) == []
+PY
+
+echo "- stacks: .env files are ignored and never tracked"
+REPO_ROOT="$(cd "$BIN/.." && pwd)"
+[ -z "$(git -C "$REPO_ROOT" ls-files stacks/ | grep '\.env$' || true)" ] || fail "stacks/*.env tracked"
+git -C "$REPO_ROOT" check-ignore -q stacks/go.env || fail "stacks/*.env not gitignored"
+python3 -c "import json,sys; g=json.load(open(sys.argv[1])); r=g['g2_runtime']; assert 'r10' not in r.lower() and 'APNs' not in r and 'internal/' not in r" "$REPO_ROOT/stacks/go.json" || fail "go.json g2_runtime not generic"
 
 echo "- to-slug: accents are transliterated"
 [ "$(bash "$BIN/to-slug.sh" "Mínimo Ação — Phase 3g.3")" = "minimo-acao-phase-3g-3" ] || fail "to-slug"
@@ -502,5 +577,30 @@ kill "$FAKE_ENGINE"; wait "$FAKE_ENGINE" 2>/dev/null || true
 guard "$ROOT" 2>"$ROOT/err" || fail "install guard: unreachable engine must pass"
 grep -q "engine inacessível" "$ROOT/err" || fail "install guard: no warning for an unreachable engine"
 guard "$(tmp)" 2>/dev/null || fail "install guard: missing engine.pid must pass"
+
+echo "- release-base.sh: maior versão, preferência por release/X.Y.Z e fallback /main"
+RB="$BIN/release-base.sh"
+out=$(printf '%s\n' release/3.12.0/main release/3.12.0/notified_bet_bookmaker release/3.12.0/merge-3.13 release/stable-merge-main release/draft release-1.0.0 release/3.11.0 | "$RB")
+[ "$out" = "$(printf 'release/3.12.0/main\n3.12.0')" ] || fail "release-base: fixture da spec ($out)"
+out=$(printf '%s\n' release/0.0.3 release/0.0.4 | "$RB")
+[ "$out" = "$(printf 'release/0.0.4\n0.0.4')" ] || fail "release-base: 0.0.4 vs 0.0.3 ($out)"
+out=$(printf '%s\n' release/1.0.0 release/1.0.0/main | "$RB")
+[ "$(sed -n 1p <<<"$out")" = "release/1.0.0" ] || fail "release-base: release/X.Y.Z deve vencer /main"
+got=0; out=$(printf '%s\n' release/2.0.0/a release/2.0.0/b release/1.0.0 | "$RB") || got=$?
+[ "$got" = 3 ] || fail "release-base: esperava exit 3, veio $got"
+[ "$out" = "$(printf 'release/2.0.0/a\nrelease/2.0.0/b')" ] || fail "release-base: candidatas ($out)"
+got=0; out=$(printf '%s\n' main release/draft release/stable-x release-1.0.0 | "$RB") || got=$?
+[ "$got" = 1 ] && [ -z "$out" ] || fail "release-base: nada casa deveria sair 1 sem saída"
+
+echo "- skills: greps de kickoff, adr, pr-open e dev-implementer"
+SK="$(cd "$(dirname "$0")/.." && pwd)"
+grep -q "release-base.sh" "$SK/skills/kickoff/SKILL.md" || fail "kickoff: não chama release-base.sh"
+[ "$(grep -c "for k in ('feature', 'start_date', 'end_date', 'phases')" "$SK/skills/kickoff/SKILL.md")" = 3 ] || fail "kickoff: os 3 seeds devem remover identidade"
+grep -q "rev-parse --show-superproject-working-tree" "$SK/skills/adr/SKILL.md" || fail "adr: sem detecção de submódulo"
+grep -q "adr-candidates.md" "$SK/skills/adr/SKILL.md" || fail "adr: sem adr-candidates.md"
+grep -q "adr-candidates.md" "$SK/skills/complete/SKILL.md" || fail "complete: sem adr-candidates.md"
+grep -q "ADRs propostas" "$SK/skills/pr-open/SKILL.md" || fail "pr-open: sem seção ADRs propostas"
+grep -q "pt-BR" "$SK/agents/dev-implementer.md" || fail "dev-implementer: sem pt-BR"
+grep -q "repo inteiro" "$SK/agents/dev-implementer.md" || fail "dev-implementer: sem proibição de formatador no repo inteiro"
 
 echo "OK"

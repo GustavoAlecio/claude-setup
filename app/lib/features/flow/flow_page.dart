@@ -56,13 +56,9 @@ class _FlowView extends StatelessWidget {
     final project = this.project;
     final report = project?.cycle?.report;
     final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
-    final shownId = flowPanelSessionId(
-      stage: stage,
-      runningStage: project == null ? null : runningStageSession(sessions, project),
-      report: report,
-    );
+    final stageSession = project == null ? null : runningStageSession(sessions, project);
+    final shownId = flowPanelSessionId(stage: stage, runningStage: stageSession, report: report);
     final shown = sessions.where((s) => s.id == shownId).firstOrNull;
-    final main = _FlowMain(projectName: projectName, project: project, sessions: sessions, selected: stage);
     final pending = pendingByProject(sessions)[projectName] ?? 0;
     final side =
         showsFlowSidePanel(
@@ -76,9 +72,26 @@ class _FlowView extends StatelessWidget {
     final c = context.colors;
     // `main` keeps the same ancestors with or without `side`, so its state (e.g. LastCycleLine) survives the toggle.
     return LayoutBuilder(
-      builder: (context, constraints) => constraints.maxWidth >= kFlowSplitWidth
-          ? _split(c, main, side)
-          : _withDrawer(c, main, side, pending + endedStageSessions(report, sessions).length),
+      builder: (context, constraints) {
+        final split = constraints.maxWidth >= kFlowSplitWidth;
+        final main = _FlowMain(
+          projectName: projectName,
+          project: project,
+          stageSession: stageSession,
+          showOpenLink:
+              stageSession == null ||
+              stageBannerShowsOpenLink(
+                split: split,
+                hasSidePanel: side != null,
+                shownSessionId: shown?.id,
+                stageSessionId: stageSession.id,
+              ),
+          selected: stage,
+        );
+        return split
+            ? _split(c, main, side)
+            : _withDrawer(c, main, side, pending + endedStageSessions(report, sessions).length);
+      },
     );
   }
 
@@ -141,19 +154,28 @@ class _FlowView extends StatelessWidget {
 
 /// Left side of the Fluxo: the stage timeline and the cycle panels, or the empty state without a cycle.
 class _FlowMain extends StatelessWidget {
-  const _FlowMain({required this.projectName, required this.project, required this.sessions, required this.selected});
+  const _FlowMain({
+    required this.projectName,
+    required this.project,
+    required this.stageSession,
+    required this.showOpenLink,
+    required this.selected,
+  });
 
   final String projectName;
   final Project? project;
-  final List<SessionSummary> sessions;
+
+  /// The project's live pipeline session ([runningStageSession]).
+  final SessionSummary? stageSession;
+  final bool showOpenLink;
   final Stage? selected;
 
   @override
   Widget build(BuildContext context) {
     final project = this.project;
     final cycle = project?.cycle;
-    final stageSession = project == null ? null : runningStageSession(sessions, project);
-    final banner = stageSession == null ? null : StageBanner(session: stageSession);
+    final stageSession = this.stageSession;
+    final banner = stageSession == null ? null : StageBanner(session: stageSession, showOpenLink: showOpenLink);
     if (project == null || cycle == null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -161,26 +183,28 @@ class _FlowMain extends StatelessWidget {
           if (banner != null) Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 0), child: banner),
           Expanded(
             child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Muted('Nenhum ciclo ativo. Comece com /kickoff ou /specify.', size: 13),
-                  const SizedBox(height: 14),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: context.colors.accent,
-                      foregroundColor: Colors.white,
+              child: stageSession != null && isKickoffSession(stageSession)
+                  ? _KickoffRunning(session: stageSession)
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Muted('Nenhum ciclo ativo. Comece com /kickoff ou /specify.', size: 13),
+                        const SizedBox(height: 14),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: context.colors.accent,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: project == null ? null : () => showKickoffForm(context, project),
+                          icon: const Icon(Icons.rocket_launch_outlined, size: 15),
+                          label: const Text('Novo kickoff'),
+                        ),
+                        if (project != null) ...[
+                          const SizedBox(height: 20),
+                          LastCycleLine(key: ValueKey('last-cycle-${project.name}'), project: project),
+                        ],
+                      ],
                     ),
-                    onPressed: project == null ? null : () => showKickoffForm(context, project),
-                    icon: const Icon(Icons.rocket_launch_outlined, size: 15),
-                    label: const Text('Novo kickoff'),
-                  ),
-                  if (project != null) ...[
-                    const SizedBox(height: 20),
-                    LastCycleLine(key: ValueKey('last-cycle-${project.name}'), project: project),
-                  ],
-                ],
-              ),
             ),
           ),
         ],
@@ -227,13 +251,31 @@ class _FlowMain extends StatelessWidget {
         const SizedBox(height: 16),
         TasksPanel(cycle: cycle),
         const SizedBox(height: 16),
-        VerifyPanel(runs: cycle.runs),
+        VerifyPanel(runs: cycle.runs, projectPath: project.path),
         const SizedBox(height: 16),
         DecisionsPanel(report: report),
         ReportExtras(report: report),
       ],
     );
   }
+}
+
+/// Without a cycle a live pipeline session is a kickoff whose `current.json` has no identity yet.
+class _KickoffRunning extends StatelessWidget {
+  const _KickoffRunning({required this.session});
+
+  final SessionSummary session;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    key: const ValueKey('flow-kickoff-running'),
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text('Kickoff em andamento', style: TextStyle(fontSize: 14, color: context.colors.textPrimary)),
+      const SizedBox(height: 6),
+      Muted(session.title, size: 12.5),
+    ],
+  );
 }
 
 class _CycleCard extends StatelessWidget {

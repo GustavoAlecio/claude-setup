@@ -1,0 +1,69 @@
+{
+  "name": "go",
+  "detect": [
+    "go.mod"
+  ],
+  "source_ext": [
+    ".go"
+  ],
+  "generated_suffixes": [
+    ".pb.go",
+    "_grpc.pb.go",
+    "docs/docs.go"
+  ],
+  "autofix": [
+    [
+      "gofmt",
+      "-s",
+      "-w",
+      "{files}"
+    ]
+  ],
+  "analyze": {
+    "cmd": [
+      "golangci-lint",
+      "run",
+      "--output.json.path=stdout",
+      "--output.text.path=stderr",
+      "--show-stats=false",
+      "{pkgs}"
+    ],
+    "parser": "golangci_json",
+    "only_changed": true,
+    "severity_map": {
+      "default": "major"
+    }
+  },
+  "test": {
+    "cmd": [
+      "go",
+      "test",
+      "-race",
+      "-count=1",
+      "{pkgs}"
+    ],
+    "flaky_retries": 0,
+    "tagged": {
+      "regex": "^//go:build integration",
+      "args": [
+        "-tags",
+        "integration"
+      ],
+      "env_required": [
+        "TEST_DATABASE_URL"
+      ]
+    }
+  },
+  "g1_task_reviewer": "go-correctness",
+  "g1_reviewers": [
+    "go-correctness",
+    "go-concurrency",
+    "go-security",
+    "go-testing"
+  ],
+  "g2_agent": "general-purpose",
+  "g2_device": "local-http",
+  "rules_dir": ".claude/rules",
+  "adr_dir": "docs/adr",
+  "g2_runtime": "Backend Go: não suba o servidor (exige serviços externos reais). Valide comportamento HTTP pelos testes httptest dos handlers. Quando o env de integração existir (~/.claude/stacks/go.env), rode os testes com tag integration: `set -a; . ~/.claude/stacks/go.env; set +a; go test -race -count=1 -tags integration <pacotes tocados>`. Rode também o lint do projeto. Critério que só se prova com serviço externo real é UNTESTABLE."
+}

@@ -197,3 +197,20 @@ test('the next task checkpoint is the file gate_g0 wrote, never the relayed sha'
   assert.equal(r.checkpoint, '@/d/checkpoints/T2.tree')
   assert.ok(!prompts.join('\n').includes('corrupted-by-relay'))
 })
+
+test('verify G2 prompt uses stack.g2_runtime when present and the dart MCP text otherwise', async () => {
+  const run = async stack => {
+    let prompt = ''
+    const agent = async (p, o) => {
+      if (o.label.startsWith('g2')) { prompt = p; return { gate: 'G2', verdict: 'pass', criteria: [], findings: [] } }
+      return pass('G1')
+    }
+    await verify({ args: { ...baseArgs([{ id: 'T1', tier: 'sonnet', files_changed: ['a.go'] }]), base_checkpoint: 'cp0', stack }, agent })
+    return prompt
+  }
+  const withRuntime = await run({ ...STACK, g2_runtime: 'RUNTIME-GENERICO-GO' })
+  assert.ok(withRuntime.includes('RUNTIME-GENERICO-GO'))
+  assert.ok(!withRuntime.includes('dart MCP'))
+  const without = await run(STACK)
+  assert.ok(without.includes('dart MCP'))
+})

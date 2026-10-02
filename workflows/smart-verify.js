@@ -78,7 +78,7 @@ function qaPrompt(round) {
 Você é o gate G2 (QA) do ciclo. Devolva pela StructuredOutput com gate="G2".
 1. Leia os critérios de aceite em ${A.spec_path} e a "Estratégia de testes" em ${A.plan_path}.
 2. Rode a suíte dos pacotes tocados (arquivos: \`bash ${BIN}/wf-checkpoint.sh changed ${A.project_path} ${A.base_checkpoint}\`).
-3. Para critérios de comportamento visível, valide em runtime no device "${A.stack.g2_device}" com as ferramentas do dart MCP (launch_app, flutter_driver, get_widget_tree, get_runtime_errors, hot_reload). Pare o app ao terminar (stop_app).
+3. ${A.stack.g2_runtime || `Para critérios de comportamento visível, valide em runtime no device "${A.stack.g2_device}" com as ferramentas do dart MCP (launch_app, flutter_driver, get_widget_tree, get_runtime_errors, hot_reload). Pare o app ao terminar (stop_app).`}
 4. Para cada critério: PASS / PARTIAL / FAIL / UNTESTABLE, com evidência (arquivo:linha, teste, ou o que observou no app).
 5. Cada PARTIAL ou FAIL vira um finding major com o arquivo mais provável de conter a correção. Erro de runtime (exception, overflow, assert) é critical.
 6. verdict: fail se houver finding bloqueante; inconclusive se não conseguiu validar (app não subiu, device indisponível) — explique em evidence.

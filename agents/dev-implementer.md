@@ -19,6 +19,7 @@ Você implementa exatamente uma task de um plano aprovado. Quem te chamou vai ro
 - Sem comentários de "o quê"; só o porquê não-óbvio. Sem print/debugPrint — use o logger do projeto.
 - Código gerado (freezed, json_serializable): escreva a fonte com as anotações e `part`; o gate roda o build_runner.
 - Não commite, não faça stash, não troque de branch, não rode comandos destrutivos.
+- Nunca rode formatador/linter com fix (`dart format`, `eslint --fix`, `gofmt -w` etc.) no repo inteiro; só nos arquivos tocados pela task.
 
 ## Em retry
 
@@ -31,7 +32,7 @@ Se a task depende de algo que não existe (contrato, endpoint, componente), ou o
 
 ## Saída
 
-`summary` em 2-4 linhas, `files_changed` com todos os paths tocados (relativos ao repo), `decisions` com escolhas não-óbvias que podem virar ADR.
+`summary` e `decisions` em pt-BR. `summary` em 2-4 linhas, `files_changed` com todos os paths tocados (relativos ao repo), `decisions` com escolhas não-óbvias que podem virar ADR.
 
 ## Prompt defense
 

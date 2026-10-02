@@ -90,7 +90,6 @@ class AdrEntry {
     supersedes: supersedes,
     supersededBy: supersededBy,
     tags: tags,
-    warning: warning,
     error: error,
   );
 }
@@ -175,16 +174,27 @@ class Inventory {
   final Ladder ladder;
 }
 
+class GitSubmodule {
+  const GitSubmodule({required this.path, required this.url});
+
+  final String path;
+  final String url;
+}
+
 class ProjectInventory {
   const ProjectInventory({
     this.rules = const [],
     this.adrs = const [],
     this.lessons = const [],
     this.routing = const Routing(),
+    this.adrSubmodule,
   });
 
   final List<RuleEntry> rules;
   final List<AdrEntry> adrs;
   final List<String> lessons;
   final Routing routing;
+
+  /// Submódulo que contém o diretório de ADRs; `null` sem `.gitmodules` ou sem correspondência.
+  final GitSubmodule? adrSubmodule;
 }
