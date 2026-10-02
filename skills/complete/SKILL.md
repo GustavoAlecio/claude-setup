@@ -38,7 +38,7 @@ Junte decisões candidatas:
 - `adr_candidates` de `$WF_DIR/tot-plan.json` (se o plano foi via ToT);
 - `decisions` de cada task nos `result.json`.
 
-Invoque `/adr propose` com essa lista. Sem candidatas, pule.
+Invoque `/adr propose` com essa lista. Sem candidatas, pule. Se `docs/adr` for submódulo, o propose grava as candidatas em `$WF_DIR/adr-candidates.md` (o `/pr-open` as anexa ao PR no passo de abertura) em vez de criar ADRs.
 
 Registre os ADRs propostos e as lessons gravadas. Registre como decisão do orquestrador (best-effort): escreva o texto com **Write** em `$WF_DIR/.decision.md` e rode (acrescente `--mistake` se for um erro seu):
 

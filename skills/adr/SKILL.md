@@ -8,7 +8,12 @@ Uso: `/adr <subcomando> [args]`. Sem subcomando → `list`.
 ```bash
 REPO=$(git rev-parse --show-toplevel)
 ADR_DIR="$REPO/docs/adr"
+source ~/.claude/bin/get-project.sh
+WF_DIR="$HOME/.claude/workflow/$(get-project-name)"
+SUBMODULE=$(git -C "$ADR_DIR" rev-parse --show-superproject-working-tree 2>/dev/null)
 ```
+
+**Submódulo:** `SUBMODULE` não vazio significa que `docs/adr` é um submódulo (ADR vive em outro repo). Aí `new`, `supersede` e `reindex` **recusam** com uma linha explicando; `propose` não escreve ADR: grava as candidatas em `$WF_DIR/adr-candidates.md` (o `/pr-open --from-complete` anexa esse arquivo ao PR).
 
 ## Formato
 
@@ -55,7 +60,7 @@ tags: []
 - **list** — mostre o `INDEX.md` (reindex antes se estiver desatualizado).
 - **show `<id>`** — conteúdo + ADRs ligados por wikilink/supersedes.
 - **reindex** — `python3 ~/.claude/bin/adr-index.py reindex "$REPO"`.
-- **propose** — usado pelo `/complete`: recebe decisões candidatas (do `tot-plan` e dos `decisions` do dev-implementer), descarta as triviais ou já cobertas por ADR existente, e cria as restantes como `proposed`. Mostre a lista e peça OK antes de gravar.
+- **propose** — usado pelo `/complete`: recebe decisões candidatas (do `tot-plan` e dos `decisions` do dev-implementer), descarta as triviais ou já cobertas por ADR existente, e cria as restantes como `proposed`. Mostre a lista e peça OK antes de gravar. Em submódulo, grave a lista em `$WF_DIR/adr-candidates.md` em vez de criar ADRs.
 
 ## Regras
 

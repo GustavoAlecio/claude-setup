@@ -37,7 +37,17 @@ for f in spec.md plan.md tasks.md tot-plan.json report.json; do
         cp "$WORKFLOW_DIR/$f" "$CYCLE_DIR/$f"
     fi
 done
-[ -d "$WORKFLOW_DIR/runs" ] && cp -R "$WORKFLOW_DIR/runs" "$CYCLE_DIR/runs"
+# `cp -R src/. dst/` merges into an existing dst; `cp -R src dst` would nest src inside it on a same-day rerun.
+for d in runs details; do
+    if [ -d "$WORKFLOW_DIR/$d" ]; then
+        mkdir -p "$CYCLE_DIR/$d"
+        cp -R "$WORKFLOW_DIR/$d/." "$CYCLE_DIR/$d/"
+    fi
+done
+# Archived reports from earlier cycles (report.<ts>.json) belong to the history too.
+for f in "$WORKFLOW_DIR"/report.*.json; do
+    [ -f "$f" ] && cp "$f" "$CYCLE_DIR/$(basename "$f")"
+done
 
 # Generate results.md and metrics.json
 python3 - "$WORKFLOW_DIR/current.json" "$CYCLE_DIR" "$FEATURE_NAME" "$PROJECT_NAME" "$STATUS" << 'PYEOF'
@@ -135,7 +145,7 @@ with open(f"{cycle_dir}/metrics.json", "w") as f:
 print(f"Archived to {cycle_dir}")
 PYEOF
 
-# phases.md is the project's roadmap across cycles, not part of this one.
-find "$WORKFLOW_DIR" -mindepth 1 -maxdepth 1 ! -name phases.md -exec rm -rf {} +
+# phases.md, prs.json and details/ outlive the cycle: roadmap, PR index and per-card refinements.
+find "$WORKFLOW_DIR" -mindepth 1 -maxdepth 1 ! -name phases.md ! -name prs.json ! -name details -exec rm -rf {} +
 rmdir "$WORKFLOW_DIR" 2>/dev/null || true
 echo "Archive complete: $CYCLE_DIR"

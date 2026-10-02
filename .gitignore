@@ -11,3 +11,6 @@ node_modules/
 # orcamento: dados reais da empresa ficam locais
 skills/orcamento/company.json
 skills/orcamento/assets/
+
+# stacks: env de teste de integração (credenciais) fica local
+stacks/*.env

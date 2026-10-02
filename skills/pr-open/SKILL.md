@@ -43,7 +43,7 @@ Ordem de resolução:
   [AB#<ADO_ID>](https://dev.azure.com/<your-org>/<your-project>/_workitems/edit/<ADO_ID>)
   ```
 
-  Depois: resumo do que muda + seção de teste. A syntax `AB#<id>` é a fonte durável da spine — o `prs.json` é só índice.
+  Depois: resumo do que muda + seção de teste. Com `--from-complete`, se `$WF_DIR/adr-candidates.md` existir, anexe o conteúdo numa seção `## ADRs propostas` do corpo. A syntax `AB#<id>` é a fonte durável da spine — o `prs.json` é só índice.
 
 ## 5. Criar o PR
 
