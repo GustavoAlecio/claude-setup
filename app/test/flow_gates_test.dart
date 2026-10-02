@@ -283,11 +283,19 @@ void main() {
       expect(sessions.answerCalls, isEmpty);
     });
 
-    testWidgets('etapa running com sessão detached mostra sessão encerrada', (tester) async {
+    testWidgets('etapa running com sessão detached mostra sessão encerrada quando o painel exibe outra', (
+      tester,
+    ) async {
       final report = _report([
+        {'stage': 'specify', 'status': 'done', 'session_id': 's-spec'},
         {'stage': 'challenge', 'status': 'running', 'session_id': 's-dead'},
       ]);
-      await _open(tester, _withCycle(report: report), [_session('s-dead', status: SessionStatus.detached, pending: 0)]);
+      await _open(tester, _withCycle(report: report), [
+        _session('s-spec', status: SessionStatus.done, pending: 0),
+        _session('s-dead', status: SessionStatus.detached, pending: 0),
+      ]);
+      _router(tester).go('/p/$_project/flow?stage=specify');
+      await tester.pumpAndSettle();
 
       expect(_inCard(find.text('challenge-spec: sessão encerrada — retome em Sessões')), findsOneWidget);
 
@@ -363,14 +371,18 @@ void main() {
       expect(_inCard(find.text('Pergunta da etapa?')), findsNothing);
     });
 
-    testWidgets('sessão encerrada da etapa running continua no card mesmo exibida no painel', (tester) async {
+    testWidgets('sessão encerrada exibida no painel sai do card: o aviso de retomar está logo abaixo', (tester) async {
       final report = _report([
         {'stage': 'challenge', 'status': 'running', 'session_id': 's-dead'},
       ]);
       await _open(tester, _withCycle(report: report), [_session('s-dead', status: SessionStatus.detached, pending: 0)]);
 
       expect(find.descendant(of: _side, matching: find.byKey(const ValueKey('session-feed'))), findsOneWidget);
-      expect(_inCard(find.text('challenge-spec: sessão encerrada — retome em Sessões')), findsOneWidget);
+      expect(find.byKey(const ValueKey('flow-awaiting')), findsNothing);
+      expect(
+        find.descendant(of: _side, matching: find.textContaining('O processo desta sessão terminou')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('várias pendências viram lista, a mais antiga primeiro', (tester) async {

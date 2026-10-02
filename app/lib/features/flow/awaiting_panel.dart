@@ -34,7 +34,7 @@ class AwaitingPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     final pending = awaitingSessions(pendingProjectSessions(all, projectName), shownSessionId);
-    final ended = endedStageSessions(report, all);
+    final ended = awaitingEnded(endedStageSessions(report, all), shownSessionId);
     if (pending.isEmpty && ended.isEmpty) return const SizedBox.shrink();
     final repository = SessionsScope.of(context);
     return Padding(

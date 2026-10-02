@@ -381,6 +381,20 @@ void main() {
     expect(_inFeed(_md('Triando o card.')), findsOneWidget);
   });
 
+  testWidgets('tabela markdown no turno do assistente vira Table no feed', (tester) async {
+    await _open(
+      tester,
+      const Project(name: _project, path: '/synthetic/$_project'),
+      [_session('s-kick', '/kickoff')],
+      {
+        's-kick': [_text('Comparação:\n\n| | A | B |\n|---|---|---|\n| Pin | `ref` | commit |')],
+      },
+    );
+
+    expect(_inFeed(find.byType(Table)), findsOneWidget);
+    expect(_inFeed(_md('|---|')), findsNothing);
+  });
+
   testWidgets('responder a pergunta no painel chama answer', (tester) async {
     final sessions = await _open(tester, _withCycle(_twoStages), list, logs);
 

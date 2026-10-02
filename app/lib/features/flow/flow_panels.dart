@@ -130,9 +130,12 @@ class TasksPanel extends StatelessWidget {
 }
 
 class VerifyPanel extends StatelessWidget {
-  const VerifyPanel({super.key, required this.runs});
+  const VerifyPanel({super.key, required this.runs, this.projectPath});
 
   final List<Run> runs;
+
+  /// Findings carry absolute paths; under this root they are shown relative to it.
+  final String? projectPath;
 
   @override
   Widget build(BuildContext context) {
@@ -142,15 +145,19 @@ class VerifyPanel extends StatelessWidget {
       title: 'Verify',
       child: rounds.isEmpty
           ? const Muted('nenhum verify rodou neste ciclo')
-          : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [for (final r in rounds) _VerifyRound(r)]),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [for (final r in rounds) _VerifyRound(r, projectPath: projectPath)],
+            ),
     );
   }
 }
 
 class _VerifyRound extends StatelessWidget {
-  const _VerifyRound(this.round);
+  const _VerifyRound(this.round, {required this.projectPath});
 
   final VerifyRoundSummary round;
+  final String? projectPath;
 
   @override
   Widget build(BuildContext context) {
@@ -195,10 +202,15 @@ class _VerifyRound extends StatelessWidget {
                 children: [
                   Pill(label: f.severity, color: c.fail, dot: false),
                   const SizedBox(width: 8),
-                  Mono(f.line == null ? f.file : '${f.file}:${f.line}', size: 11),
-                  const SizedBox(width: 8),
                   Expanded(
-                    child: Text(f.message, style: TextStyle(fontSize: 12, color: c.textSecondary)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Mono(findingLocation(f.file, f.line, projectPath), size: 11),
+                        const SizedBox(height: 2),
+                        Text(f.message, style: TextStyle(fontSize: 12, color: c.textSecondary)),
+                      ],
+                    ),
                   ),
                 ],
               ),

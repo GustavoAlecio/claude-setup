@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/widgets/inline_markdown.dart';
+import '../../core/widgets/markdown_view.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/docs_repository.dart';
 import '../../data/session_models.dart';
 import '../../data/session_reducer.dart';
 
@@ -70,7 +71,9 @@ class _AssistantBlock extends StatelessWidget {
           child: Icon(Icons.auto_awesome, size: 15, color: c.accent),
         ),
         const SizedBox(width: 10),
-        Expanded(child: InlineMarkdown(e.text)),
+        Expanded(
+          child: MarkdownView(e.text, onLink: (uri) => DocsScope.openExternal(context, uri, logName: 'SessionFeed')),
+        ),
       ],
     );
   }

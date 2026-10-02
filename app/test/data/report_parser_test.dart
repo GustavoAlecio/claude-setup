@@ -651,4 +651,11 @@ void main() {
     expect(isKickoffSession(s('/complete')), isFalse);
     expect(isKickoffSession(s('/kickoffx')), isFalse);
   });
+
+  test('findingLocation mostra o caminho relativo ao projeto', () {
+    expect(findingLocation('/r/app/lib/a.dart', 12, '/r/app'), 'lib/a.dart:12');
+    expect(findingLocation('/r/app/lib/a.dart', null, '/r/app/'), 'lib/a.dart');
+    expect(findingLocation('/outro/lib/a.dart', 3, '/r/app'), '/outro/lib/a.dart:3');
+    expect(findingLocation('lib/a.dart', null, null), 'lib/a.dart');
+  });
 }

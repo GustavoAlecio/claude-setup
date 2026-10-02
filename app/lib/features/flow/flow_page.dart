@@ -251,7 +251,7 @@ class _FlowMain extends StatelessWidget {
         const SizedBox(height: 16),
         TasksPanel(cycle: cycle),
         const SizedBox(height: 16),
-        VerifyPanel(runs: cycle.runs),
+        VerifyPanel(runs: cycle.runs, projectPath: project.path),
         const SizedBox(height: 16),
         DecisionsPanel(report: report),
         ReportExtras(report: report),

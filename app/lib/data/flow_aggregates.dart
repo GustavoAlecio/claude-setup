@@ -172,6 +172,12 @@ List<SessionSummary> awaitingSessions(List<SessionSummary> pending, String? show
     if (s.id != shownSessionId) s,
 ];
 
+/// Ended stage sessions for the awaiting card, minus the one the side panel already shows with its Retomar button.
+List<EndedStageSession> awaitingEnded(List<EndedStageSession> ended, String? shownSessionId) => [
+  for (final e in ended)
+    if (e.session.id != shownSessionId) e,
+];
+
 /// Without a cycle, a session to show, a `?stage=` or pending permissions the Fluxo drops the side panel, so the empty
 /// state is the only Kickoff on screen.
 bool showsFlowSidePanel({
@@ -184,3 +190,10 @@ bool showsFlowSidePanel({
 /// Without a cycle only a `/kickoff` session means a cycle is being born; `/complete` or `/fix` sessions stay alive
 /// after the archive and must not hide "Novo kickoff".
 bool isKickoffSession(SessionSummary session) => session.command.trimLeft().split(RegExp(r'\s+')).first == '/kickoff';
+
+/// `file:line` for a finding, relative to [root] when the agent reported an absolute path under it.
+String findingLocation(String file, int? line, String? root) {
+  final base = root == null ? '' : (root.endsWith('/') ? root : '$root/');
+  final shown = base.isNotEmpty && file.startsWith(base) ? file.substring(base.length) : file;
+  return line == null ? shown : '$shown:$line';
+}

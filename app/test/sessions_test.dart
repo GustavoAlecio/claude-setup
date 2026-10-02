@@ -305,6 +305,11 @@ void main() {
     await tester.tap(find.text('Status do fluxo'));
     await tester.pumpAndSettle();
     expect(find.text('desanexada'), findsOneWidget);
+    // Outside the feed, so it stays visible with the feed scrolled to the end.
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('session-feed')), matching: find.text('Retomar')),
+      findsNothing,
+    );
 
     await tester.tap(find.text('Retomar'));
     await tester.pumpAndSettle();
