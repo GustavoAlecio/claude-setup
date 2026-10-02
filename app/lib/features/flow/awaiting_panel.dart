@@ -21,17 +21,19 @@ import '../sessions/session_view.dart';
 import 'stage_timeline.dart';
 
 /// "Aguardando você": questions the project's sessions hold, answered here, plus pending permissions and `running`
-/// stages whose session ended, both sent to Sessões. Nothing to show → no space taken.
+/// stages whose session ended, both sent to Sessões. The session the side panel shows is left out. Nothing to show →
+/// no space taken.
 class AwaitingPanel extends StatelessWidget {
-  const AwaitingPanel({super.key, required this.projectName, required this.report});
+  const AwaitingPanel({super.key, required this.projectName, required this.report, required this.shownSessionId});
 
   final String projectName;
   final ReportDoc? report;
+  final String? shownSessionId;
 
   @override
   Widget build(BuildContext context) {
     final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
-    final pending = pendingProjectSessions(all, projectName);
+    final pending = awaitingSessions(pendingProjectSessions(all, projectName), shownSessionId);
     final ended = endedStageSessions(report, all);
     if (pending.isEmpty && ended.isEmpty) return const SizedBox.shrink();
     final repository = SessionsScope.of(context);

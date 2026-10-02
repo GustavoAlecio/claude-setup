@@ -477,6 +477,19 @@ class _QuestionCardState extends State<QuestionCard> {
     final answers = e.answers ?? _sent;
     final pending = e.pending;
     final complete = _draft.length == e.questions.length;
+    return LayoutBuilder(
+      builder: (context, box) => _card(c, e, answers, pending, complete, narrow: box.maxWidth < 440),
+    );
+  }
+
+  Widget _card(
+    AppColors c,
+    QuestionRequest e,
+    Map<String, String>? answers,
+    bool pending,
+    bool complete, {
+    required bool narrow,
+  }) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -502,7 +515,7 @@ class _QuestionCardState extends State<QuestionCard> {
               ],
             ),
             const SizedBox(height: 10),
-            if (pending) ..._options(c, q),
+            if (pending) ..._options(c, q, narrow: narrow),
           ],
           if (!pending)
             Row(
@@ -543,7 +556,7 @@ class _QuestionCardState extends State<QuestionCard> {
     );
   }
 
-  List<Widget> _options(AppColors c, Question q) {
+  List<Widget> _options(AppColors c, Question q, {required bool narrow}) {
     final picked = _picked[q.question] ?? const <String>{};
     return [
       for (final o in q.options)
@@ -569,11 +582,28 @@ class _QuestionCardState extends State<QuestionCard> {
                     color: picked.contains(o.label) ? c.accent : c.textMuted,
                   ),
                   const SizedBox(width: 10),
-                  Mono(o.label, color: c.textPrimary, size: 12.5),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(o.description, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
-                  ),
+                  if (narrow)
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Mono(o.label, color: c.textPrimary, size: 12.5),
+                          if (o.description.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(o.description, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+                          ],
+                        ],
+                      ),
+                    )
+                  else ...[
+                    Flexible(child: Mono(o.label, color: c.textPrimary, size: 12.5)),
+                    if (o.description.isNotEmpty) ...[
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(o.description, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+                      ),
+                    ],
+                  ],
                 ],
               ),
             ),

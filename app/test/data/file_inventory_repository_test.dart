@@ -184,6 +184,45 @@ void main() {
       expect((r!.entry.title, r.body), ('A', 'A'));
     });
 
+    test('reads .gitmodules and exposes the submodule holding the ADRs', () async {
+      _write(
+        '$projectDir/.gitmodules',
+        '[submodule "docs"]\n\tpath = docs\n\turl = git@github.com:acme/org-docs.git\n',
+      );
+      _write('$projectDir/docs/adr/0001-a.md', '---\nid: "0001"\ntitle: A\nstatus: accepted\n---\nA');
+      _write('$home/stacks/s.json', '{"name":"s","adr_dir":"docs/adr"}');
+      final p = Project(name: 'proj', path: projectDir, stack: 's');
+
+      final inv = await repo.loadProject(p);
+
+      expect((inv.adrSubmodule?.path, inv.adrSubmodule?.url), ('docs', 'git@github.com:acme/org-docs.git'));
+    });
+
+    test('missing, unrelated or oversized .gitmodules gives no submodule and no error', () async {
+      final p = Project(name: 'proj', path: projectDir);
+      expect((await repo.loadProject(p)).adrSubmodule, isNull);
+
+      _write('$projectDir/.gitmodules', '[submodule "x"]\n\tpath = other\n\turl = u\n');
+      expect((await repo.loadProject(p)).adrSubmodule, isNull);
+
+      _write('$projectDir/.gitmodules', '[submodule "d"]\n\tpath = docs\n\turl = u\n${' ' * (300 * 1024)}');
+      expect((await repo.loadProject(p)).adrSubmodule, isNull);
+    });
+
+    test('an ADR in free format is listed with a warning and its body omits the header', () async {
+      _write(
+        '$projectDir/docs/adr/0005-livre.md',
+        '# ADR 0005 — Livre\n\n**Status:** proposta · **Data:** 2026-01-02\n\ncorpo\n',
+      );
+
+      final inv = await repo.loadProject(Project(name: 'proj', path: projectDir));
+      final r = await repo.loadAdr(Project(name: 'proj', path: projectDir), '0005');
+
+      expect((inv.adrs.single.title, inv.adrs.single.status), ('Livre', 'proposed'));
+      expect(r!.entry.error, isNull);
+      expect(r.body, 'corpo\n');
+    });
+
     test('a project without path has no ADR', () async {
       expect(await repo.loadAdr(project, '0001'), isNull);
     });

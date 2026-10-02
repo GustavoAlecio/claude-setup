@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/data/report_parser.dart';
 import 'package:claude_flow/data/workflow_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -98,6 +99,81 @@ void main() {
       expect(c.plan.map((t) => t.id), ['T2', 'T1']);
       expect(c.plan.map((t) => t.status), [Verdict.pass, Verdict.pending]);
       expect(c.plan.every((t) => t.attempts.isEmpty), isTrue);
+    });
+  });
+
+  group('etapa do ciclo com o relatório', () {
+    const current = {'status': 'specifying', 'feature': 'F', 'start_date': '2026-03-10'};
+
+    Stage stage(
+      Map<String, Object?> cycle,
+      List<Map<String, Object?>> stages, {
+      Map<String, dynamic> current = current,
+    }) => parseCycle(
+      current,
+      projectName: 'p',
+      report: parseReport(jsonEncode({'version': 1, 'cycle': cycle, 'stages': stages})),
+    ).stage;
+
+    test('running à frente do status vira a etapa; com várias, a última na ordem', () {
+      expect(
+        stage(
+          {'feature': 'F', 'started_at': '2026-03-10'},
+          [
+            {'stage': 'specify', 'status': 'done'},
+            {'stage': 'challenge', 'status': 'running'},
+          ],
+        ),
+        Stage.challenge,
+      );
+      expect(
+        stage(
+          {'feature': null, 'started_at': null},
+          [
+            {'stage': 'challenge', 'status': 'running'},
+            {'stage': 'plan', 'status': 'running'},
+          ],
+        ),
+        Stage.plan,
+      );
+    });
+
+    test('running atrás do status não regride', () {
+      expect(
+        stage(
+          {'feature': 'F'},
+          [
+            {'stage': 'kickoff', 'status': 'running'},
+          ],
+          current: {'status': 'planning', 'feature': 'F', 'start_date': '2026-03-10'},
+        ),
+        Stage.plan,
+      );
+    });
+
+    test('relatório de outro ciclo é ignorado', () {
+      final ahead = [
+        {'stage': 'implement', 'status': 'running'},
+      ];
+      expect(stage({'feature': 'Outro', 'started_at': '2026-03-10'}, ahead), Stage.specify);
+      expect(stage({'feature': 'F', 'started_at': '2026-02-01'}, ahead), Stage.specify);
+      expect(
+        stage({'feature': 'F'}, ahead, current: {'status': 'specifying', 'start_date': '2026-03-10'}),
+        Stage.specify,
+      );
+    });
+
+    test('sem relatório ou sem running, fica o status', () {
+      expect(parseCycle(current, projectName: 'p').stage, Stage.specify);
+      expect(
+        stage(
+          {'feature': 'F'},
+          [
+            {'stage': 'plan', 'status': 'done'},
+          ],
+        ),
+        Stage.specify,
+      );
     });
   });
 

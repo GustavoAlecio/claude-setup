@@ -143,14 +143,34 @@ List<EndedStageSession> endedStageSessions(ReportDoc? report, List<SessionSummar
         if (_ended(session.status)) EndedStageSession(s.stage, session),
 ];
 
-/// Session the Fluxo side panel shows. [stage] is `?stage=`: the session that stage reported, `null` when it has none
-/// (the panel then shows the placeholder). Without it, [runningStage] (the project's live pipeline session), else the
-/// session of the report's `running` stage.
+/// Session the Fluxo side panel shows. [stage] is `?stage=`: the session that stage reported; a `running` stage without
+/// one falls back to [runningStage] (the project's live pipeline session); any other stage without a session is `null`
+/// (the panel then shows the placeholder). Without `?stage=`, [runningStage], else the session of the report's
+/// `running` stage.
 String? flowPanelSessionId({required Stage? stage, required SessionSummary? runningStage, required ReportDoc? report}) {
-  if (stage != null) return report?.stage(stage)?.sessionId;
+  if (stage != null) {
+    final entry = report?.stage(stage);
+    if (entry?.sessionId case final id?) return id;
+    return entry?.status == ReportStatus.running ? runningStage?.id : null;
+  }
   return runningStage?.id ??
       report?.stages.where((s) => s.status == ReportStatus.running && s.sessionId != null).firstOrNull?.sessionId;
 }
+
+/// The stage banner's "abrir sessão" is redundant only when the same session is already on screen in the split panel;
+/// in the drawer it stays hidden until opened.
+bool stageBannerShowsOpenLink({
+  required bool split,
+  required bool hasSidePanel,
+  required String? shownSessionId,
+  required String stageSessionId,
+}) => !(split && hasSidePanel && shownSessionId == stageSessionId);
+
+/// "Aguardando você" items: [pending] minus the session the side panel already shows below the card.
+List<SessionSummary> awaitingSessions(List<SessionSummary> pending, String? shownSessionId) => [
+  for (final s in pending)
+    if (s.id != shownSessionId) s,
+];
 
 /// Without a cycle, a session to show, a `?stage=` or pending permissions the Fluxo drops the side panel, so the empty
 /// state is the only Kickoff on screen.
@@ -160,3 +180,7 @@ bool showsFlowSidePanel({
   required Stage? stage,
   required int pending,
 }) => hasCycle || hasShownSession || stage != null || pending > 0;
+
+/// Without a cycle only a `/kickoff` session means a cycle is being born; `/complete` or `/fix` sessions stay alive
+/// after the archive and must not hide "Novo kickoff".
+bool isKickoffSession(SessionSummary session) => session.command.trimLeft().split(RegExp(r'\s+')).first == '/kickoff';

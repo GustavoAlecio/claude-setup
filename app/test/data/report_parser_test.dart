@@ -567,6 +567,57 @@ void main() {
     });
   });
 
+  group('flowPanelSessionId', () {
+    final live = _session('live', '/implement', status: SessionStatus.idle);
+    final doc = parseReport(
+      _report([
+        _stage('specify', extra: {'session_id': 's-spec'}),
+        _stage('challenge'),
+        _stage('plan', status: 'blocked'),
+        _stage('implement', status: 'running'),
+      ]),
+    );
+
+    String? shown(Stage? stage, {SessionSummary? running}) =>
+        flowPanelSessionId(stage: stage, runningStage: running, report: doc);
+
+    test('etapa com sessão mostra a dela, mesmo com pipeline vivo', () {
+      expect(shown(Stage.specify, running: live), 's-spec');
+    });
+
+    test('running sem sessão + pipeline vivo → sessão viva; sem pipeline → placeholder', () {
+      expect(shown(Stage.implement, running: live), 'live');
+      expect(shown(Stage.implement), isNull);
+    });
+
+    test('done, blocked ou sem entrada sem sessão → placeholder mesmo com pipeline vivo', () {
+      expect(shown(Stage.challenge, running: live), isNull);
+      expect(shown(Stage.plan, running: live), isNull);
+      expect(shown(Stage.verify, running: live), isNull);
+    });
+
+    test('sem ?stage, a sessão viva', () => expect(shown(null, running: live), 'live'));
+  });
+
+  group('stageBannerShowsOpenLink', () {
+    bool link({bool split = true, bool side = true, String? shown = 's1'}) =>
+        stageBannerShowsOpenLink(split: split, hasSidePanel: side, shownSessionId: shown, stageSessionId: 's1');
+
+    test('split com a mesma sessão no painel → sem link', () => expect(link(), isFalse));
+    test('outra sessão, sem painel ou gaveta → link', () {
+      expect(link(shown: 's2'), isTrue);
+      expect(link(shown: null), isTrue);
+      expect(link(side: false), isTrue);
+      expect(link(split: false), isTrue);
+    });
+  });
+
+  test('awaitingSessions tira só a sessão exibida', () {
+    final pending = [_session('a', '/plan', pending: 1), _session('b', 'revise', pending: 1)];
+    expect([for (final s in awaitingSessions(pending, 'a')) s.id], ['b']);
+    expect([for (final s in awaitingSessions(pending, null)) s.id], ['a', 'b']);
+  });
+
   group('showsFlowSidePanel', () {
     bool shows({bool cycle = false, bool session = false, Stage? stage, int pending = 0}) =>
         showsFlowSidePanel(hasCycle: cycle, hasShownSession: session, stage: stage, pending: pending);
@@ -585,5 +636,19 @@ void main() {
     expect(doc('  \n').realDataMarkdown, isNull);
     expect(doc('  \n').hasRealData, isFalse);
     expect(doc('ok').realDataMarkdown, 'ok');
+  });
+
+  test('isKickoffSession só para /kickoff', () {
+    SessionSummary s(String command) => SessionSummary(
+      id: 's',
+      project: 'p',
+      command: command,
+      title: 't',
+      status: SessionStatus.idle,
+      createdAt: '2026-03-10T10:00:00Z',
+    );
+    expect(isKickoffSession(s('/kickoff 7579')), isTrue);
+    expect(isKickoffSession(s('/complete')), isFalse);
+    expect(isKickoffSession(s('/kickoffx')), isFalse);
   });
 }

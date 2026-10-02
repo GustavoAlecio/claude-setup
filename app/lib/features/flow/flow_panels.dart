@@ -14,9 +14,10 @@ import 'stage_timeline.dart';
 
 /// Sessão do projeto rodando uma skill do pipeline; vem das sessões, não do relatório.
 class StageBanner extends StatelessWidget {
-  const StageBanner({super.key, required this.session});
+  const StageBanner({super.key, required this.session, this.showOpenLink = true});
 
   final SessionSummary session;
+  final bool showOpenLink;
 
   @override
   Widget build(BuildContext context) => LiveSessionSummary(session: session, builder: _banner);
@@ -42,10 +43,11 @@ class StageBanner extends StatelessWidget {
               style: TextStyle(fontSize: 12.5, color: c.textPrimary),
             ),
           ),
-          TextButton(
-            onPressed: () => context.go('/p/${session.project}/sessions/${session.id}'),
-            child: Text('abrir sessão', style: TextStyle(color: c.running, fontSize: 12)),
-          ),
+          if (showOpenLink)
+            TextButton(
+              onPressed: () => context.go('/p/${session.project}/sessions/${session.id}'),
+              child: Text('abrir sessão', style: TextStyle(color: c.running, fontSize: 12)),
+            ),
         ],
       ),
     );
