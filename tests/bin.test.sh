@@ -410,6 +410,21 @@ assert r['cycle']['feature']=='Feat R' and 'pr' not in r and 'real_data_md' not 
 " || fail "new cycle must start a fresh report"
 [ -f "$W/report.2026-02-01T00:00:00Z.json" ] || fail "previous cycle not archived by qa"
 
+echo "- archive-cycle: history keeps report.json, the workflow dir keeps only phases.md"
+AH=$(tmp); AW="$AH/.claude/workflow/demo"; mkdir -p "$AW/runs/r1"
+printf '{"feature":"Fechamento do ciclo","start_date":"2026-03-01"}' > "$AW/current.json"
+printf '{"version":1,"stages":[]}' > "$AW/report.json"; echo spec > "$AW/spec.md"; echo "- [ ] fase" > "$AW/phases.md"
+HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+AC=$(ls -d "$AH/.claude/projects/demo/history/"*_fechamento-do-ciclo)
+[ -f "$AC/report.json" ] && [ -f "$AC/spec.md" ] && [ -d "$AC/runs/r1" ] || fail "archive-cycle: history incomplete"
+[ "$(ls "$AW")" = "phases.md" ] || fail "archive-cycle: workflow dir must keep only phases.md"
+rm "$AW/phases.md"; printf '{"feature":"Outro"}' > "$AW/current.json"
+HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+[ ! -e "$AW" ] || fail "archive-cycle: empty workflow dir must go away"
+
+echo "- to-slug: accents are transliterated"
+[ "$(bash "$BIN/to-slug.sh" "Mínimo Ação — Phase 3g.3")" = "minimo-acao-phase-3g-3" ] || fail "to-slug"
+
 echo "- skills: pipeline skills report through wf-report.py"
 for s in kickoff specify challenge-spec plan tasks implement verify complete; do
   f="$SKILLS/$s/SKILL.md"
