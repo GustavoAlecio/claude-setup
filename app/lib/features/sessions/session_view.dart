@@ -1,18 +1,26 @@
+import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/image_attachments.dart';
+import '../../core/widgets/model_menu.dart';
 import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/docs_repository.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../data/session_reducer.dart';
 import '../../data/sessions_repository.dart';
 import '../../engine/engine_config.dart';
+import 'session_artifacts.dart';
 import 'session_cubit.dart';
 import 'session_events.dart';
 import 'session_labels.dart';
@@ -32,7 +40,7 @@ Future<void> sessionAction(BuildContext context, Future<void> Function() action)
 Color statusColor(AppColors c, SessionStatus s) => switch (s) {
   SessionStatus.starting || SessionStatus.running => c.running,
   SessionStatus.waitingPermission => c.warn,
-  SessionStatus.idle => c.accent,
+  SessionStatus.idle => c.awaiting,
   SessionStatus.done => c.pass,
   SessionStatus.error => c.fail,
   SessionStatus.stopped || SessionStatus.detached => c.idle,
@@ -97,10 +105,28 @@ class _SessionBody extends StatelessWidget {
     final partialThinking = detail?.partialThinking ?? '';
     Future<void> answer(String requestId, PermissionDecision decision, {Map<String, String>? answers}) =>
         sessionAction(context, () => sessions.answer(s.id, requestId, decision, answers: answers));
+    final agy = s.provider == AgentProvider.antigravity;
+    // A link to a file the agent wrote ("artefato de sessão") opens it here; anything else keeps the default.
+    void onLink(Uri uri) {
+      final name = artifactLinkName(uri);
+      if (name == null) {
+        DocsScope.openExternal(context, uri, logName: 'SessionFeed');
+      } else {
+        unawaited(showSessionArtifact(context, s.id, name));
+      }
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _Header(session: s),
+        if (s.asideOf != null) _AsideBanner(session: s),
+        if (agy)
+          SessionArtifactsStrip(
+            key: ValueKey('artifacts-${s.id}'),
+            sessionId: s.id,
+            version: events.whereType<SessionResult>().length,
+          ),
         Expanded(
           child: _Feed(
             version: (detail?.lastSeq, events.length, partialText.length, partialThinking.length, s.status),
@@ -109,7 +135,15 @@ class _SessionBody extends StatelessWidget {
               for (final e in events)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: SessionEventView(e, onAnswer: answer),
+                  child: SessionEventView(
+                    e,
+                    onAnswer: answer,
+                    onLink: agy ? onLink : null,
+                    attachmentUri: (name) => sessions.attachmentUri(s.id, name),
+                    failureActions: identical(e, events.last) && s.status == SessionStatus.idle
+                        ? _FailureActions(session: s)
+                        : null,
+                  ),
                 ),
               if (partialThinking.isNotEmpty)
                 Padding(padding: const EdgeInsets.only(bottom: 12), child: Muted('pensando… $partialThinking')),
@@ -128,13 +162,15 @@ class _SessionBody extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: _DetachedBanner(
               resumable: s.resumable,
+              imported: isFreshImport(events),
               onResume: () => sessionAction(context, () => sessions.resume(s.id)),
             ),
           ),
         _Composer(
           enabled: isLive(s.status) && s.status != SessionStatus.waitingPermission,
           waiting: s.status == SessionStatus.waitingPermission,
-          onSend: (text) => sessionAction(context, () => sessions.send(s.id, text)),
+          blockedReason: (text) => skillBlockedReason(s, text),
+          onSend: (text, images) => sessionAction(context, () => sessions.send(s.id, text, images: images)),
         ),
       ],
     );
@@ -168,13 +204,44 @@ class _Header extends StatelessWidget {
       ),
     );
     final details = <Widget>[
-      if (s.model case final model?) ...[
-        Pill(label: model, color: _modelColor(c, model), mono: true, dot: false),
+      if (s.provider == AgentProvider.antigravity) ...[
+        Pill(
+          key: const ValueKey('session-provider'),
+          tooltip: 'Agente das conversas livres desta org (Configurações)',
+          label: 'Antigravity · ${s.account ?? kDefaultAgentAccount}',
+          color: c.accent,
+          dot: false,
+        ),
         const SizedBox(width: 8),
       ],
+      // Natural width up to a cap: the command text is what shrinks in a narrow header.
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 180),
+        child: ModelMenu(
+          key: ValueKey('session-model-${s.id}'),
+          provider: s.provider,
+          account: s.account,
+          model: s.model,
+          allowDefault: false,
+          tooltip: 'Trocar o modelo desta sessão',
+          color: s.model == null ? null : _modelColor(c, s.model!),
+          onSelected: (m) {
+            if (m != null && m != s.model) sessionAction(context, () => sessions.setModel(s.id, m));
+          },
+        ),
+      ),
+      const SizedBox(width: 8),
       _PermissionModeSelector(key: ValueKey('mode-${s.id}'), session: s),
     ];
     final cost = Mono('\$${s.cost.toStringAsFixed(2)}', size: 12);
+    final aside = s.provider == AgentProvider.anthropic && s.resumable && s.asideOf == null
+        ? IconButton(
+            key: const ValueKey('session-aside'),
+            tooltip: 'Perguntar à parte: vê tudo desta sessão, só lê e não entra no contexto dela',
+            onPressed: () => unawaited(_askAside(context, s)),
+            icon: Icon(Icons.forum_outlined, size: 18, color: c.textSecondary),
+          )
+        : null;
     final interrupt = _interruptible.contains(s.status)
         ? OutlinedButton.icon(
             style: OutlinedButton.styleFrom(
@@ -204,6 +271,8 @@ class _Header extends StatelessWidget {
                     const SizedBox(width: 12),
                     ...details,
                     const Spacer(),
+                    ?aside,
+                    const SizedBox(width: 8),
                     cost,
                     const SizedBox(width: 16),
                     ?interrupt,
@@ -222,15 +291,126 @@ class _Header extends StatelessWidget {
                           Expanded(
                             child: Align(alignment: Alignment.centerLeft, child: status),
                           ),
+                          ?aside,
                           ?interrupt,
                         ],
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Row(children: [command, const SizedBox(width: 8), ...details, const Spacer(), cost]),
+                    Row(children: [command, const SizedBox(width: 8), const Spacer(), cost]),
+                    const SizedBox(height: 6),
+                    // Own line: provider, model and mode chips do not fit next to the command in a side panel.
+                    Wrap(spacing: 0, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: details),
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+Future<void> _askAside(BuildContext context, SessionSummary s) async {
+  final text = await showDialog<String>(context: context, builder: (_) => const _AsideDialog());
+  if (text == null || text.isEmpty || !context.mounted) return;
+  final router = GoRouter.of(context);
+  await sessionAction(context, () async {
+    final aside = await SessionsScope.of(context).askAside(s.id, text);
+    router.go(sessionLocation(aside));
+  });
+}
+
+class _AsideDialog extends StatefulWidget {
+  const _AsideDialog();
+
+  @override
+  State<_AsideDialog> createState() => _AsideDialogState();
+}
+
+class _AsideDialogState extends State<_AsideDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _send() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Perguntar à parte'),
+    content: SizedBox(
+      width: 480,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Muted(
+            'Abre uma conversa que vê tudo o que esta sessão fez, só lê, e não entra no contexto dela.',
+            size: 12.5,
+          ),
+          const SizedBox(height: 12),
+          CallbackShortcuts(
+            bindings: {const SingleActivator(LogicalKeyboardKey.enter, meta: true): _send},
+            child: TextField(
+              key: const ValueKey('aside-text'),
+              controller: _controller,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 6,
+              decoration: const InputDecoration(hintText: 'Por que essa abordagem? O que falta na task T3?  (⌘↵)'),
+            ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
+      FilledButton(key: const ValueKey('aside-send'), onPressed: _send, child: const Text('Perguntar')),
+    ],
+  );
+}
+
+/// A side question: where it came from, and the way back.
+class _AsideBanner extends StatelessWidget {
+  const _AsideBanner({required this.session});
+
+  final SessionSummary session;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
+    final parent = all.where((p) => p.id == session.asideOf).firstOrNull;
+    return Container(
+      key: const ValueKey('aside-banner'),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.elevated,
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.forum_outlined, size: 14, color: c.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              parent == null
+                  ? 'Pergunta à parte de uma sessão que não existe mais. Não entra no contexto de ninguém.'
+                  : 'Pergunta à parte de “${parent.title}”: vê o que ela fez e não entra no contexto dela.',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: c.textSecondary),
+            ),
+          ),
+          if (parent != null)
+            TextButton(
+              key: const ValueKey('aside-back'),
+              onPressed: () => GoRouter.of(context).go(sessionLocation(parent)),
+              child: const Text('Ver a original', style: TextStyle(fontSize: 12)),
+            ),
+        ],
       ),
     );
   }
@@ -390,6 +570,7 @@ class _PermissionModeSelectorState extends State<_PermissionModeSelector> {
     key: const ValueKey('session-permission-mode'),
     mode: _pending ?? widget.session.permissionMode,
     tooltip: 'Permissões da sessão',
+    modes: PermissionMode.values,
     onSelected: _busy ? null : _change,
   );
 }
@@ -421,9 +602,12 @@ class _Directories extends StatelessWidget {
 }
 
 class _DetachedBanner extends StatelessWidget {
-  const _DetachedBanner({required this.resumable, required this.onResume});
+  const _DetachedBanner({required this.resumable, required this.imported, required this.onResume});
 
   final bool resumable;
+
+  /// Just brought from the terminal: no process of the app ever ran it.
+  final bool imported;
   final VoidCallback onResume;
 
   @override
@@ -438,12 +622,15 @@ class _DetachedBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(Icons.link_off, size: 16, color: c.textSecondary),
+          Icon(imported ? Icons.terminal : Icons.link_off, size: 16, color: c.textSecondary),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'O processo desta sessão terminou com o app. Retomar reanexa com o histórico completo; '
-              'uma permissão que estava pendente é refeita pelo modelo.',
+              imported
+                  ? 'Sessão trazida do terminal. Retomar continua a conversa aqui; se o terminal ainda estiver com '
+                        'ela aberta, o app segue num ramo novo e o terminal não vê o que for feito aqui.'
+                  : 'O processo desta sessão terminou com o app. Retomar reanexa com o histórico completo; '
+                        'uma permissão que estava pendente é refeita pelo modelo.',
               style: TextStyle(fontSize: 12.5, color: c.textSecondary),
             ),
           ),
@@ -480,18 +667,20 @@ class _Typing extends StatelessWidget {
 }
 
 class _Composer extends StatefulWidget {
-  const _Composer({required this.enabled, required this.waiting, required this.onSend});
+  const _Composer({required this.enabled, required this.waiting, required this.blockedReason, required this.onSend});
 
   final bool enabled;
   final bool waiting;
-  final Future<void> Function(String text) onSend;
+  final String? Function(String text) blockedReason;
+  final Future<void> Function(String text, List<ImageAttachment> images) onSend;
 
   @override
   State<_Composer> createState() => _ComposerState();
 }
 
-class _ComposerState extends State<_Composer> {
+class _ComposerState extends State<_Composer> with ImageAttachments<_Composer> {
   final _controller = TextEditingController();
+  String? _blocked;
 
   @override
   void dispose() {
@@ -501,73 +690,104 @@ class _ComposerState extends State<_Composer> {
 
   void _send() {
     final text = _controller.text.trim();
-    if (!widget.enabled || text.isEmpty) return;
+    if (!widget.enabled || (text.isEmpty && images.isEmpty)) return;
+    final blocked = widget.blockedReason(text);
+    if (blocked != null) {
+      setState(() => _blocked = blocked);
+      return;
+    }
     _controller.clear();
-    widget.onSend(text);
+    widget.onSend(text.isEmpty ? kImagesOnlyText : text, takeImages());
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final enabled = widget.enabled;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: c.border)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: CallbackShortcuts(
-              bindings: {const SingleActivator(LogicalKeyboardKey.enter, meta: true): _send},
-              child: TextField(
-                controller: _controller,
-                enabled: enabled,
-                minLines: 1,
-                maxLines: 5,
-                style: const TextStyle(fontSize: 13),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: widget.waiting
-                      ? 'Decida a permissão acima para continuar'
-                      : enabled
-                      ? 'Responder à sessão…  (⌘↵ envia)'
-                      : 'Sessão encerrada',
-                  hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                  filled: true,
-                  fillColor: c.surface,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.border),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.border),
-                  ),
-                  disabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.border),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide(color: c.accent),
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(8),
+      borderSide: BorderSide(color: c.border),
+    );
+    return imageDropTarget(
+      context,
+      enabled: enabled,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: c.border)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            imagesPreview(context),
+            Row(
+              children: [
+                IconButton(
+                  key: const ValueKey('composer-attach'),
+                  tooltip: 'Anexar imagem (ou cole com ⌘V)',
+                  onPressed: enabled ? pickImages : null,
+                  icon: Icon(
+                    Icons.add_photo_alternate_outlined,
+                    size: 20,
+                    color: enabled ? c.textSecondary : c.textMuted,
                   ),
                 ),
-              ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: CallbackShortcuts(
+                    bindings: {const SingleActivator(LogicalKeyboardKey.enter, meta: true): _send},
+                    child: Focus(
+                      onKeyEvent: onPasteKey,
+                      child: TextField(
+                        key: const ValueKey('composer-input'),
+                        controller: _controller,
+                        enabled: enabled,
+                        onChanged: (_) {
+                          if (_blocked != null) setState(() => _blocked = null);
+                        },
+                        minLines: 1,
+                        maxLines: 5,
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: widget.waiting
+                              ? 'Decida a permissão acima para continuar'
+                              : enabled
+                              ? 'Responder à sessão…  (⌘↵ envia · ⌘V cola imagem)'
+                              : 'Sessão encerrada',
+                          hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                          errorText: _blocked,
+                          errorMaxLines: 3,
+                          errorStyle: TextStyle(color: c.fail, fontSize: 12),
+                          filled: true,
+                          fillColor: c.surface,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          border: border,
+                          enabledBorder: border,
+                          disabledBorder: border,
+                          focusedBorder: border.copyWith(borderSide: BorderSide(color: c.accent)),
+                          errorBorder: border.copyWith(borderSide: BorderSide(color: c.fail)),
+                          focusedErrorBorder: border.copyWith(borderSide: BorderSide(color: c.fail)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                IconButton.filled(
+                  style: IconButton.styleFrom(
+                    backgroundColor: c.accent,
+                    disabledBackgroundColor: c.elevated,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: enabled ? _send : null,
+                  icon: Icon(Icons.arrow_upward, size: 18, color: enabled ? Colors.white : c.textMuted),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(width: 10),
-          IconButton.filled(
-            style: IconButton.styleFrom(
-              backgroundColor: c.accent,
-              disabledBackgroundColor: c.elevated,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            onPressed: enabled ? _send : null,
-            icon: Icon(Icons.arrow_upward, size: 18, color: enabled ? Colors.white : c.textMuted),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -576,4 +796,49 @@ class _ComposerState extends State<_Composer> {
 Color _modelColor(AppColors c, String model) {
   final tier = Tier.values.where((t) => model.contains(t.name)).firstOrNull;
   return tier == null ? c.idle : c.tier(tier);
+}
+
+/// Way out of a failed turn: ask the agent to pick up where it stopped, or move the session to another model first.
+class _FailureActions extends StatelessWidget {
+  const _FailureActions({required this.session});
+
+  final SessionSummary session;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final sessions = SessionsScope.of(context);
+    final s = session;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        OutlinedButton.icon(
+          key: const ValueKey('failure-retry'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: c.textPrimary,
+            side: BorderSide(color: c.borderStrong),
+          ),
+          onPressed: () => sessionAction(context, () => sessions.send(s.id, 'Continue de onde parou.')),
+          icon: const Icon(Icons.refresh, size: 15),
+          label: const Text('Tentar de novo', style: TextStyle(fontSize: 12)),
+        ),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220),
+          child: ModelMenu(
+            key: ValueKey('failure-model-${s.id}'),
+            provider: s.provider,
+            account: s.account,
+            model: s.model,
+            allowDefault: false,
+            tooltip: 'Trocar modelo',
+            onSelected: (m) {
+              if (m != null && m != s.model) sessionAction(context, () => sessions.setModel(s.id, m));
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }

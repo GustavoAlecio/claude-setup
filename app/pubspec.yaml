@@ -1,12 +1,13 @@
 name: claude_flow
 description: "macOS dashboard for the Claude Code Smart Flow"
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.8.0+15
 
 environment:
   sdk: ^3.11.0
 
 dependencies:
+  desktop_drop: ^0.8.4
   file_selector: ^1.1.0
   flutter:
     sdk: flutter

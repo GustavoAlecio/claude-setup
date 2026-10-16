@@ -37,6 +37,8 @@ class FileFlowRepository implements FlowRepository {
   final FileDashboardConfigRepository _configRepository;
   final _updates = StreamController<List<Project>>.broadcast();
   final _configUpdates = StreamController<DashboardConfig>.broadcast();
+  final _autoUpdates = StreamController<bool>.broadcast();
+  bool? _auto;
 
   String? _root;
   bool _started = false;
@@ -77,6 +79,30 @@ class FileFlowRepository implements FlowRepository {
   Stream<DashboardConfig> watchConfig() {
     _ensureStarted();
     return _replay(() => _config, _configUpdates.stream);
+  }
+
+  @override
+  Stream<bool> watchAutoMode() {
+    _ensureStarted();
+    return _replay(() => _auto, _autoUpdates.stream).distinct();
+  }
+
+  @override
+  Future<void> setAutoMode(bool on) async {
+    final flag = File('$_requestedRoot/auto_mode.flag');
+    if (on) {
+      await flag.parent.create(recursive: true);
+      await flag.writeAsString('on');
+    } else if (await flag.exists()) {
+      await flag.delete();
+    }
+    // Applied here rather than on the FSEvents echo, which may never arrive.
+    _setAuto(on);
+  }
+
+  void _setAuto(bool on) {
+    _auto = on;
+    if (!_autoUpdates.isClosed) _autoUpdates.add(on);
   }
 
   @override
@@ -304,6 +330,7 @@ class FileFlowRepository implements FlowRepository {
   /// Runs only inside [_serialized].
   Future<void> _reloadRoot({_ConfigRead? read}) async {
     final root = _root;
+    _setAuto(root != null && await _autoMode(root));
     if (root == null) {
       _projects.clear();
       _mtimes.clear();
@@ -392,22 +419,13 @@ class FileFlowRepository implements FlowRepository {
       final runs = await _loadRuns(name, '${dir.path}/runs', titles, metas);
       final stack = path == null ? null : await _detectStack(path);
       final branch = path == null ? null : await _branch(path);
-      final autoMode = await _autoMode(root);
       final report = await _readReport('${dir.path}/report.json');
       if (stale()) return;
       _projects[name] = Project(
         name: name,
         path: projectPath,
         stack: stack,
-        cycle: parseCycle(
-          current,
-          projectName: name,
-          branch: branch,
-          autoMode: autoMode,
-          runs: runs,
-          plan: metas,
-          report: report,
-        ),
+        cycle: parseCycle(current, projectName: name, branch: branch, runs: runs, plan: metas, report: report),
       );
       _mtimes[name] = mtime;
     } catch (e, st) {

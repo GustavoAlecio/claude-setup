@@ -7,6 +7,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/theme/app_theme.dart';
+import '../core/widgets/unsaved_changes.dart';
+import 'attention_watcher.dart';
+import 'terminal_handoff.dart';
 import '../data/docs_repository.dart';
 import '../data/flow_repository.dart';
 import '../data/github_repository.dart';
@@ -16,6 +19,7 @@ import '../data/metrics_repository.dart';
 import '../data/mock_docs_repository.dart';
 import '../data/mock_inventory_repository.dart';
 import '../data/mock_metrics_repository.dart';
+import '../data/attention.dart';
 import '../data/orgs.dart';
 import '../data/session_models.dart';
 import '../data/sessions_repository.dart';
@@ -69,6 +73,7 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
   late final AppLifecycleListener _lifecycle;
   static final _fallbackDocs = MockDocsRepository.empty();
   late final _fallbackGithub = MockGitHubRepository.empty();
+  final _unsaved = ValueNotifier(false);
 
   @override
   void initState() {
@@ -76,14 +81,20 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
     _lifecycle = AppLifecycleListener(onResume: widget.repository.reload, onExitRequested: _onExitRequested);
   }
 
-  /// stdin EOF already ends the engine when the app dies; this waits for its flush on a regular quit.
+  /// stdin EOF already ends the engine when the app dies; this waits for its flush on a regular quit. ⌘Q and the
+  /// window's close button (`AppDelegate.windowShouldClose`) both land here, so unsaved edits are asked about first.
   Future<AppExitResponse> _onExitRequested() async {
+    final dialogContext = _router.routerDelegate.navigatorKey.currentContext;
+    if (_unsaved.value && dialogContext != null && dialogContext.mounted) {
+      if (!await confirmDiscard(dialogContext, _unsaved)) return AppExitResponse.cancel;
+    }
     await widget.engine.shutdown();
     return AppExitResponse.exit;
   }
 
   @override
   void dispose() {
+    _unsaved.dispose();
     _lifecycle.dispose();
     super.dispose();
   }
@@ -107,29 +118,38 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
               engine: widget.engine,
               child: GitHubScope(
                 repository: github,
-                child: MultiBlocProvider(
-                  providers: [
-                    BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
-                    BlocProvider(create: (_) => ConfigCubit(widget.repository)),
-                    BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
-                    BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
-                    BlocProvider(
-                      create: (_) => InboxCubit(
-                        github,
-                        widget.engine.watch().map((s) => s.endpoint),
-                        widget.repository.watchConfig().map((c) => githubFor(c.lastOrg, c)),
+                child: UnsavedChangesScope(
+                  unsaved: _unsaved,
+                  child: MultiBlocProvider(
+                    providers: [
+                      BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
+                      BlocProvider(create: (_) => ConfigCubit(widget.repository)),
+                      BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
+                      BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
+                      BlocProvider(
+                        create: (_) => InboxCubit(
+                          github,
+                          widget.engine.watch().map((s) => s.endpoint),
+                          widget.repository.watchConfig().map((c) => githubFor(c.lastOrg, c)),
+                        ),
+                        lazy: false,
                       ),
-                      lazy: false,
+                    ],
+                    child: MaterialApp.router(
+                      title: 'Claude Flow',
+                      debugShowCheckedModeBanner: false,
+                      theme: buildTheme(Brightness.light),
+                      darkTheme: buildTheme(Brightness.dark),
+                      themeMode: ThemeMode.dark,
+                      routerConfig: _router,
+                      builder: (context, child) => AttentionWatcher(
+                        router: _router,
+                        child: TerminalHandoffListener(
+                          router: _router,
+                          child: _GlobalShortcuts(router: _router, child: child!),
+                        ),
+                      ),
                     ),
-                  ],
-                  child: MaterialApp.router(
-                    title: 'Claude Flow',
-                    debugShowCheckedModeBanner: false,
-                    theme: buildTheme(Brightness.light),
-                    darkTheme: buildTheme(Brightness.dark),
-                    themeMode: ThemeMode.dark,
-                    routerConfig: _router,
-                    builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
                   ),
                 ),
               ),
@@ -160,10 +180,22 @@ class _GlobalShortcuts extends StatelessWidget {
   final GoRouter router;
   final Widget child;
 
-  void _switch(BuildContext context, int index) {
+  /// Leaving a route with unsaved edits asks first, like the page's own Voltar does.
+  Future<bool> _mayLeave(BuildContext context) async {
+    final dialogContext = router.routerDelegate.navigatorKey.currentContext;
+    if (dialogContext == null) return true;
+    return confirmDiscard(dialogContext, UnsavedChangesScope.of(context));
+  }
+
+  Future<void> _go(BuildContext context, String location) async {
+    if (await _mayLeave(context)) router.go(location);
+  }
+
+  Future<void> _switch(BuildContext context, int index) async {
     final config = context.read<ConfigCubit>().state.data;
     final orgs = config?.orgs ?? const [];
     if (index >= orgs.length) return;
+    if (!await _mayLeave(context) || !context.mounted) return;
     switchOrg(
       repository: RepositoryScope.of(context),
       router: router,
@@ -190,13 +222,27 @@ class _GlobalShortcuts extends StatelessWidget {
     if (target != null) showCommandPalette(dialogContext, target);
   }
 
+  Future<void> _nextPending(BuildContext context) async {
+    final items = pendingAttention(
+      context.read<SessionsCubit>().state.data ?? const [],
+      context.read<ProjectsCubit>().state.data ?? const [],
+    );
+    final route = nextAttentionRoute(items, router.routerDelegate.currentConfiguration.uri.toString());
+    if (route == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('nada esperando por você')));
+      return;
+    }
+    await _go(context, route);
+  }
+
   @override
   Widget build(BuildContext context) => CallbackShortcuts(
     bindings: {
+      const SingleActivator(LogicalKeyboardKey.keyJ, meta: true): () => _nextPending(context),
       const SingleActivator(LogicalKeyboardKey.keyK, meta: true, shift: true): () => _newActivity(context),
       for (final (i, key) in _digits.indexed) SingleActivator(key, meta: true): () => _switch(context, i),
-      const SingleActivator(LogicalKeyboardKey.comma, meta: true): () => router.go('/settings'),
-      const SingleActivator(LogicalKeyboardKey.keyI, meta: true): () => router.go('/about'),
+      const SingleActivator(LogicalKeyboardKey.comma, meta: true): () => _go(context, '/settings'),
+      const SingleActivator(LogicalKeyboardKey.keyI, meta: true): () => _go(context, '/about'),
     },
     child: Focus(autofocus: true, child: child),
   );

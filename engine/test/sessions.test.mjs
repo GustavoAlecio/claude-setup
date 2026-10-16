@@ -257,6 +257,22 @@ test("sessao restaurada fica detached com o model do init e o resume a religa", 
   assert.equal(await statusOf(port, id), "idle");
 });
 
+test("skill e o ultimo /comando enviado e sobrevive ao restore", async () => {
+  const first = await start();
+  const id = await createIdle(first.port, "me explica o repo");
+  assert.equal((await api(first.port, "GET", `/api/sessions/${id}`)).body.skill, null);
+
+  await api(first.port, "POST", `/api/sessions/${id}/input`, { text: "/kickoff --manual idioma no greet" });
+  await waitFor(async () => (await api(first.port, "GET", `/api/sessions/${id}`)).body.skill === "/kickoff");
+  await api(first.port, "POST", `/api/sessions/${id}/input`, { text: "e o default?" });
+  await waitFor(() => first.engine.sessions.get(id).events.filter((e) => e.kind === "result").length === 3);
+  assert.equal((await api(first.port, "GET", `/api/sessions/${id}`)).body.skill, "/kickoff");
+  await first.engine.sessions.shutdown({ waitMs: 200 });
+
+  const { port } = await start(first.sessionsDir);
+  assert.equal((await api(port, "GET", `/api/sessions/${id}`)).body.skill, "/kickoff");
+});
+
 test("stop encerra o processo e o resume seguinte devolve 'resumed' e aceita input", async () => {
   const { engine, port } = await start();
   const id = await createIdle(port);

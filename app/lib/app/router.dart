@@ -15,6 +15,7 @@ import '../features/prs/prs_page.dart';
 import '../features/reviews/reviews_page.dart';
 import '../features/runs/runs_page.dart';
 import '../features/runs/task_detail_page.dart';
+import '../features/queue/queue_page.dart';
 import '../features/sessions/sessions_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/shell/shell_page.dart';
@@ -29,7 +30,10 @@ GoRouter buildRouter(EffectivePaths paths) {
       GoRoute(path: '/', pageBuilder: (_, state) => _instant(state, const LandingPage())),
       GoRoute(
         path: '/settings',
-        pageBuilder: (_, state) => _instant(state, SettingsPage(backTo: () => lastShellRoute)),
+        pageBuilder: (_, state) => _instant(
+          state,
+          SettingsPage(backTo: () => lastShellRoute, newOrg: state.uri.queryParameters['nova'] == '1'),
+        ),
       ),
       GoRoute(
         path: '/about',
@@ -37,7 +41,15 @@ GoRouter buildRouter(EffectivePaths paths) {
       ),
       ShellRoute(
         builder: (context, state, child) => switch (state.uri.pathSegments.first) {
-          'o' => ShellPage(scope: ShellOrgScope(state.pathParameters['org']!), tab: AppTab.sessions, child: child),
+          'o' => ShellPage(
+            scope: ShellOrgScope(state.pathParameters['org']!),
+            tab: switch (state.uri.pathSegments.elementAtOrNull(2)) {
+              'fila' => AppTab.queue,
+              'revisar' => AppTab.inbox,
+              _ => AppTab.sessions,
+            },
+            child: child,
+          ),
           _ => ShellPage(
             scope: ShellProjectScope(state.pathParameters['project']!),
             tab: AppTab.parse(state.pathParameters['tab'] ?? state.uri.pathSegments[2]),
@@ -45,6 +57,11 @@ GoRouter buildRouter(EffectivePaths paths) {
           ),
         },
         routes: [
+          GoRoute(
+            path: '/o/:org/fila',
+            pageBuilder: (_, state) => _instant(state, QueuePage(org: state.pathParameters['org']!)),
+          ),
+          GoRoute(path: '/o/:org/revisar', pageBuilder: (_, state) => _instant(state, const InboxPage())),
           GoRoute(
             path: '/o/:org/sessions',
             pageBuilder: (_, state) =>
@@ -103,6 +120,8 @@ GoRouter buildRouter(EffectivePaths paths) {
                 AppTab.metrics => MetricsPage(key: ValueKey(project), projectName: project),
                 AppTab.adrs => AdrsPage(key: ValueKey(project), projectName: project, adr: query['adr']),
                 AppTab.inbox => const InboxPage(),
+                // `/p/<project>/queue` is not a project tab: the queue belongs to the org.
+                AppTab.queue => FlowPage(projectName: project),
               });
             },
           ),

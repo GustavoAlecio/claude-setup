@@ -188,12 +188,20 @@ class ProjectInventory {
     this.lessons = const [],
     this.routing = const Routing(),
     this.adrSubmodule,
+    this.workflows = const [],
+    this.ladder,
   });
 
   final List<RuleEntry> rules;
   final List<AdrEntry> adrs;
   final List<String> lessons;
   final Routing routing;
+
+  /// `<repo>/.claude/workflows/*.js`: Claude Code runs these over a personal workflow with the same `meta.name`.
+  final List<WorkflowEntry> workflows;
+
+  /// Ladder of the project's `smart-implement` override; `null` when the personal one runs.
+  final Ladder? ladder;
 
   /// Submódulo que contém o diretório de ADRs; `null` sem `.gitmodules` ou sem correspondência.
   final GitSubmodule? adrSubmodule;

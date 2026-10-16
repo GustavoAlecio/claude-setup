@@ -55,6 +55,23 @@ class FileDocsRepository implements DocsRepository {
   }
 
   @override
+  Future<bool> reveal(String project, String rel) async {
+    if (!_acceptedRel(rel)) return false;
+    final base = await _projectDir(project);
+    if (base == null) return false;
+    try {
+      final canonical = await _resolve('${base.raw}/$rel');
+      if (canonical == null || !_inside(base, canonical)) return false;
+      final result = await _run('open', ['-R', canonical]);
+      if (result.exitCode != 0) log('reveal failed for $rel: ${result.stderr}', name: 'FileDocsRepository');
+      return result.exitCode == 0;
+    } on Exception catch (e, st) {
+      log('cannot reveal $project/$rel', name: 'FileDocsRepository', error: e, stackTrace: st);
+      return false;
+    }
+  }
+
+  @override
   Future<void> open(Uri uri) async {
     if (!opensExternally(uri)) {
       log('link ignored: $uri', name: 'FileDocsRepository');

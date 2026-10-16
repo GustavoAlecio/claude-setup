@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import '../engine/engine_config.dart';
 import 'session_models.dart';
@@ -25,6 +26,9 @@ class MockSessionsRepository implements SessionsRepository {
   /// Every [create] call, in order, for tests to assert the exact command, cwd, account and mode.
   final createCalls =
       <(String project, String command, String? cwd, String? githubAccount, PermissionMode? permissionMode)>[];
+
+  /// Agent of every [create] and [createInOrg] call, in call order across both.
+  final agentCalls = <OrgAgent>[];
 
   /// Every [createInOrg] call, in order.
   final orgCreateCalls =
@@ -77,8 +81,12 @@ class MockSessionsRepository implements SessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     createCalls.add((project, command, cwd, githubAccount, permissionMode));
+    agentCalls.add(agent);
+    createImages.add(images);
     return _add(
       (id) => SessionSummary(
         id: id,
@@ -100,8 +108,12 @@ class MockSessionsRepository implements SessionsRepository {
     List<String> additionalDirectories = const [],
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     orgCreateCalls.add((org, command, cwd, additionalDirectories, githubAccount, permissionMode));
+    agentCalls.add(agent);
+    createImages.add(images);
     return _add(
       (id) => SessionSummary(
         id: id,
@@ -126,6 +138,80 @@ class MockSessionsRepository implements SessionsRepository {
     ]);
   }
 
+  /// Every [askAside] call as `(id, text)`.
+  final asideCalls = <(String id, String text)>[];
+
+  @override
+  Future<SessionSummary> askAside(String id, String text) async {
+    asideCalls.add((id, text));
+    final parent = _details[id]!.summary;
+    return _add(
+      (aside) => SessionSummary(
+        id: aside,
+        project: parent.project,
+        command: text,
+        title: text,
+        status: SessionStatus.idle,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        org: parent.org,
+        cwd: parent.cwd,
+        permissionMode: PermissionMode.plan,
+        asideOf: id,
+      ),
+    );
+  }
+
+  final _handoffs = StreamController<TerminalHandoff>.broadcast();
+
+  @override
+  Stream<TerminalHandoff> terminalHandoffs() => _handoffs.stream;
+
+  /// What the engine relays when the terminal runs `/app`.
+  void requestHandoff(String sdkSessionId, String cwd) => _handoffs.add((sdkSessionId: sdkSessionId, cwd: cwd));
+
+  /// What [terminalSessions] lists, per cwd; tests fill it.
+  final terminal = <String, List<TerminalSession>>{};
+
+  /// Every [importTerminalSession] call as `(sdkSessionId, cwd, project, permissionMode)`.
+  final importCalls = <(String sdkSessionId, String cwd, String project, PermissionMode permissionMode)>[];
+
+  @override
+  Future<List<TerminalSession>> terminalSessions(String cwd) async => terminal[cwd] ?? const [];
+
+  @override
+  Future<SessionSummary> importTerminalSession({
+    required String sdkSessionId,
+    required String cwd,
+    required String project,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async {
+    importCalls.add((sdkSessionId, cwd, project, permissionMode));
+    TerminalSession? source;
+    for (final list in terminal.values) {
+      source ??= list.where((t) => t.sdkSessionId == sdkSessionId).firstOrNull;
+      list.remove(source);
+    }
+    final title = source?.firstPrompt ?? source?.title ?? sdkSessionId;
+    final id = 'mock-${++_created}';
+    final summary = SessionSummary(
+      id: id,
+      project: project,
+      command: title,
+      title: title,
+      status: SessionStatus.detached,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      resumable: true,
+      cwd: cwd,
+      permissionMode: permissionMode,
+    );
+    _order.insert(0, id);
+    _details[id] = SessionDetail(summary: summary);
+    _apply(id, [_event(id, {'kind': 'user_text', 'text': title})]);
+    _apply(id, [_event(id, {'kind': 'imported', 'dropped': 0})]);
+    return summary;
+  }
+
   SessionSummary _add(SessionSummary Function(String id) build) {
     final id = 'mock-${++_created}';
     final summary = build(id);
@@ -138,10 +224,26 @@ class MockSessionsRepository implements SessionsRepository {
   }
 
   @override
-  Future<void> send(String id, String text) async => _apply(id, [
-    _event(id, {'kind': 'user_text', 'text': text}),
-    _status('idle'),
-  ]);
+  Future<void> send(String id, String text, {List<ImageAttachment> images = const []}) async {
+    sendCalls.add((id, text, images));
+    return _apply(id, [
+      _event(id, {
+        'kind': 'user_text',
+        'text': text,
+        if (images.isNotEmpty) 'images': [for (var i = 0; i < images.length; i++) 'image-$i.png'],
+      }),
+      _status('idle'),
+    ]);
+  }
+
+  /// Every [send] call, in order.
+  final sendCalls = <(String id, String text, List<ImageAttachment> images)>[];
+
+  /// Images of each [create]/[createInOrg] call, in order.
+  final createImages = <List<ImageAttachment>>[];
+
+  @override
+  Uri? attachmentUri(String id, String name) => null;
 
   @override
   Future<void> answer(String id, String requestId, PermissionDecision decision, {Map<String, String>? answers}) async =>
@@ -175,6 +277,107 @@ class MockSessionsRepository implements SessionsRepository {
     'event',
     jsonEncode({'seq': _details[id]!.lastSeq + 1, 'at': DateTime.now().toUtc().toIso8601String(), ...event}),
   );
+
+  /// `default` is logged in; any other account is not, until a test adds it to [loggedInAccounts].
+  final loggedInAccounts = <String>{kDefaultAgentAccount};
+
+  @override
+  Future<AgentAccountStatus> agentAccount(String account) async => AgentAccountStatus(
+    account: account,
+    loggedIn: loggedInAccounts.contains(account),
+    loginCommand: 'HOME="~/.claude-flow/accounts/antigravity/$account" agy',
+  );
+
+  /// Puts [summary] at the top of the list with [events] replayed as the engine would; [status] is the engine's
+  /// spelling (`idle`, `running`…).
+  void addSession(SessionSummary summary, List<Map<String, Object?>> events, {String status = 'idle'}) {
+    _order.insert(0, summary.id);
+    _details[summary.id] = _log(summary.createdAt, events, status).fold(SessionDetail(summary: summary), applyFrame);
+    _updates.add(null);
+  }
+
+  /// What [readiness] answers; tests replace it.
+  Readiness readinessState = const Readiness(
+    claudeOk: true,
+    claudeAccount: 'dev@example.com',
+    claudePlan: 'max',
+    ghOk: true,
+    ghActive: 'acct-a',
+  );
+
+  @override
+  Future<Readiness> readiness({bool fresh = false}) async => readinessState;
+
+  /// Artifacts per session id, as `{name: content}`.
+  final artifacts = <String, Map<String, String>>{};
+
+  @override
+  Future<List<SessionArtifact>> sessionArtifacts(String id) async => [
+    for (final e in (artifacts[id] ?? const {}).entries)
+      SessionArtifact(name: e.key, size: e.value.length, modifiedAt: '2026-10-06T10:00:00Z'),
+  ];
+
+  @override
+  Future<String> sessionArtifact(String id, String name) async =>
+      artifacts[id]?[name] ?? (throw const SessionsException('artefato nao encontrado', statusCode: 404));
+
+  /// Diagrams need the engine's Chrome: the mock answers like an engine without it, and the block keeps the code.
+  @override
+  Future<Uint8List> renderMermaid(String code, {required bool dark}) async =>
+      throw const SessionsException('Chrome nao encontrado', statusCode: 501);
+
+  /// Every [setModel] call, in order.
+  final setModelCalls = <(String id, String model)>[];
+
+  @override
+  Future<List<AgentModel>> claudeModels() async => const [
+    AgentModel('opus', 'Opus'),
+    AgentModel('sonnet', 'Sonnet'),
+    AgentModel('haiku', 'Haiku'),
+  ];
+
+  @override
+  Future<void> setModel(String id, String model) async {
+    setModelCalls.add((id, model));
+    final detail = _details[id];
+    if (detail == null) return;
+    _details[id] = detail.copyWith(summary: detail.summary.copyWith(model: model));
+    _updates.add(null);
+  }
+
+  /// Every [revealArtifact] call, as `(id, name)`.
+  final revealCalls = <(String id, String name)>[];
+
+  @override
+  Future<void> revealArtifact(String id, String name) async => revealCalls.add((id, name));
+
+  /// Every [cycleAction] call, in order.
+  final cycleCalls = <(String project, CycleAction action)>[];
+
+  @override
+  Future<void> cycleAction(String project, CycleAction action) async => cycleCalls.add((project, action));
+
+  /// Every [agentLogin] call, in order.
+  final agentLoginCalls = <String>[];
+
+  @override
+  Future<void> agentLogin(String account) async => agentLoginCalls.add(account);
+
+  @override
+  Future<List<AgentModel>> agentModels(String account) async {
+    if (!loggedInAccounts.contains(account)) {
+      throw SessionsException('conta $account sem login no Antigravity', statusCode: 409);
+    }
+    // Relative to now: a fixed date turns "renova em" into "renovando" once it passes.
+    final resetsAt = DateTime.now().toUtc().add(const Duration(days: 3));
+    final gemini = AgentQuota(remaining: 0, resetsAt: resetsAt);
+    final claude = AgentQuota(remaining: 0.97, resetsAt: resetsAt);
+    return [
+      AgentModel('gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)', quota: gemini),
+      AgentModel('gemini-3.1-pro-high', 'Gemini 3.1 Pro (High)', quota: gemini),
+      AgentModel('claude-opus-4-6-thinking', 'Claude Opus 4.6 (Thinking)', quota: claude),
+    ];
+  }
 }
 
 SseFrame _status(String status) => SseFrame('status', jsonEncode({'status': status}));

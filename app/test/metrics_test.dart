@@ -86,6 +86,7 @@ void main() {
     expect(_cardValue('tasks', '5'), findsOneWidget);
     expect(_cardValue('pass-tier0', '80%'), findsOneWidget);
     expect(_cardValue('escalations', '1'), findsOneWidget);
+    expect(_cardValue('cost', '\$0.62'), findsOneWidget, reason: 'sum of the demo-app sessions in the mock');
     expect(_cardValue('tokens-dev', '870'), findsOneWidget);
     expect(_cardValue('tokens-g0', '0'), findsOneWidget);
     expect(_cardValue('tokens-g1', '310'), findsOneWidget);
@@ -115,7 +116,7 @@ void main() {
     expect(row, findsOneWidget);
     expect(find.descendant(of: row, matching: find.text('sonnet')), findsOneWidget);
     expect(find.descendant(of: row, matching: find.text('opus')), findsOneWidget);
-    expect(find.descendant(of: row, matching: find.text('2 tentativa(s)')), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('2 tentativas')), findsOneWidget);
     expect(find.byKey(const ValueKey('metrics-task-2026-04-20_metricas-T2')), findsOneWidget);
 
     await tester.tap(_cycleTitle);
@@ -172,7 +173,7 @@ void main() {
 
     final timeline = find.byKey(const ValueKey('metrics-report-timeline'));
     expect(timeline, findsOneWidget);
-    expect(find.descendant(of: timeline, matching: find.text('sem relatório desta etapa')), findsNWidgets(6));
+    expect(find.descendant(of: timeline, matching: find.text('sem relatório desta etapa')), findsNothing);
 
     await tester.tap(find.descendant(of: timeline, matching: find.text('implement')));
     await tester.pumpAndSettle();

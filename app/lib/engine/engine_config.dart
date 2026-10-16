@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 /// Must match `version` in `engine/package.json`; a mismatch only raises a non-blocking warning.
-const kEngineVersion = '0.5.0';
+const kEngineVersion = '0.8.0';
 
 const kEnvSentinel = '\x00__ENV__\x00';
 
@@ -49,7 +49,8 @@ enum PermissionMode {
   defaultMode('default'),
   acceptEdits('acceptEdits'),
   auto('auto'),
-  bypassPermissions('bypassPermissions');
+  bypassPermissions('bypassPermissions'),
+  plan('plan');
 
   const PermissionMode(this.wire);
 
@@ -57,16 +58,94 @@ enum PermissionMode {
 
   /// `null` for anything that is not one of the accepted spellings, so the next level applies.
   static PermissionMode? parse(Object? raw) => values.where((m) => m.wire == raw).firstOrNull;
+
+  /// A mode `.dashboard.json` may hold: [plan] only applies to one session, since as a default it would leave the
+  /// whole pipeline unable to edit.
+  static PermissionMode? parseConfig(Object? raw) => kConfigPermissionModes.where((m) => m.wire == raw).firstOrNull;
 }
 
-/// Global mode when `.dashboard.json` has no valid `permissionMode`.
-const kDefaultPermissionMode = PermissionMode.bypassPermissions;
+/// Modes the global and org pickers offer and the config accepts.
+const kConfigPermissionModes = [
+  PermissionMode.defaultMode,
+  PermissionMode.acceptEdits,
+  PermissionMode.auto,
+  PermissionMode.bypassPermissions,
+];
+
+/// Global mode when `.dashboard.json` has no valid `permissionMode`: edits run, commands ask. Bypass is opt-in and
+/// confirmed in the pickers ([confirmBypass]).
+const kDefaultPermissionMode = PermissionMode.acceptEdits;
+
+/// Who runs a session: the Claude Agent SDK or the Antigravity CLI (`agy`), ADR 0023.
+enum AgentProvider {
+  anthropic('anthropic', 'Anthropic'),
+  antigravity('antigravity', 'Antigravity');
+
+  const AgentProvider(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static AgentProvider? parse(Object? raw) => values.where((p) => p.wire == raw).firstOrNull;
+}
+
+/// Antigravity account label: also the directory of its shadow HOME in the engine.
+final kAgentAccount = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$');
+
+/// Antigravity account that uses the IDE login (macOS Keychain).
+const kDefaultAgentAccount = 'default';
+
+/// `orgs[].agent`. [account] only applies to Antigravity (`null` = [kDefaultAgentAccount]); [model] `null` is the
+/// provider's default.
+class OrgAgent {
+  const OrgAgent({this.provider = AgentProvider.anthropic, this.account, this.model});
+
+  static const anthropic = OrgAgent();
+
+  final AgentProvider provider;
+  final String? account;
+  final String? model;
+
+  /// `null` when [value] is not a map; an unknown provider is Anthropic, an invalid account `null`.
+  static OrgAgent? fromRaw(Object? value) {
+    if (value is! Map) return null;
+    final account = value['account'];
+    final model = value['model'];
+    return OrgAgent(
+      provider: AgentProvider.parse(value['provider']) ?? AgentProvider.anthropic,
+      account: account is String && kAgentAccount.hasMatch(account) ? account : null,
+      model: model is String && model.trim().isNotEmpty ? model.trim() : null,
+    );
+  }
+
+  Map<String, Object?> toRaw() => {'provider': provider.wire, 'account': ?account, 'model': ?model};
+
+  /// Same agent with [model]; `null` is the provider default.
+  OrgAgent withModel(String? model) => OrgAgent(provider: provider, account: account, model: model);
+
+  @override
+  bool operator ==(Object other) =>
+      other is OrgAgent && other.provider == provider && other.account == account && other.model == model;
+
+  @override
+  int get hashCode => Object.hash(provider, account, model);
+
+  @override
+  String toString() => 'OrgAgent(${provider.wire}, $account, $model)';
+}
 
 bool sameStrings(List<String> a, List<String> b) =>
     a.length == b.length && Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
 
 class OrgConfig {
-  const OrgConfig({required this.name, this.roots = const [], this.github, this.permissionMode});
+  const OrgConfig({
+    required this.name,
+    this.roots = const [],
+    this.github,
+    this.permissionMode,
+    this.agent,
+    this.cycleBudget,
+  });
 
   final String name;
   final List<String> roots;
@@ -76,6 +155,12 @@ class OrgConfig {
 
   /// `null`: inherits [DashboardConfig.permissionMode] (key absent or not an accepted mode).
   final PermissionMode? permissionMode;
+
+  /// `null` when the key is absent: sessions run on Anthropic and writes keep whatever the file has.
+  final OrgAgent? agent;
+
+  /// US$ a cycle of this org may cost; `null` inherits [DashboardConfig.cycleBudget].
+  final double? cycleBudget;
 }
 
 class ProjectEntry {
@@ -98,6 +183,7 @@ class DashboardConfig {
     this.hidden = const [],
     this.lastOrg,
     this.permissionMode = kDefaultPermissionMode,
+    this.cycleBudget,
   });
 
   static const empty = DashboardConfig();
@@ -113,6 +199,9 @@ class DashboardConfig {
   final List<String> hidden;
   final String? lastOrg;
   final PermissionMode permissionMode;
+
+  /// US$ a cycle may cost before the Fluxo warns; `null` (absent, zero or invalid) means no budget.
+  final double? cycleBudget;
 
   /// Throws [FormatException] on invalid JSON; a non-object document yields [empty].
   static DashboardConfig parse(String source) {
@@ -140,7 +229,9 @@ class DashboardConfig {
               name: o['name'] as String,
               roots: _strings(o['roots']),
               github: OrgGithub.fromRaw(o['github']),
-              permissionMode: PermissionMode.parse(o['permissionMode']),
+              permissionMode: PermissionMode.parseConfig(o['permissionMode']),
+              agent: OrgAgent.fromRaw(o['agent']),
+              cycleBudget: parseBudget(o['cycleBudget']),
             ),
       ],
       projects: [
@@ -150,7 +241,8 @@ class DashboardConfig {
       ],
       hidden: _strings(decoded['hidden']),
       lastOrg: _nonEmpty(decoded['lastOrg']),
-      permissionMode: PermissionMode.parse(decoded['permissionMode']) ?? kDefaultPermissionMode,
+      permissionMode: PermissionMode.parseConfig(decoded['permissionMode']) ?? kDefaultPermissionMode,
+      cycleBudget: parseBudget(decoded['cycleBudget']),
     );
   }
 
@@ -261,3 +353,6 @@ String? _resolveNode(String? nodePath, String? path, bool Function(String) fileE
 }
 
 String _trimSlash(String path) => path.length > 1 && path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+
+/// A positive amount of US$; anything else is no budget.
+double? parseBudget(Object? value) => value is num && value > 0 ? value.toDouble() : null;

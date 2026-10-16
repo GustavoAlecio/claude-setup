@@ -8,17 +8,21 @@ import { randomUUID } from "node:crypto";
  * - `slow`: um delta a cada 100 ms ate `interrupt()` ou abort;
  * - `leak`: ecoa `options.env.GH_TOKEN` em tool_use, tool_result, delta, texto e result;
  * - qualquer outro: 3 deltas, texto final e result.
+ * `resume` mantem o session_id; com `forkSession` o init traz um novo.
  * Abort rejeita como o SDK real; `interrupt()` encerra o turno corrente com um result.
  * O modo vem de `options.permissionMode` e muda com `setPermissionMode` (registrado em
  * `permissionModeCalls`); em `bypassPermissions` so o AskUserQuestion chama `canUseTool`.
  */
 export function query({ prompt, options }) {
   const signal = options.abortController?.signal;
-  const sessionId = options.resume ?? `fake-${randomUUID()}`;
+  // Como o SDK: `forkSession` retoma o historico num transcript novo.
+  const sessionId = options.resume && !options.forkSession ? options.resume : `fake-${randomUUID()}`;
   let interrupted = false;
   let wakeInterrupt = null;
   let mode = options.permissionMode ?? "default";
   const permissionModeCalls = [];
+  const modelCalls = [];
+  const prompts = [];
 
   const decide = (name, input, id) =>
     mode === "bypassPermissions" && name !== "AskUserQuestion"
@@ -146,7 +150,9 @@ export function query({ prompt, options }) {
         yield { type: "system", subtype: "init", session_id: sessionId, model: options.model ?? "fake-model", tools: [], cwd: options.cwd };
       }
       interrupted = false;
-      yield* turn(next.value.message.content);
+      const content = next.value.message.content;
+      prompts.push(content);
+      yield* turn(typeof content === "string" ? content : (content.find((b) => b.type === "text")?.text ?? ""));
     }
   }
 
@@ -157,6 +163,20 @@ export function query({ prompt, options }) {
     async interrupt() {
       interrupted = true;
       wakeInterrupt?.();
+    },
+    prompts,
+    modelCalls,
+    async setModel(next) {
+      modelCalls.push(next);
+    },
+    async accountInfo() {
+      return { email: "dev@example.com", subscriptionType: "max", apiProvider: "firstParty" };
+    },
+    async supportedModels() {
+      return [
+        { value: "opus", displayName: "Opus", description: "" },
+        { value: "sonnet", displayName: "Sonnet", description: "" },
+      ];
     },
     permissionModeCalls,
     async setPermissionMode(next) {

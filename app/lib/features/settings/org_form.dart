@@ -2,19 +2,29 @@ import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/budget.dart';
 import '../../data/config_mutations.dart';
 import '../../data/flow_repository.dart';
 import '../../data/github_models.dart';
 import '../../data/github_parser.dart';
 import '../../data/github_repository.dart';
 import '../../data/orgs.dart';
+import '../../data/session_models.dart';
+import '../../data/sessions_repository.dart';
 import '../../engine/engine_config.dart';
+import 'budget_field.dart';
 
 const _kSshTimeout = Duration(seconds: 10);
+
+/// How often and for how long the form re-checks an account after opening the login in Terminal.
+const _kLoginPoll = Duration(seconds: 3);
+const _kLoginWait = Duration(minutes: 5);
 
 /// State of the `ssh -T` check of one owner; `null` identity means it could not be verified.
 class _Ssh {
@@ -39,6 +49,10 @@ class OrgForm extends StatefulWidget {
     this.saveLabel = 'Salvar',
     required this.onSave,
     this.onRemove,
+    this.onDirtyChanged,
+    this.simple = false,
+    this.globalMode = kDefaultPermissionMode,
+    this.globalBudget,
   });
 
   final OrgConfig? initial;
@@ -57,6 +71,19 @@ class OrgForm extends StatefulWidget {
   final Future<void> Function(OrgConfig org) onSave;
   final Future<void> Function()? onRemove;
 
+  /// First use: only name and folder up front; permissions, agent and GitHub fold into "Opções avançadas" with their
+  /// defaults spelled out, so the first decision is not about things the user cannot judge yet.
+  final bool simple;
+
+  /// What "herdar global" resolves to, shown in the option.
+  /// What an empty budget inherits; `null` when there is no global budget either.
+  final double? globalBudget;
+
+  final PermissionMode globalMode;
+
+  /// Whether the form differs from [initial] (or, for a new org, has anything typed), on every change.
+  final ValueChanged<bool>? onDirtyChanged;
+
   @override
   State<OrgForm> createState() => _OrgFormState();
 }
@@ -69,11 +96,28 @@ class _OrgFormState extends State<OrgForm> {
   late List<String> _owners = [...?widget.initial?.github?.owners];
   late PermissionMode? _permissionMode = widget.initial?.permissionMode;
   bool _githubTouched = false;
+  late AgentProvider _provider = widget.initial?.agent?.provider ?? AgentProvider.anthropic;
+  late final _agentAccount = TextEditingController(text: widget.initial?.agent?.account ?? '');
+  late final _budget = TextEditingController(text: budgetText(widget.initial?.cycleBudget));
+  late String? _agentModel = widget.initial?.agent?.model;
+  bool _agentTouched = false;
+  int _agentGeneration = 0;
+  AgentAccountStatus? _agentStatus;
+  List<AgentModel>? _agentModels;
+  String? _agentError;
+  bool _loggingIn = false;
+
+  /// Bumped by "Cancelar": a login wait from before stops polling.
+  int _loginRun = 0;
+  String? _loginNote;
   String? _error;
+  String? _nameError;
+  String? _rootsError;
   String? _ownerError;
   bool _busy = false;
 
   late GitHubRepository _github;
+  late SessionsRepository _sessions;
   bool _githubStarted = false;
   int _generation = 0;
   int _suggestionsGeneration = 0;
@@ -87,8 +131,10 @@ class _OrgFormState extends State<OrgForm> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _github = GitHubScope.of(context);
+    _sessions = SessionsScope.of(context);
     if (_githubStarted) return;
     _githubStarted = true;
+    if (_provider == AgentProvider.antigravity) unawaited(_loadAgent());
     unawaited(_loadGithub());
     for (final owner in _owners) {
       unawaited(_verify(owner));
@@ -99,6 +145,8 @@ class _OrgFormState extends State<OrgForm> {
   void dispose() {
     _name.dispose();
     _ownerInput.dispose();
+    _agentAccount.dispose();
+    _budget.dispose();
     super.dispose();
   }
 
@@ -151,12 +199,136 @@ class _OrgFormState extends State<OrgForm> {
     if (mounted && _owners.any((o) => o.toLowerCase() == key)) setState(() => _ssh[key] = result);
   }
 
+  String get _accountName {
+    final text = _agentAccount.text.trim();
+    return text.isEmpty ? kDefaultAgentAccount : text;
+  }
+
+  /// Login state and models of the typed account; a stale answer (account changed meanwhile) is dropped.
+  Future<void> _loadAgent() async {
+    final account = _accountName;
+    final generation = ++_agentGeneration;
+    setState(() {
+      _agentError = kAgentAccount.hasMatch(account) ? null : 'conta inválida: letras, números, ".", "_" ou "-"';
+      _agentStatus = null;
+      _agentModels = null;
+    });
+    if (_agentError != null) return;
+    try {
+      final status = await _sessions.agentAccount(account);
+      if (!mounted || generation != _agentGeneration) return;
+      setState(() => _agentStatus = status);
+      if (!status.loggedIn) return;
+      final models = await _sessions.agentModels(account);
+      if (mounted && generation == _agentGeneration) setState(() => _agentModels = models);
+    } on SessionsException catch (e, st) {
+      log('agent account unavailable', name: 'OrgForm', error: e, stackTrace: st);
+      if (mounted && generation == _agentGeneration) setState(() => _agentError = e.message);
+    }
+  }
+
+  /// Opens Terminal on the account, then polls until it is logged in, the account changes or [_kLoginWait] passes.
+  Future<void> _login() async {
+    final account = _accountName;
+    final generation = _agentGeneration;
+    final run = ++_loginRun;
+    bool current() => mounted && generation == _agentGeneration && run == _loginRun;
+    setState(() {
+      _loggingIn = true;
+      _agentError = null;
+      _loginNote = null;
+    });
+    try {
+      await _sessions.agentLogin(account);
+      final deadline = DateTime.now().add(_kLoginWait);
+      while (current() && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(_kLoginPoll);
+        if (!current()) return;
+        final status = await _sessions.agentAccount(account);
+        if (status.loggedIn) {
+          await _loadAgent();
+          return;
+        }
+      }
+      if (current()) {
+        setState(() => _loginNote = 'não detectamos o login em 5 min: tente de novo ou rode o comando abaixo');
+      }
+    } on SessionsException catch (e, st) {
+      log('agent login failed', name: 'OrgForm', error: e, stackTrace: st);
+      if (current()) setState(() => _agentError = e.message);
+    } finally {
+      if (mounted && run == _loginRun) setState(() => _loggingIn = false);
+    }
+  }
+
+  void _cancelLogin() => setState(() {
+    _loginRun++;
+    _loggingIn = false;
+  });
+
+  void _setProvider(AgentProvider? provider) {
+    if (provider == null) return;
+    setState(() {
+      _agentTouched = true;
+      _provider = provider;
+      _error = null;
+    });
+    if (provider == AgentProvider.antigravity) unawaited(_loadAgent());
+  }
+
+  OrgAgent? get _agentDraft {
+    if (!_agentTouched) return widget.initial?.agent;
+    if (_provider == AgentProvider.anthropic) return OrgAgent.anthropic;
+    final account = _agentAccount.text.trim();
+    return OrgAgent(provider: _provider, account: account.isEmpty ? null : account, model: _agentModel);
+  }
+
+  bool? _notifiedDirty;
+  bool _advanced = false;
+
+  /// The draft differs from what is saved: what Salvar would write is not what the file has.
+  bool get _dirty {
+    final initial = widget.initial;
+    if (initial == null) return _name.text.trim().isNotEmpty || _roots.isNotEmpty;
+    final github = _githubTouched ? OrgGithub(account: _account, owners: _owners) : initial.github;
+    return _name.text.trim() != initial.name ||
+        !sameStrings(_roots, initial.roots) ||
+        github != initial.github ||
+        _permissionMode != initial.permissionMode ||
+        _agentDraft != initial.agent ||
+        parseBudgetInput(_budget.text) != initial.cycleBudget;
+  }
+
+  /// After the frame: the parent rebuilds its own guards from this.
+  void _notifyDirty(bool dirty) {
+    if (dirty == _notifiedDirty || widget.onDirtyChanged == null) return;
+    _notifiedDirty = dirty;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onDirtyChanged!(dirty);
+    });
+  }
+
   bool _diverges(SshIdentity? identity) => identity != null && sshDivergence(identity, _account) != null;
 
-  bool get _blocked => _owners.any((o) {
-    final ssh = _ssh[o.toLowerCase()];
-    return ssh != null && (ssh.pending || _diverges(ssh.identity));
-  });
+  /// The GitHub part differs from what is saved. A divergence that is already saved is a warning, not a block:
+  /// otherwise a permission change would be stuck behind it.
+  bool get _githubChanged => _githubTouched && OrgGithub(account: _account, owners: _owners) != widget.initial?.github;
+
+  bool get _blocked => _blockReason != null;
+
+  /// Why Salvar is off, shown beside it: an SSH check still running or an SSH identity that contradicts the account.
+  String? get _blockReason {
+    if (!_githubChanged) return null;
+    for (final owner in _owners) {
+      final ssh = _ssh[owner.toLowerCase()];
+      if (ssh == null) continue;
+      if (ssh.pending) return 'verificando o SSH de $owner…';
+      if (ssh.identity case final identity? when _diverges(identity)) {
+        return '${sshDivergence(identity, _account)}. Remova $owner ou ajuste o ~/.ssh/config para salvar.';
+      }
+    }
+    return null;
+  }
 
   void _setAccount(String? account) {
     setState(() {
@@ -201,8 +373,12 @@ class _OrgFormState extends State<OrgForm> {
 
   void _addRoot(String path) {
     final root = normalizePath(path);
+    // The folder name is the usual org name: fill it when the user has not typed one.
+    if (_name.text.trim().isEmpty) _name.text = root.split('/').last;
     setState(() {
       _error = null;
+      _nameError = null;
+      _rootsError = null;
       if (_roots.contains(root)) return;
       _roots = _full ? [..._roots.sublist(0, _roots.length - 1), root] : [..._roots, root];
     });
@@ -225,10 +401,31 @@ class _OrgFormState extends State<OrgForm> {
   Future<void> _save() async {
     if (_busy || _blocked) return;
     final github = _githubTouched ? OrgGithub(account: _account, owners: _owners) : widget.initial?.github;
-    final draft = OrgConfig(name: _name.text.trim(), roots: _roots, github: github, permissionMode: _permissionMode);
-    final error = _roots.isEmpty ? 'escolha uma pasta para a org' : validateOrgs([...widget.others, draft]);
-    if (error != null) {
-      setState(() => _error = error);
+    final draft = OrgConfig(
+      name: _name.text.trim(),
+      roots: _roots,
+      github: github,
+      permissionMode: _permissionMode,
+      agent: _agentDraft,
+      cycleBudget: parseBudgetInput(_budget.text),
+    );
+    final agentAccount = draft.agent?.account;
+    // Both missing fields at once, each under its own field, name first.
+    final nameError = draft.name.isEmpty ? 'informe um nome para a org' : null;
+    final rootsError = _roots.isEmpty ? 'escolha uma pasta para a org' : null;
+    final error = nameError != null || rootsError != null
+        ? null
+        : agentAccount != null && !kAgentAccount.hasMatch(agentAccount)
+        ? 'conta do Antigravity inválida'
+        : draft.cycleBudget?.isNaN ?? false
+        ? 'orçamento inválido: use um valor positivo'
+        : validateOrgs([...widget.others, draft]);
+    if (nameError != null || rootsError != null || error != null) {
+      setState(() {
+        _nameError = nameError;
+        _rootsError = rootsError;
+        _error = error;
+      });
       return;
     }
     await _run(() async {
@@ -317,6 +514,11 @@ class _OrgFormState extends State<OrgForm> {
         const SizedBox(height: 10),
         const Muted('ORGS DO GITHUB', size: 10),
         const SizedBox(height: 6),
+        if (_owners.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 4),
+            child: Muted('nenhuma: PRs e "Para revisar" mostram todas as orgs da conta', size: 12),
+          ),
         if (_owners.isNotEmpty)
           Wrap(
             spacing: 6,
@@ -341,7 +543,11 @@ class _OrgFormState extends State<OrgForm> {
                 onChanged: (_) => setState(() => _ownerError = null),
                 onSubmitted: _addOwner,
                 style: const TextStyle(fontSize: 13),
-                decoration: const InputDecoration(labelText: 'Adicionar org do GitHub', isDense: true),
+                decoration: const InputDecoration(
+                  labelText: 'Adicionar org do GitHub',
+                  labelStyle: TextStyle(fontSize: 13),
+                  isDense: true,
+                ),
               ),
             ),
             IconButton(
@@ -359,6 +565,8 @@ class _OrgFormState extends State<OrgForm> {
           ),
         if (addable.isNotEmpty) ...[
           const SizedBox(height: 6),
+          Muted('sugestões da conta ${_account ?? 'ativa do gh'}:', size: 11),
+          const SizedBox(height: 4),
           Wrap(
             spacing: 6,
             runSpacing: 6,
@@ -372,11 +580,13 @@ class _OrgFormState extends State<OrgForm> {
             ],
           ),
         ],
-        if (_protocol != null || accounts != null) ...[
+        // Only worth saying when it gets in the way: over https the per-org SSH identity does not apply.
+        if (_protocol == 'https') ...[
           const SizedBox(height: 8),
           Text(
-            'git_protocol do gh: ${_protocol ?? 'não definido'}${_protocol == 'https' ? ' (recomendado: ssh)' : ''}',
-            style: TextStyle(fontSize: 12, color: _protocol == 'https' ? c.warn : c.textSecondary),
+            'o gh clona por https: a conta por org via SSH não vale. Rode gh config set git_protocol ssh.',
+            key: const ValueKey('org-github-https'),
+            style: TextStyle(fontSize: 12, color: c.warn),
           ),
         ],
       ],
@@ -398,19 +608,42 @@ class _OrgFormState extends State<OrgForm> {
               value: mode,
               style: TextStyle(fontSize: 13, color: c.textPrimary),
               items: [
-                const DropdownMenuItem<PermissionMode?>(value: null, child: Text('herdar global')),
-                for (final m in PermissionMode.values)
+                DropdownMenuItem<PermissionMode?>(
+                  value: null,
+                  child: Text('herdar global (${permissionModeLabel(widget.globalMode)})'),
+                ),
+                for (final m in kConfigPermissionModes)
                   DropdownMenuItem<PermissionMode?>(
                     value: m,
-                    child: Text(permissionModeLabel(m), style: TextStyle(color: permissionModeColor(c, m))),
+                    child: Text.rich(
+                      TextSpan(
+                        text: permissionModeLabel(m),
+                        style: TextStyle(color: permissionModeColor(c, m)),
+                        children: [
+                          TextSpan(
+                            text: '  ${permissionModeHint(m)}',
+                            style: TextStyle(fontSize: 11, color: c.textMuted),
+                          ),
+                        ],
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
               ],
               onChanged: _busy
                   ? null
-                  : (m) => setState(() {
-                      _permissionMode = m;
-                      _error = null;
-                    }),
+                  : (m) async {
+                      if (m == PermissionMode.bypassPermissions &&
+                          _permissionMode != m &&
+                          !await confirmBypass(context)) {
+                        return;
+                      }
+                      if (!mounted) return;
+                      setState(() {
+                        _permissionMode = m;
+                        _error = null;
+                      });
+                    },
             ),
           ),
         ),
@@ -419,6 +652,179 @@ class _OrgFormState extends State<OrgForm> {
             padding: const EdgeInsets.only(top: 4),
             child: Text(permissionModeHint(mode!), style: TextStyle(fontSize: 12, color: c.warn)),
           ),
+      ],
+    );
+  }
+
+  Widget _agentSection(AppColors c) {
+    final status = _agentStatus;
+    final models = _agentModels;
+    final model = _agentModel;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InputDecorator(
+          decoration: const InputDecoration(labelText: 'Provider', isDense: true),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<AgentProvider>(
+              key: const ValueKey('org-agent-provider'),
+              isDense: true,
+              isExpanded: true,
+              value: _provider,
+              style: TextStyle(fontSize: 13, color: c.textPrimary),
+              items: [for (final p in AgentProvider.values) DropdownMenuItem(value: p, child: Text(p.label))],
+              onChanged: _busy ? null : _setProvider,
+            ),
+          ),
+        ),
+        if (_provider == AgentProvider.anthropic)
+          const Padding(padding: EdgeInsets.only(top: 6), child: Muted('Claude Code com a sua conta', size: 12))
+        else ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('org-agent-account'),
+                  controller: _agentAccount,
+                  onChanged: (_) => setState(() {
+                    _agentTouched = true;
+                    _agentModel = null;
+                    _agentStatus = null;
+                    _agentModels = null;
+                  }),
+                  onSubmitted: (_) => _loadAgent(),
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    labelText: 'Conta',
+                    hintText: 'default (login da IDE)',
+                    hintStyle: TextStyle(fontSize: 13, color: c.textMuted),
+                    floatingLabelBehavior: FloatingLabelBehavior.always,
+                    isDense: true,
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('org-agent-check'),
+                tooltip: 'Verificar conta',
+                iconSize: 14,
+                visualDensity: VisualDensity.compact,
+                onPressed: _busy ? null : _loadAgent,
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (_agentError != null)
+            Text(_agentError!, style: TextStyle(fontSize: 12, color: c.warn))
+          else if (status == null)
+            const Muted('verifique a conta para ver o login e os modelos', size: 12)
+          else if (status.loggedIn)
+            Text('logada', style: TextStyle(fontSize: 12, color: c.pass))
+          else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _loggingIn ? 'aguardando o login no Terminal…' : 'sem login: entre com a conta Google desta org',
+                    style: TextStyle(fontSize: 12, color: c.warn),
+                  ),
+                ),
+                if (_loggingIn)
+                  TextButton(
+                    key: const ValueKey('org-agent-login-cancel'),
+                    onPressed: _cancelLogin,
+                    child: const Text('Cancelar', style: TextStyle(fontSize: 12)),
+                  )
+                else
+                  FilledButton.icon(
+                    key: const ValueKey('org-agent-login'),
+                    style: FilledButton.styleFrom(backgroundColor: c.accent, foregroundColor: Colors.white),
+                    onPressed: _busy ? null : _login,
+                    icon: const Icon(Icons.login, size: 14),
+                    label: const Text('Fazer login', style: TextStyle(fontSize: 12)),
+                  ),
+              ],
+            ),
+            if (_loginNote case final note?)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(note, style: TextStyle(fontSize: 12, color: c.warn)),
+              ),
+            const SizedBox(height: 6),
+            const Muted('abre o Terminal no agy desta conta; ou rode o comando:', size: 11),
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                Expanded(
+                  child: SelectableText(
+                    status.loginCommand,
+                    style: TextStyle(fontFamily: monoFamily, fontSize: 11, color: c.textSecondary),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copiar comando',
+                  iconSize: 14,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => Clipboard.setData(ClipboardData(text: status.loginCommand)),
+                  icon: const Icon(Icons.copy),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
+          InputDecorator(
+            decoration: const InputDecoration(labelText: 'Modelo', isDense: true),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String?>(
+                key: const ValueKey('org-agent-model'),
+                isDense: true,
+                isExpanded: true,
+                value: model,
+                style: TextStyle(fontSize: 13, color: c.textPrimary),
+                items: [
+                  const DropdownMenuItem<String?>(value: null, child: Text('padrão do agy')),
+                  for (final m in models ?? const <AgentModel>[])
+                    DropdownMenuItem<String?>(
+                      value: m.id,
+                      child: Text.rich(
+                        TextSpan(
+                          text: m.label,
+                          children: [
+                            if (m.quota case final quota?)
+                              TextSpan(
+                                text: '  ${quota.label(DateTime.now())}',
+                                style: TextStyle(fontSize: 11, color: quota.exhausted ? c.warn : c.textMuted),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (model != null && !(models ?? const <AgentModel>[]).any((m) => m.id == model))
+                    DropdownMenuItem<String?>(value: model, child: Text(model)),
+                ],
+                onChanged: _busy
+                    ? null
+                    : (m) => setState(() {
+                        _agentTouched = true;
+                        _agentModel = m;
+                      }),
+              ),
+            ),
+          ),
+          if (models?.where((m) => m.id == model).firstOrNull?.quota case final quota? when quota.exhausted)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'modelo ${quota.label(DateTime.now())}: as conversas livres desta org vão falhar até renovar',
+                key: const ValueKey('org-agent-model-exhausted'),
+                style: TextStyle(fontSize: 12, color: c.warn),
+              ),
+            ),
+          const SizedBox(height: 6),
+          const Muted('vale só para conversas livres; /skills e o Fluxo seguem no Claude Code', size: 11),
+        ],
       ],
     );
   }
@@ -456,21 +862,34 @@ class _OrgFormState extends State<OrgForm> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
+  Widget _generalSection(AppColors c) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
         TextField(
           controller: _name,
-          onChanged: (_) => setState(() => _error = null),
+          onChanged: (_) => setState(() {
+            _error = null;
+            _nameError = null;
+          }),
           onSubmitted: (_) => _save(),
           style: const TextStyle(fontSize: 13),
-          decoration: const InputDecoration(labelText: 'Nome', isDense: true),
+          decoration: InputDecoration(
+            labelText: 'Nome',
+            hintText: 'ex.: likin.do, pessoal, cliente-x',
+            floatingLabelBehavior: FloatingLabelBehavior.always,
+            isDense: true,
+            errorText: _nameError,
+          ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 14),
+        const Muted('PASTAS', size: 10),
+        const SizedBox(height: 6),
+        if (_roots.isEmpty)
+          _rootsError == null
+              ? const Muted('nenhuma pasta', size: 12)
+              : Text(_rootsError!, style: TextStyle(fontSize: 12, color: c.fail)),
         for (final root in _roots)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
@@ -515,10 +934,109 @@ class _OrgFormState extends State<OrgForm> {
             ],
           ),
         ],
-        const SizedBox(height: 14),
-        _permissionsSection(c),
-        const SizedBox(height: 14),
-        _githubSection(c),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final dirty = _dirty;
+    _notifyDirty(dirty);
+    final general = _FormSection(title: 'GERAL', child: _generalSection(c));
+    final permissions = _FormSection(title: 'PERMISSÕES', child: _permissionsSection(c));
+    final agent = _FormSection(title: 'AGENTE', child: _agentSection(c));
+    final budget = _FormSection(
+      title: 'ORÇAMENTO',
+      child: BudgetField(
+        key: const ValueKey('org-form-budget'),
+        controller: _budget,
+        label: 'Por ciclo',
+        hint: widget.globalBudget == null ? 'sem orçamento' : 'herdar global (${usd(widget.globalBudget!)})',
+        onChanged: (_) => setState(() {}),
+      ),
+    );
+    final github = _FormSection(child: _githubSection(c));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (widget.simple) ...[
+          general,
+          const SizedBox(height: 8),
+          InkWell(
+            key: const ValueKey('org-form-advanced'),
+            borderRadius: BorderRadius.circular(6),
+            onTap: () => setState(() => _advanced = !_advanced),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Icon(_advanced ? Icons.expand_less : Icons.expand_more, size: 18, color: c.textSecondary),
+                  const SizedBox(width: 6),
+                  Text('Opções avançadas', style: TextStyle(fontSize: 13, color: c.textPrimary)),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Muted(
+                      'padrão: aceitar edições · Claude · conta ativa do gh — dá para mudar depois em Configurações',
+                      size: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_advanced) ...[
+            permissions,
+            const SizedBox(height: 12),
+            agent,
+            const SizedBox(height: 12),
+            github,
+            const SizedBox(height: 12),
+            budget,
+          ],
+        ] else
+          LayoutBuilder(
+            builder: (_, constraints) => constraints.maxWidth >= 760
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            general,
+                            const SizedBox(height: 12),
+                            permissions,
+                            const SizedBox(height: 12),
+                            agent,
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [github, const SizedBox(height: 12), budget],
+                        ),
+                      ),
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      general,
+                      const SizedBox(height: 12),
+                      permissions,
+                      const SizedBox(height: 12),
+                      agent,
+                      const SizedBox(height: 12),
+                      github,
+                      const SizedBox(height: 12),
+                      budget,
+                    ],
+                  ),
+          ),
         if (_error != null) ...[
           const SizedBox(height: 8),
           Text(_error!, style: TextStyle(fontSize: 12, color: c.fail)),
@@ -528,20 +1046,63 @@ class _OrgFormState extends State<OrgForm> {
           children: [
             FilledButton(
               style: FilledButton.styleFrom(backgroundColor: c.accent, foregroundColor: Colors.white),
-              onPressed: _busy || _blocked ? null : _save,
+              onPressed: _busy || _blocked || (widget.initial != null && !dirty) ? null : _save,
               child: Text(widget.saveLabel, style: const TextStyle(fontSize: 12)),
             ),
-            if (widget.onRemove case final remove?) ...[
-              const SizedBox(width: 8),
+            const SizedBox(width: 12),
+            Expanded(
+              child: switch (_blockReason) {
+                final reason? => Text(
+                  reason,
+                  key: const ValueKey('org-form-blocked'),
+                  style: TextStyle(fontSize: 12, color: c.fail),
+                ),
+                null when dirty && widget.initial != null => Text(
+                  'alterações não salvas',
+                  key: const ValueKey('org-form-dirty'),
+                  style: TextStyle(fontSize: 12, color: c.warn),
+                ),
+                null => const SizedBox.shrink(),
+              },
+            ),
+            // Away from Salvar: removing is not undoable.
+            if (widget.onRemove case final remove?)
               TextButton(
                 style: TextButton.styleFrom(foregroundColor: c.fail),
                 onPressed: _busy ? null : () => _run(remove),
                 child: const Text('Remover org', style: TextStyle(fontSize: 12)),
               ),
-            ],
           ],
         ),
       ],
+    );
+  }
+}
+
+class _FormSection extends StatelessWidget {
+  const _FormSection({this.title, required this.child});
+
+  final String? title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.canvas,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (title case final title?) ...[Muted(title, size: 10), const SizedBox(height: 10)],
+          child,
+        ],
+      ),
     );
   }
 }

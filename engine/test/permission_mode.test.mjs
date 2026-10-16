@@ -109,7 +109,7 @@ test("criacao: sem modo e default; todo modo aceito vai ao SDK com a flag de byp
   assert.equal(spy.calls.at(-1).permissionMode, "default");
   assert.equal(spy.calls.at(-1).allowDangerouslySkipPermissions, true);
 
-  for (const mode of ["default", "acceptEdits", "auto", "bypassPermissions"]) {
+  for (const mode of ["default", "acceptEdits", "auto", "bypassPermissions", "plan"]) {
     const created = await create(port, "oi", { permissionMode: mode });
     assert.equal((await summaryOf(port, created)).permissionMode, mode);
     assert.equal(spy.calls.at(-1).permissionMode, mode);
@@ -123,7 +123,7 @@ test("criacao: sem modo e default; todo modo aceito vai ao SDK com a flag de byp
   assert.equal(spy.calls.at(-1).permissionMode, "acceptEdits");
 
   const before = spy.calls.length;
-  for (const permissionMode of ["x", "plan", null]) {
+  for (const permissionMode of ["x", "dontAsk", null]) {
     const invalid = await api(port, "POST", "/api/sessions", { project: "demo", cwd: os.tmpdir(), command: "oi", permissionMode });
     assert.equal(invalid.status, 400);
   }
@@ -148,7 +148,7 @@ test("troca ao vivo: setPermissionMode no SDK, evento permission_mode, summary n
   await waitFor(() => eventsOf(engine, id, "result").at(-1)?.text === "Edit aplicado");
   assert.equal(eventsOf(engine, id, "permission").length, 0);
 
-  assert.equal((await api(port, "POST", `/api/sessions/${id}/permission-mode`, { mode: "plan" })).status, 400);
+  assert.equal((await api(port, "POST", `/api/sessions/${id}/permission-mode`, { mode: "dontAsk" })).status, 400);
   assert.equal((await api(port, "POST", "/api/sessions/nope/permission-mode", { mode: "default" })).status, 404);
 });
 
@@ -244,4 +244,34 @@ test("sessao sem processo: a troca so grava e vale no proximo attach", async () 
 
   await api(port, "POST", `/api/sessions/${id}/resume`);
   assert.equal(spy.calls.at(-1).permissionMode, "bypassPermissions");
+});
+
+test("pergunta lateral: fork do transcript da origem em plan, sem tocar nela; sobrevive ao restore", async () => {
+  const first = await start();
+  const parent = await createIdle(first.port, { permissionMode: "acceptEdits" });
+  const parentSdk = first.engine.sessions.get(parent).sdkSessionId;
+
+  const res = await api(first.port, "POST", `/api/sessions/${parent}/aside`, { text: "por que essa abordagem?" });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.asideOf, parent);
+  assert.equal(res.body.permissionMode, "plan");
+  assert.equal(res.body.title, "por que essa abordagem?");
+  const options = first.spy.calls.at(-1);
+  assert.equal(options.resume, parentSdk);
+  assert.equal(options.forkSession, true);
+  assert.equal(options.permissionMode, "plan");
+
+  await waitFor(async () => (await summaryOf(first.port, res.body.id)).status === "idle");
+  const aside = first.engine.sessions.get(res.body.id);
+  assert.notEqual(aside.sdkSessionId, parentSdk);
+  assert.equal(first.engine.sessions.get(parent).sdkSessionId, parentSdk);
+  assert.equal(first.engine.sessions.get(parent).events.filter((e) => e.kind === "user_text").length, 1);
+
+  assert.equal((await api(first.port, "POST", `/api/sessions/${parent}/aside`, { text: " " })).status, 400);
+  assert.equal((await api(first.port, "POST", "/api/sessions/nope/aside", { text: "x" })).status, 404);
+  await first.engine.sessions.shutdown({ waitMs: 200 });
+
+  const { port } = await start({ sessionsDir: first.sessionsDir });
+  assert.equal((await summaryOf(port, res.body.id)).asideOf, parent);
+  assert.equal((await summaryOf(port, parent)).asideOf, null);
 });

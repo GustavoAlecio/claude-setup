@@ -58,10 +58,12 @@ SessionSummary _session(
   String createdAt = '2026-03-10T10:00:00Z',
   String? org,
   int pending = 0,
+  String? skill,
 }) => SessionSummary(
   id: id,
   project: project,
   command: command,
+  skill: skill,
   title: command,
   status: status,
   createdAt: createdAt,
@@ -338,7 +340,6 @@ void main() {
     test('plano em ordem; tentativas e escaladas somam os runs, tier final e status vêm do mais recente', () {
       final cycle = Cycle(
         stage: Stage.verify,
-        autoMode: false,
         stageMinutes: const {},
         plan: [
           for (final id in ['T1', 'T2', 'T3'])
@@ -379,7 +380,6 @@ void main() {
     test('sem plano usa as tasks dos runs de implement, sem as correções do verify', () {
       final cycle = Cycle(
         stage: Stage.verify,
-        autoMode: false,
         stageMinutes: const {},
         runs: [
           _run('verify-20260310T113000Z', 'verify', [_task('V1')]),
@@ -391,7 +391,7 @@ void main() {
     });
 
     test('ciclo sem plano nem runs: tabela vazia', () {
-      expect(taskTable(const Cycle(stage: Stage.kickoff, autoMode: false, stageMinutes: {}, runs: [])), isEmpty);
+      expect(taskTable(const Cycle(stage: Stage.kickoff, stageMinutes: {}, runs: [])), isEmpty);
     });
   });
 
@@ -476,6 +476,12 @@ void main() {
       ]) {
         expect(runningStageSession([_session('s', cmd)], project), isNotNull, reason: cmd);
       }
+    });
+
+    test('conversa livre que rodou /kickoff depois conta; a última skill decide', () {
+      expect(runningStageSession([_session('s', 'me explica o repo', skill: '/kickoff')], project)?.id, 's');
+      expect(runningStageSession([_session('s', '/kickoff', skill: '/review')], project), isNull);
+      expect(runningStageSession([_session('s', 'me explica o repo')], project), isNull);
     });
 
     test('ignora outros comandos, status encerrado, org e outro projeto', () {
@@ -597,6 +603,27 @@ void main() {
     });
 
     test('sem ?stage, a sessão viva', () => expect(shown(null, running: live), 'live'));
+  });
+
+  group('orphanCurrentStage', () {
+    final doc = parseReport(_report([_stage('specify'), _stage('verify', status: 'running')]));
+    final cycle = parseCycle(
+      {'status': 'verifying', 'feature': 'F', 'start_date': '2026-03-10T08:00:00Z'},
+      projectName: 'p',
+      report: doc,
+    );
+
+    test('etapa em andamento sem sessão → a etapa', () {
+      expect(orphanCurrentStage(cycle, Stage.verify, hasSession: false), Stage.verify);
+      expect(orphanCurrentStage(cycle, null, hasSession: false), cycle.stage);
+    });
+
+    test('com sessão, etapa concluída/pendente ou sem ciclo → null', () {
+      expect(orphanCurrentStage(cycle, Stage.verify, hasSession: true), isNull);
+      expect(orphanCurrentStage(cycle, Stage.specify, hasSession: false), isNull);
+      expect(orphanCurrentStage(cycle, Stage.complete, hasSession: false), isNull);
+      expect(orphanCurrentStage(null, Stage.verify, hasSession: false), isNull);
+    });
   });
 
   group('stageBannerShowsOpenLink', () {

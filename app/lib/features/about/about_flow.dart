@@ -293,8 +293,8 @@ class _LadderPanel extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
               child: Text(
-                '${stack.name} — G1: ${stack.g1Reviewers.isEmpty ? '—' : stack.g1Reviewers.join(', ')}'
-                ' · G2: ${stack.g2Agent ?? '—'}',
+                '${stack.name} — revisão de código (G1): ${stack.g1Reviewers.isEmpty ? '—' : stack.g1Reviewers.join(', ')}'
+                ' · QA (G2): ${stack.g2Agent ?? '—'}',
                 style: TextStyle(fontSize: 12, color: c.textSecondary),
               ),
             ),

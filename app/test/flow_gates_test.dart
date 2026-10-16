@@ -86,7 +86,7 @@ ReportDoc _report(List<Map<String, Object?>> stages) => parseReport(
 Project _withCycle({ReportDoc? report}) => Project(
   name: _project,
   path: '/synthetic/$_project',
-  cycle: Cycle(stage: Stage.challenge, autoMode: true, stageMinutes: const {}, runs: const [], report: report),
+  cycle: Cycle(stage: Stage.challenge, stageMinutes: const {}, runs: const [], report: report),
 );
 
 const _noCycle = Project(name: _project, path: '/synthetic/$_project');

@@ -47,7 +47,7 @@ void main() {
     await tester.tap(find.text('Execuções'));
     await tester.pumpAndSettle();
     expect(find.text('Escada por task'), findsOneWidget);
-    expect(find.text('lente: plan'), findsOneWidget);
+    expect(find.text('ângulo: plan'), findsOneWidget);
 
     final t4 = find.text('Sincronização offline com fila de mutações');
     await tester.ensureVisible(t4);
@@ -76,6 +76,45 @@ void main() {
     expect(stopped, greaterThan(ok));
     expect(stopped, lessThanOrEqualTo(120));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the autopilot shows the real flag; turning it on asks first, turning it off does not', (tester) async {
+    final repo = MockFlowRepository();
+    await tester.pumpWidget(_app(repo));
+    await tester.pumpAndSettle();
+    Finder pill(String label) =>
+        find.descendant(of: find.byKey(const ValueKey('auto-mode')), matching: find.text(label));
+    expect(pill('off'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('auto-mode')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ligar o piloto automático?'), findsOneWidget);
+    await tester.tap(find.text('Cancelar'));
+    await tester.pumpAndSettle();
+    expect(repo.autoMode, isFalse);
+
+    await tester.tap(find.byKey(const ValueKey('auto-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ligar'));
+    await tester.pumpAndSettle();
+    expect(repo.autoMode, isTrue);
+    expect(pill('on'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('auto-mode')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ligar o piloto automático?'), findsNothing);
+    expect(repo.autoMode, isFalse);
+  });
+
+  testWidgets('a blocked task puts a decision banner on top of the Fluxo that opens the diagnosis', (tester) async {
+    await tester.pumpWidget(_app(MockFlowRepository()));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('flow-decision-banner')), findsOneWidget);
+    await tester.tap(find.text('Decidir'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('diagnóstico', findRichText: true), findsWidgets);
+    expect(find.byKey(const ValueKey('flow-decision-banner')), findsNothing);
   });
 
   testWidgets('pending task row is not navigable', (tester) async {
@@ -109,7 +148,6 @@ void main() {
         path: '/dev/longo',
         cycle: Cycle(
           stage: Stage.implement,
-          autoMode: false,
           stageMinutes: const {},
           runs: [
             Run(
@@ -177,10 +215,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('nenhum PR registrado; abra com /pr-open'), findsOneWidget);
 
-    await tester.tap(find.text('Para revisar'));
-    await tester.pumpAndSettle();
-    expect(find.text('nenhum PR esperando sua revisão'), findsOneWidget);
-
     await tester.tap(find.text('Métricas'));
     await tester.pumpAndSettle();
     expect(find.text('nenhum ciclo registrado'), findsOneWidget);
@@ -188,6 +222,14 @@ void main() {
     await tester.tap(find.text('ADRs'));
     await tester.pumpAndSettle();
     expect(find.text('este projeto não tem ADRs'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('sidebar-inbox')));
+    await tester.pumpAndSettle();
+    expect(find.text('nenhum PR esperando sua revisão'), findsOneWidget);
+    expect(
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).routerDelegate.currentConfiguration.uri.toString(),
+      '/o/demo/revisar',
+    );
   });
 
   group('two runs in one cycle', () {
@@ -237,7 +279,6 @@ void main() {
         path: '/dev/duplo',
         cycle: Cycle(
           stage: Stage.implement,
-          autoMode: false,
           stageMinutes: const {},
           runs: [newer, older],
           plan: [
@@ -276,7 +317,7 @@ void main() {
       expect(find.text('Titulo T1').evaluate().length, 1);
       expect(tester.getTopLeft(find.text('Titulo T1')).dy, lessThan(second.dy));
       expect(
-        find.text('lente: plan'),
+        find.text('ângulo: plan'),
         findsNothing,
         reason: 'T2 blocked in the older run was resolved by the newer one',
       );

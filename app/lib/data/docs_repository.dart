@@ -112,6 +112,9 @@ abstract interface class DocsRepository {
 
   /// Recusa (com log) tudo que não passa em [opensExternally].
   Future<void> open(Uri uri);
+
+  /// Mostra no Finder um arquivo contido no diretório do projeto (mesma regra de [read]); `false` se recusou.
+  Future<bool> reveal(String project, String rel);
 }
 
 class DocsScope extends InheritedWidget {

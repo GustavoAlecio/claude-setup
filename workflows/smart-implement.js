@@ -79,14 +79,23 @@ const HYPOTHESIS = {
 
 const trace = []
 const spent = () => budget.spent()
+let agentDown = false
 
 async function step(role, task, attempt, tier, fn) {
   const before = spent()
   let out = null
+  let threw = false
   try {
     out = await fn()
   } catch (e) {
+    threw = true
     log(`${role} ${task.id}#${attempt} sem resultado: ${String(e && e.message || e).slice(0, 160)}`)
+  }
+  // agent() resolves null without throwing only when stopped or on an unrecoverable API error (e.g. a usage limit in
+  // an SDK session, which never pauses): that says nothing about the task, so it must not feed gates, ladder or diagnose.
+  if (out === null && !threw) {
+    agentDown = true
+    log(`${role} ${task.id}#${attempt} agente caiu (parado ou erro de API)`)
   }
   const open = out && out.findings ? blocking(out) : []
   trace.push({
@@ -187,6 +196,7 @@ for (const task of A.tasks || []) {
     const dev = await step('dev', task, attempts, tier, () =>
       agent(devPrompt(task, tier, attempts, feedback, cp),
         { label: `dev:${task.id}#${attempts}@${tier}`, phase: 'Implement', model: tier, agentType: 'dev-implementer', schema: DEV_RESULT }))
+    if (agentDown) { outcome = { status: 'blocked', reason: 'agent_failed' }; break }
     // A dev that ends without the structured result may still have done the work: let the gates judge the diff.
     const devReported = !!dev
     lastDev = dev || { status: 'done', summary: 'dev sem resultado estruturado; gates julgaram o diff', files_changed: [], decisions: [] }
@@ -196,6 +206,7 @@ for (const task of A.tasks || []) {
       agent(`Rode exatamente o comando abaixo e devolva o JSON impresso no stdout, campo a campo, sem interpretar nem resumir:
 python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --checkpoint ${cp} --tests "${(task.tests || []).join(',')}" --run-dir ${A.run_dir} --task ${task.id} --attempt ${attempts} --tier ${tier}`,
         { label: `g0:${task.id}#${attempts}`, phase: 'G0', model: 'haiku', effort: 'low', schema: G0_VERDICT }))
+    if (agentDown) { outcome = { status: 'blocked', reason: 'agent_failed' }; break }
     if (!g0) { outcome = { status: 'blocked', reason: 'g0_failed_to_run' }; break }
 
     let g1 = null
@@ -203,6 +214,7 @@ python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --che
       g1 = await step('g1', task, attempts, tier, () =>
         agent(g1Prompt(task, cp, attempts, tier),
           { label: `g1:${task.id}#${attempts}`, phase: 'G1', model: atLeast('opus', tier), effort: 'high', agentType: A.stack.g1_task_reviewer, schema: VERDICT }))
+      if (agentDown) { outcome = { status: 'blocked', reason: 'agent_failed' }; break }
       if (!g1) { outcome = { status: 'blocked', reason: 'g1_failed_to_run' }; break }
     }
 
@@ -241,6 +253,7 @@ python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --che
 Depois: python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role escalate --task ${task.id} --attempt ${attempts} --tier ${nt} --note "from ${tier}"
 Devolva ok=true se o restore imprimiu "restored", e o stdout em output.`,
         { label: `rollback:${task.id}`, phase: 'Ops', model: 'haiku', effort: 'low', schema: OPS }))
+    if (agentDown) { outcome = { status: 'blocked', reason: 'agent_failed' }; break }
     if (!ops || !ops.ok) { outcome = { status: 'blocked', reason: 'rollback_failed' }; break }
 
     escalations.push({ from: tier, to: nt, at_attempt: attempts, open: [...keys] })

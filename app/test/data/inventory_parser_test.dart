@@ -272,7 +272,7 @@ void main() {
     });
 
     test('adrBody e markDuplicateAdrs', () {
-      expect(adrBody('---\nid: 1\n---\n# T\ncorpo'), '# T\ncorpo');
+      expect(adrBody('---\nid: 1\n---\n# T\ncorpo'), 'corpo');
       expect(adrBody('sem fm'), 'sem fm');
       expect(adrBody('---\nsem fim'), '---\nsem fim');
       const a = AdrEntry(id: '0001', title: 'a', status: 'accepted', path: '/d/0001-a.md');

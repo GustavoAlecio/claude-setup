@@ -159,7 +159,7 @@ void main() {
 
       await _meta(tester, LogicalKeyboardKey.keyI);
       expect(_location(tester), '/about');
-      expect(find.text('Sobre o app'), findsOneWidget);
+      expect(find.text('Como funciona'), findsOneWidget);
       expect(find.text('Execuções'), findsNothing, reason: 'no shell tabs on /about');
       expect(tester.getTopLeft(find.widgetWithText(TextButton, 'Voltar')).dy, greaterThanOrEqualTo(kTitleBarInset));
 
@@ -187,7 +187,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('⌘I'), findsOneWidget);
 
-      await tester.tap(find.text('Sobre o app'));
+      await tester.tap(find.text('Como funciona'));
       await tester.pumpAndSettle();
       expect(_location(tester), '/about');
     });
@@ -196,6 +196,7 @@ void main() {
   group('flow', () {
     testWidgets('8 nodes in Stage order with the mock models and phases', (tester) async {
       await _openAbout(tester, MockInventoryRepository());
+      await _tab(tester, 'Fluxo');
 
       final centers = [for (final s in Stage.values) tester.getCenter(_node(s))];
       for (var i = 1; i < centers.length; i++) {
@@ -234,6 +235,7 @@ void main() {
 
     testWidgets('missing verify skill renders "não instalado" and keeps the other 7', (tester) async {
       await _openAbout(tester, MockInventoryRepository(omitSkills: {'verify'}));
+      await _tab(tester, 'Fluxo');
 
       expect(_in(_node(Stage.verify), find.text('não instalado')), findsOneWidget);
       for (final stage in Stage.values.where((s) => s != Stage.verify)) {
@@ -244,6 +246,7 @@ void main() {
 
     testWidgets('ladder in order, tier0 per complexity, fixed risk text and blocking', (tester) async {
       await _openAbout(tester, MockInventoryRepository());
+      await _tab(tester, 'Fluxo');
 
       final ladder = find.byKey(const ValueKey('about-ladder'));
       final xs = [
@@ -256,7 +259,10 @@ void main() {
       expect(_in(ladder, find.text(kRiskRule)), findsOneWidget);
       expect(_in(ladder, find.text(kRiskRulePath)), findsOneWidget);
       expect(_in(ladder, find.text('critical, major')), findsOneWidget);
-      expect(_in(ladder, find.text('flutter — G1: flutter-architecture · G2: qa-flutter')), findsOneWidget);
+      expect(
+        _in(ladder, find.text('flutter — revisão de código (G1): flutter-architecture · QA (G2): qa-flutter')),
+        findsOneWidget,
+      );
     });
   });
 

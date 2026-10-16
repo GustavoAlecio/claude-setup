@@ -86,6 +86,8 @@ class _Sessions extends MockSessionsRepository {
     List<String> additionalDirectories = const [],
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     if (orgError case final error?) throw error;
     return super.createInOrg(
@@ -95,6 +97,7 @@ class _Sessions extends MockSessionsRepository {
       additionalDirectories: additionalDirectories,
       githubAccount: githubAccount,
       permissionMode: permissionMode,
+      agent: agent,
     );
   }
 
@@ -462,6 +465,45 @@ void main() {
 
       expectOrgCall('liste as pastas');
       expect(sessions.orgCreateCalls.single.$5, 'acct-a');
+    });
+
+    testWidgets('the model chosen in the palette goes with the session', (tester) async {
+      final config = _config();
+      (config['orgs'] as List).first['agent'] = {'provider': 'antigravity', 'model': 'gemini-3.8-flash-high'};
+      await pump(tester, config: config);
+      await _go(tester, '/o/A/sessions');
+
+      await _metaShift(tester, LogicalKeyboardKey.keyK);
+      await tester.tap(find.text('Nova conversa em A'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('palette-model-antigravity')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Gemini 3.1 Pro (High)').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'liste as pastas');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(
+        sessions.agentCalls.single,
+        const OrgAgent(provider: AgentProvider.antigravity, model: 'gemini-3.1-pro-high'),
+      );
+    });
+
+    testWidgets('a free prompt runs on the org agent; a /skill stays on Anthropic', (tester) async {
+      final config = _config();
+      (config['orgs'] as List).first['agent'] = {'provider': 'antigravity', 'account': 'likin.do', 'model': 'gemini-x'};
+      await pump(tester, config: config);
+      await _go(tester, '/o/A/sessions');
+
+      await _metaShift(tester, LogicalKeyboardKey.keyK);
+      await startAndSend(tester);
+
+      expectOrgCall('liste as pastas');
+      expect(
+        sessions.agentCalls.single,
+        const OrgAgent(provider: AgentProvider.antigravity, account: 'likin.do', model: 'gemini-x'),
+      );
     });
 
     testWidgets('an org without github keeps the active account', (tester) async {

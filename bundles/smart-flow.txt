@@ -10,6 +10,7 @@ skills/adr
 skills/auto
 skills/status
 skills/fix
+skills/app
 agents/dev-implementer.md
 agents/spec-challenger.md
 workflows/
@@ -23,3 +24,4 @@ bin/wf-event.py
 bin/gate_g0.py
 bin/adr-index.py
 bin/routing-stats.py
+bin/to-app.py

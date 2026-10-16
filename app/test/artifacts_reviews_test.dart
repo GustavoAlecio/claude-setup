@@ -40,11 +40,17 @@ class _EmittingFlow extends MockFlowRepository {
   void emit() => _emissions.add(List.of(projects));
 }
 
-Future<GoRouter> _open(WidgetTester tester, String location, {DocsRepository? docs, FlowRepository? flow}) async {
+Future<GoRouter> _open(
+  WidgetTester tester,
+  String location, {
+  DocsRepository? docs,
+  FlowRepository? flow,
+  MockSessionsRepository? sessions,
+}) async {
   await tester.pumpWidget(
     ClaudeFlowApp(
       repository: flow ?? MockFlowRepository(),
-      sessions: MockSessionsRepository(),
+      sessions: sessions ?? MockSessionsRepository(),
       engine: const MockEngineController(),
       docs: docs ?? MockDocsRepository(),
     ),
@@ -92,9 +98,12 @@ void main() {
       expect(find.text('WORKFLOW'), findsOneWidget);
       expect(find.text('DETALHAMENTOS'), findsOneWidget);
       final order = ['plan.md', 'spec.md', 'tasks.md', '2026-03-12-login', '2026-03-10-cache'];
-      final ys = [for (final t in order) tester.getTopLeft(find.text(t)).dy];
+      final ys = [for (final t in order) tester.getTopLeft(find.text(t).first).dy];
       expect(ys, [...ys]..sort());
       expect(find.byWidgetPredicate((w) => w is Tooltip && w.message == '2026-03-12-login'), findsOneWidget);
+      // The open document's toolbar repeats its path and offers copy and Finder.
+      expect(find.text('plan.md'), findsNWidgets(2));
+      expect(find.byKey(const ValueKey('artifact-reveal')), findsOneWidget);
       expect(find.text('Plano'), findsOneWidget);
 
       await tester.tap(find.text('spec.md'));
@@ -106,6 +115,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(_at(router), '/p/demo-app/artifacts?doc=details%2F2026-03-12-login.md');
       expect(find.text('Detalhamento: login'), findsOneWidget);
+    });
+
+    testWidgets('"Mostrar no Finder" asks the repository to reveal the open document', (tester) async {
+      final docs = MockDocsRepository();
+      await _open(tester, '/p/demo-app/artifacts?doc=spec.md', docs: docs);
+
+      await tester.tap(find.byKey(const ValueKey('artifact-reveal')));
+      await tester.pumpAndSettle();
+      expect(docs.revealed, [('demo-app', 'spec.md')]);
     });
 
     testWidgets('unknown ?doc= falls back to the first item', (tester) async {
@@ -406,5 +424,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Artefatos'), findsNothing);
     expect(find.text('Reviews'), findsNothing);
+  });
+
+  testWidgets('review actions: approve runs /approve-review; publish asks before /post-review', (tester) async {
+    final sessions = MockSessionsRepository();
+    await _open(tester, '/p/demo-app/reviews', sessions: sessions);
+
+    await tester.tap(find.byKey(const ValueKey('review-approve')));
+    await tester.pumpAndSettle();
+    expect(sessions.createCalls.last.$2, '/approve-review 157');
+
+    await _open(tester, '/p/demo-app/reviews', sessions: sessions);
+    await tester.tap(find.byKey(const ValueKey('review-publish')));
+    await tester.pumpAndSettle();
+    expect(find.text('Publicar a revisão no PR #157?'), findsOneWidget);
+    await tester.tap(find.text('Publicar'));
+    await tester.pumpAndSettle();
+    expect(sessions.createCalls.last.$2, '/post-review 157');
   });
 }

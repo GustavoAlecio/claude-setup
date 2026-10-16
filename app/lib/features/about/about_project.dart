@@ -134,6 +134,32 @@ class _ProjectSections extends StatelessWidget {
                       ],
                     ),
             ),
+          const SectionTitle('WORKFLOWS DO PROJETO'),
+          if (data.workflows.isEmpty) const Muted('nenhum: rodam os de ~/.claude/workflows'),
+          if (data.workflows.isNotEmpty)
+            const Muted('.claude/workflows do repo; têm precedência sobre o pessoal de mesmo nome', size: 11),
+          for (final w in data.workflows)
+            Padding(
+              key: ValueKey('about-project-workflow-${w.path}'),
+              padding: const EdgeInsets.only(top: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Mono(w.meta.name, color: c.textPrimary),
+                  if (w.meta.error != null)
+                    ErrorText(w.meta.error!)
+                  else if (w.meta.description.isNotEmpty)
+                    Text(w.meta.description, style: TextStyle(fontSize: 12, color: c.textSecondary)),
+                ],
+              ),
+            ),
+          if (data.ladder case final ladder?) ...[
+            const SizedBox(height: 8),
+            const Muted('escada efetiva neste projeto', size: 11),
+            if (ladder.error != null) ErrorText(ladder.error!),
+            if (ladder.tiers.isNotEmpty)
+              Mono(ladder.tiers.join(' → '), key: const ValueKey('about-project-ladder'), color: c.textPrimary),
+          ],
         ],
         const SectionTitle('LESSONS'),
         if (data.lessons.isEmpty) const Muted('nenhuma'),
@@ -163,13 +189,13 @@ class _RoutingTable extends StatelessWidget {
         if (routing.bands.isEmpty) const Muted('nenhuma'),
         for (final b in routing.bands)
           Text(
-            '${b.complexity}/${b.risk} · n ${b.n} · pass tier0 ${b.passTier0} · escaladas ${b.escalated}'
+            '${b.complexity}/${b.risk} · ${b.n} tasks · ${b.passTier0} aprovadas no 1º modelo · ${b.escalated} escaladas'
             ' · bloqueadas ${b.blocked} · tentativas/task ${b.attemptsPerTask.toStringAsFixed(1)}'
             ' · finais ${b.finalTiers.entries.map((e) => '${e.key} ${e.value}').join(', ')}',
             style: style,
           ),
         const SizedBox(height: 8),
-        const Muted('overrides', size: 11),
+        const Muted('ajustes manuais da escada', size: 11),
         if (routing.overrides.isEmpty) const Muted('nenhum'),
         for (final MapEntry(:key, :value) in routing.overrides.entries) Mono('$key → $value'),
       ],

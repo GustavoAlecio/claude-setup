@@ -25,6 +25,8 @@ class _FailingSessions extends MockSessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async => throw const SessionsException(_engineError, statusCode: 500);
 }
 
@@ -38,9 +40,18 @@ class _SlowSessions extends MockSessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
+    return super.create(
+      project,
+      command,
+      cwd: cwd,
+      githubAccount: githubAccount,
+      permissionMode: permissionMode,
+      agent: agent,
+    );
   }
 }
 
@@ -123,9 +134,7 @@ void main() {
       await tester.enterText(_idField, '123');
       await tester.tap(_start);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [
-        ('demo-app', '/kickoff 123', _demoPath, 'acct-a', PermissionMode.bypassPermissions),
-      ]);
+      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, 'acct-a', PermissionMode.acceptEdits)]);
     });
 
     testWidgets('a card ID starts the tracker kickoff in the project folder', (tester) async {
@@ -139,7 +148,7 @@ void main() {
 
       await tester.tap(_start);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, null, PermissionMode.bypassPermissions)]);
+      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, null, PermissionMode.acceptEdits)]);
       expect(_location(tester), '/p/demo-app/sessions/mock-1');
       expect(_form('demo-app'), findsNothing);
     });
@@ -151,9 +160,7 @@ void main() {
       await tester.enterText(_idField, 'lc-101');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [
-        ('demo-app', '/kickoff LC-101', _demoPath, null, PermissionMode.bypassPermissions),
-      ]);
+      expect(sessions.createCalls, [('demo-app', '/kickoff LC-101', _demoPath, null, PermissionMode.acceptEdits)]);
     });
 
     testWidgets('manual bug sends the description verbatim and opens the session', (tester) async {
@@ -213,6 +220,11 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text(label).last);
       await tester.pumpAndSettle();
+      if (label == 'bypass') {
+        expect(find.text('Usar bypass?'), findsOneWidget);
+        await tester.tap(find.text('Usar bypass'));
+        await tester.pumpAndSettle();
+      }
     }
 
     testWidgets('the form shows the org mode and a change applies to this session only', (tester) async {
@@ -322,7 +334,7 @@ void main() {
 
       await _meta(tester, LogicalKeyboardKey.enter);
       expect(sessions.createCalls, [
-        ('demo-app', '/kickoff --manual\n\nalgo', _demoPath, null, PermissionMode.bypassPermissions),
+        ('demo-app', '/kickoff --manual\n\nalgo', _demoPath, null, PermissionMode.acceptEdits),
       ]);
     });
 
@@ -396,12 +408,12 @@ void main() {
       expect(_form('demo-app'), findsOneWidget);
     });
 
-    testWidgets('choosing the kickoff skill in the palette opens the form', (tester) async {
+    testWidgets('the kickoff skill is listed once, as Novo kickoff, and opens the form', (tester) async {
       final sessions = await pump(tester, '/p/demo-app/flow');
       await _meta(tester, LogicalKeyboardKey.keyK);
       await tester.enterText(find.byType(TextField).last, 'kick');
       await tester.pump();
-      expect(_paletteItem('/kickoff'), findsOneWidget);
+      expect(_paletteItem('/kickoff'), findsNothing);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
@@ -422,5 +434,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('ID do card'), findsNothing);
     });
+  });
+
+  testWidgets('a project with an active cycle warns that the kickoff will ask about resetting it', (tester) async {
+    await pump(tester, '/p/demo-app/flow');
+    await openFromTopBar(tester);
+    expect(find.byKey(const ValueKey('kickoff-active-cycle')), findsOneWidget);
+    expect(find.textContaining('«Favoritos offline» em implement'), findsOneWidget);
   });
 }

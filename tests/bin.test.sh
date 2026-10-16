@@ -603,4 +603,50 @@ grep -q "ADRs propostas" "$SK/skills/pr-open/SKILL.md" || fail "pr-open: sem se�
 grep -q "pt-BR" "$SK/agents/dev-implementer.md" || fail "dev-implementer: sem pt-BR"
 grep -q "repo inteiro" "$SK/agents/dev-implementer.md" || fail "dev-implementer: sem proibição de formatador no repo inteiro"
 
+echo "- wf-cycle: pause/resume flag current.json under the lock; archive files the cycle as abandoned"
+C=$(tmp); mkdir -p "$C/.claude/workflow/demo"
+echo '{"feature":"F","start_date":"2026-10-01T00:00:00Z"}' > "$C/.claude/workflow/demo/current.json"
+echo "# P" > "$C/.claude/workflow/demo/phases.md"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" pause demo
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['paused'] is True and d['paused_at'], d" "$C/.claude/workflow/demo/current.json" || fail "pause flag"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" resume demo
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert 'paused' not in d and 'paused_at' not in d, d" "$C/.claude/workflow/demo/current.json" || fail "resume flag"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" archive demo >/dev/null
+[ ! -e "$C/.claude/workflow/demo/current.json" ] || fail "archive left current.json"
+[ -f "$C/.claude/workflow/demo/phases.md" ] || fail "archive dropped phases.md"
+grep -q '"status": "abandoned"' "$C"/.claude/projects/demo/history/*/metrics.json || fail "archive status"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" pause demo 2>/dev/null && fail "pause without a cycle must fail"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" pause ../x 2>/dev/null && fail "unsafe project name accepted"
+
+echo "- to-app: asks the connected app to open this session at the CLI's cwd; without a session it refuses"
+C=$(tmp); mkdir -p "$C/.claude/sessions" "$C/.claude/workflow/.dashboard/engine-sessions" "$C/stub"
+SID=11111111-1111-4111-8111-111111111111
+echo "{\"pid\":4242,\"sessionId\":\"$SID\",\"cwd\":\"/repos/demo/pkg\"}" > "$C/.claude/sessions/4242.json"
+printf '#!/bin/sh\necho "$@" >> "%s/opened"\n' "$C" > "$C/stub/open"; chmod +x "$C/stub/open"
+printf '#!/bin/sh\nexit 1\n' > "$C/stub/pgrep"; chmod +x "$C/stub/pgrep"  # no instance open: falls back to open -b
+python3 - "$C" <<'PY' &
+import http.server, json, sys
+root = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def reply(self, body):
+        self.send_response(200); self.send_header("content-type", "application/json"); self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+    def do_GET(self): self.reply({"clients": 1})
+    def do_POST(self):
+        open(f"{root}/posted", "w").write(self.path + " " + self.rfile.read(int(self.headers["content-length"])).decode())
+        self.reply({"clients": 1})
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(f"{root}/.claude/workflow/.dashboard/engine-sessions/engine.json", "w").write(json.dumps({"pid": 1, "port": s.server_port}))
+s.serve_forever()
+PY
+SRV=$!
+for _ in $(seq 50); do [ -s "$C/.claude/workflow/.dashboard/engine-sessions/engine.json" ] && break; sleep 0.1; done
+OUT=$(PATH="$C/stub:$PATH" CLAUDE_HOME="$C/.claude" CLAUDE_CODE_SESSION_ID=$SID CLAUDE_PID=4242 python3 "$BIN/to-app.py")
+kill $SRV; wait $SRV 2>/dev/null || true
+[ "$(cat "$C/posted")" = "/api/ui/open-terminal {\"sdkSessionId\": \"$SID\", \"cwd\": \"/repos/demo/pkg\"}" ] || fail "to-app body: $(cat "$C/posted")"
+grep -q -- "-b dev.claudesetup.claudeFlow" "$C/opened" || fail "to-app did not bring the app forward"
+case "$OUT" in "sessao 11111111 enviada"*) ;; *) fail "to-app output: $OUT" ;; esac
+env -u CLAUDE_CODE_SESSION_ID CLAUDE_HOME="$C/.claude" python3 "$BIN/to-app.py" 2>/dev/null && fail "to-app without a session must fail"
+
 echo "OK"

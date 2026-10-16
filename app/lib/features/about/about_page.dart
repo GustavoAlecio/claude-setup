@@ -14,6 +14,7 @@ import 'about_config.dart';
 import 'about_flow.dart';
 import 'about_inventory.dart';
 import 'about_project.dart';
+import 'about_start.dart';
 
 /// Loads the inventory once and keeps it across tabs; only "Recarregar" reads `~/.claude` again.
 class AboutPage extends StatefulWidget {
@@ -28,7 +29,10 @@ class AboutPage extends StatefulWidget {
 }
 
 class _AboutPageState extends State<AboutPage> {
-  static const _tabs = ['Fluxo', 'Inventário', 'Projeto', 'Config'];
+  static const _tabs = ['Começar', 'Fluxo', 'Inventário', 'Projeto', 'Config'];
+
+  /// Tabs from here on explain how the app is built, for whoever maintains it.
+  static const _diagnosticsFrom = 1;
 
   Future<Inventory>? _inventory;
   int _generation = 0;
@@ -71,7 +75,7 @@ class _AboutPageState extends State<AboutPage> {
                       label: const Text('Voltar', style: TextStyle(fontSize: 12)),
                     ),
                     const SizedBox(width: 8),
-                    Text('Sobre o app', style: Theme.of(context).textTheme.titleMedium),
+                    Text('Como funciona', style: Theme.of(context).textTheme.titleMedium),
                     const Spacer(),
                     TextButton.icon(
                       style: TextButton.styleFrom(foregroundColor: c.textSecondary),
@@ -84,8 +88,11 @@ class _AboutPageState extends State<AboutPage> {
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    for (final (i, label) in _tabs.indexed)
+                    for (final (i, label) in _tabs.indexed) ...[
+                      if (i == _diagnosticsFrom)
+                        const Padding(padding: EdgeInsets.fromLTRB(16, 0, 4, 0), child: Muted('DIAGNÓSTICO', size: 10)),
                       _TabButton(label: label, selected: i == _tab, onTap: () => setState(() => _tab = i)),
+                    ],
                   ],
                 ),
               ],
@@ -104,6 +111,7 @@ class _AboutPageState extends State<AboutPage> {
                 return IndexedStack(
                   index: _tab,
                   children: [
+                    const AboutStart(),
                     AboutFlow(inventory: inventory),
                     AboutInventory(inventory: inventory, paletteSkills: config?.paletteSkills),
                     AboutProject(routeProject: routeProject(widget.backTo()), generation: _generation),

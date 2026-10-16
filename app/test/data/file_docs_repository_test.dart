@@ -209,5 +209,17 @@ void main() {
 
       expect(calls, isEmpty);
     });
+
+    test('reveal shows a contained file with open -R and refuses escapes and unknown projects', () async {
+      _write('$proj/spec.md', 's');
+      _write('${tmp.path}/secret.md', 'x');
+      Link('$proj/link.md').createSync('${tmp.path}/secret.md');
+
+      expect(await opener.reveal('demo', 'spec.md'), isTrue);
+      expect(await opener.reveal('demo', '../../secret.md'), isFalse);
+      expect(await opener.reveal('demo', 'link.md'), isFalse);
+      expect(await opener.reveal('nope', 'spec.md'), isFalse);
+      expect(calls, ['open -R ${File('$proj/spec.md').resolveSymbolicLinksSync()}']);
+    });
   });
 }

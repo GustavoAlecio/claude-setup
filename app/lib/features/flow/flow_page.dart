@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/config_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/ladder.dart';
+import '../../core/widgets/auto_mode.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/budget.dart';
 import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
@@ -14,6 +17,7 @@ import '../../data/orgs.dart';
 import '../../data/session_reducer.dart';
 import '../../data/session_models.dart';
 import '../launcher/kickoff_form.dart';
+import 'cycle_actions.dart';
 import 'flow_panels.dart';
 import 'last_cycle_line.dart';
 import 'report_extras.dart';
@@ -67,7 +71,13 @@ class _FlowView extends StatelessWidget {
           stage: stage,
           pending: pending,
         )
-        ? FlowSidePanel(projectName: projectName, project: project, report: report, session: shown)
+        ? FlowSidePanel(
+            projectName: projectName,
+            project: project,
+            report: report,
+            session: shown,
+            orphanStage: orphanCurrentStage(project?.cycle, stage, hasSession: shown != null),
+          )
         : null;
     final c = context.colors;
     // `main` keeps the same ancestors with or without `side`, so its state (e.g. LastCycleLine) survives the toggle.
@@ -212,10 +222,16 @@ class _FlowMain extends StatelessWidget {
     }
     final run = cycle.latestRun;
     final report = cycle.report;
+    final decision = blockedDecision(project);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        if (decision != null) ...[
+          _DecisionBanner(project: project.name, decision: decision),
+          const SizedBox(height: 16),
+        ],
         if (banner != null) ...[banner, const SizedBox(height: 16)],
+        if (cycle.paused) PausedBanner(project: project) else _BudgetBanner(project: project, cycle: cycle),
         StageTimeline(
           report: report,
           derived: derivedStageStates(cycle),
@@ -299,6 +315,7 @@ class _CycleCard extends StatelessWidget {
     );
     return Panel(
       title: 'Ciclo',
+      trailing: CycleMenu(project: project),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -308,11 +325,15 @@ class _CycleCard extends StatelessWidget {
           if (cycle.branch case final branch?) row('Branch', Mono(branch)),
           if (project.stack case final stack?) row('Stack', Mono(stack)),
           if (project.path case final path?) row('Repo', Mono(path)),
+          _CostRow(project: project, cycle: cycle, row: row),
           row(
             'Piloto',
             Align(
               alignment: Alignment.centerLeft,
-              child: Pill(label: cycle.autoMode ? 'on' : 'off', color: cycle.autoMode ? c.accent : c.idle, dot: false),
+              child: AutoModeBuilder(
+                builder: (_, on) =>
+                    Pill(label: on == true ? 'on' : 'off', color: on == true ? c.accent : c.idle, dot: false),
+              ),
             ),
           ),
           if (run != null) ...[
@@ -439,4 +460,145 @@ class _Stat extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// Top of the Fluxo while a task is blocked: the cycle does not move until the user picks a way out.
+class _DecisionBanner extends StatelessWidget {
+  const _DecisionBanner({required this.project, required this.decision});
+
+  final String project;
+  final ({Run run, TaskRun task}) decision;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final task = decision.task;
+    return Container(
+      key: const ValueKey('flow-decision-banner'),
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+      decoration: BoxDecoration(
+        color: c.fail.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.fail.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.report_outlined, color: c.fail, size: 18),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  const TextSpan(
+                    text: 'Ciclo parado: ',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  TextSpan(
+                    text: '${task.id} · ${task.title} bloqueou. O diagnóstico está pronto e espera a sua decisão.',
+                  ),
+                ],
+              ),
+              style: TextStyle(fontSize: 13, color: c.textPrimary),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: c.fail, foregroundColor: Colors.white),
+            onPressed: () => context.go(decisionLocation(project, decision)),
+            child: const Text('Decidir', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+({double cost, double? budget, BudgetState state}) _budgetOf(BuildContext context, Project project, Cycle cycle) {
+  final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
+  final config = context.watch<ConfigCubit>().state.data;
+  final cost = cycleCost(cycle, project.name, sessions);
+  final budget = cycleBudgetFor(project.org, config);
+  return (cost: cost, budget: budget, state: budgetState(cost, budget));
+}
+
+class _CostRow extends StatelessWidget {
+  const _CostRow({required this.project, required this.cycle, required this.row});
+
+  final Project project;
+  final Cycle cycle;
+  final Widget Function(String, Widget) row;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final (:cost, :budget, :state) = _budgetOf(context, project, cycle);
+    final color = switch (state) {
+      BudgetState.over => c.fail,
+      BudgetState.near => c.warn,
+      BudgetState.ok || BudgetState.none => c.textPrimary,
+    };
+    return row(
+      'Custo',
+      Row(
+        key: const ValueKey('flow-cycle-cost'),
+        children: [
+          Mono(budget == null ? usd(cost) : '${usd(cost)} de ${usd(budget)}', color: color),
+          if (budget == null) ...[
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'sem orçamento (Configurações)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: c.textMuted),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown from 80% of the cycle's budget; past it, in red. Only sessions started since the cycle began count.
+class _BudgetBanner extends StatelessWidget {
+  const _BudgetBanner({required this.project, required this.cycle});
+
+  final Project project;
+  final Cycle cycle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final (:cost, :budget, :state) = _budgetOf(context, project, cycle);
+    if (budget == null || state == BudgetState.ok || state == BudgetState.none) return const SizedBox.shrink();
+    final over = state == BudgetState.over;
+    final color = over ? c.fail : c.warn;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Container(
+        key: const ValueKey('flow-budget-banner'),
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.savings_outlined, size: 18, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                over
+                    ? 'O ciclo passou do orçamento: ${usd(cost)} de ${usd(budget)}.'
+                    : 'O ciclo já usou ${(cost / budget * 100).round()}% do orçamento: ${usd(cost)} de ${usd(budget)}.',
+                style: TextStyle(fontSize: 12.5, color: c.textPrimary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

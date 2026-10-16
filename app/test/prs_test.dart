@@ -29,9 +29,18 @@ class _SlowSessions extends MockSessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
+    return super.create(
+      project,
+      command,
+      cwd: cwd,
+      githubAccount: githubAccount,
+      permissionMode: permissionMode,
+      agent: agent,
+    );
   }
 }
 
@@ -43,6 +52,8 @@ class _FailingSessions extends MockSessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     createCalls.add((project, command, cwd, githubAccount, permissionMode));
     throw const SessionsException('cwd fora das raízes', statusCode: 400);
@@ -240,7 +251,7 @@ void main() {
     );
     await _open(tester, github);
 
-    expect(find.text('2 PR(s) com comentários esperando você'), findsOneWidget);
+    expect(find.text('2 PRs com comentários esperando você'), findsOneWidget);
     expect(find.text('não consegui consultar o GitHub'), findsNothing);
   });
 
@@ -248,12 +259,12 @@ void main() {
     await _open(tester, MockGitHubRepository(pullRequests: [_pr()]));
 
     expect(find.text('lib/a.dart:10 @rev'), findsNothing);
-    await tester.tap(find.text('▸ 1 comentário(s)'));
+    await tester.tap(find.text('▸ 1 comentário'));
     await tester.pumpAndSettle();
     expect(find.text('lib/a.dart:10 @rev'), findsOneWidget);
     expect(find.byWidgetPredicate((w) => w is MarkdownView && w.source == 'Extraia **isto**.'), findsOneWidget);
 
-    await tester.tap(find.text('▾ 1 comentário(s)'));
+    await tester.tap(find.text('▾ 1 comentário'));
     await tester.pumpAndSettle();
     expect(find.text('lib/a.dart:10 @rev'), findsNothing);
   });
@@ -294,7 +305,7 @@ void main() {
 
     sessions.gate.complete();
     await tester.pumpAndSettle();
-    expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', null, PermissionMode.bypassPermissions));
+    expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', null, PermissionMode.acceptEdits));
     expect(_location(tester), '/p/x/sessions/mock-1');
   });
 
@@ -312,7 +323,7 @@ void main() {
 
     await tester.tap(_resolve(1));
     await tester.pumpAndSettle();
-    expect(sessions.createCalls.single, ('x', '/pr-status', '/dev/org/a/', null, PermissionMode.bypassPermissions));
+    expect(sessions.createCalls.single, ('x', '/pr-status', '/dev/org/a/', null, PermissionMode.acceptEdits));
   });
 
   testWidgets('known project path with a divergent remote keeps Resolver disabled', (tester) async {
@@ -509,7 +520,7 @@ void main() {
 
       await tester.tap(_resolve(1));
       await tester.pumpAndSettle();
-      expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', 'acct-a', PermissionMode.bypassPermissions));
+      expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', 'acct-a', PermissionMode.acceptEdits));
     });
 
     testWidgets('project outside any org uses the active account', (tester) async {

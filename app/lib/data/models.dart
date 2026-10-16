@@ -190,21 +190,29 @@ class Cycle {
   const Cycle({
     required this.stage,
     required this.runs,
-    required this.autoMode,
     required this.stageMinutes,
     this.plan = const [],
     this.feature,
     this.tracker,
     this.branch,
     this.report,
+    this.startedAt,
+    this.pausedAt,
   });
 
   final String? feature;
+
+  /// Set while the user parked the cycle (`paused` in `current.json`): no attention, budget or decision nagging.
+  final DateTime? pausedAt;
+
+  bool get paused => pausedAt != null;
+
+  /// `start_date` of `current.json`; `null` when absent or unreadable.
+  final DateTime? startedAt;
   final String? tracker;
   final Stage stage;
   final String? branch;
   final List<Run> runs;
-  final bool autoMode;
   final Map<Stage, int> stageMinutes;
 
   /// Planned tasks from current.json in plan order, without attempts.

@@ -160,6 +160,33 @@ class _KickoffFormState extends State<_KickoffForm> {
                 children: [
                   Text('Novo kickoff em ${widget.project.name}', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 14),
+                  if (widget.project.cycle case final cycle? when cycle.stage != Stage.complete) ...[
+                    Container(
+                      key: const ValueKey('kickoff-active-cycle'),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: c.warn.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: c.warn.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.warning_amber_rounded, size: 16, color: c.warn),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Este projeto já tem o ciclo «${cycle.feature ?? widget.project.name}» em '
+                              '${cycle.stage.label}. Um card diferente faz o /kickoff perguntar se você quer '
+                              'resetar esse ciclo antes de começar o novo.',
+                              style: TextStyle(fontSize: 12, color: c.textPrimary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   CallbackShortcuts(
                     bindings: {
                       const SingleActivator(LogicalKeyboardKey.enter): _submit,

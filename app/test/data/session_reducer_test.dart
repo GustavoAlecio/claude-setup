@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/session_reducer.dart';
@@ -261,7 +262,7 @@ void main() {
       expect(d.summary.interrupted, isTrue);
       expect(d.summary.status, SessionStatus.idle);
 
-      d = applyFrame(d, _event(4, {'kind': 'permission_mode', 'mode': 'plan'}));
+      d = applyFrame(d, _event(4, {'kind': 'permission_mode', 'mode': 'dontAsk'}));
       expect(d.summary.interrupted, isTrue);
 
       d = applyFrame(d, _event(5, {'kind': 'user_text', 'text': 'continue'}));
@@ -316,7 +317,7 @@ void main() {
       expect(d.summary.status, SessionStatus.idle);
       expect(d.lastSeq, 1);
 
-      final ignored = applyFrame(d, _event(2, {'kind': 'permission_mode', 'mode': 'plan'}));
+      final ignored = applyFrame(d, _event(2, {'kind': 'permission_mode', 'mode': 'dontAsk'}));
       expect(ignored.summary.permissionMode, PermissionMode.bypassPermissions);
       expect(ignored.lastSeq, 2);
     });
@@ -501,9 +502,101 @@ void main() {
       expect(parseSummary(json('bypassPermissions')).permissionMode, PermissionMode.bypassPermissions);
       expect(parseSummary(json('auto')).permissionMode, PermissionMode.auto);
       expect(parseSummary(json(null)).permissionMode, PermissionMode.defaultMode);
-      expect(parseSummary(json('plan')).permissionMode, PermissionMode.defaultMode);
+      expect(parseSummary(json('dontAsk')).permissionMode, PermissionMode.defaultMode);
       final list = applySessionsFrame(const [], SseFrame('summary', jsonEncode(json('acceptEdits'))));
       expect(list.single.permissionMode, PermissionMode.acceptEdits);
     });
+  });
+
+  test('parseSummary reads provider and account; their absence is Anthropic', () {
+    final agy = parseSummary({'id': 'a', 'provider': 'antigravity', 'account': 'likin.do'});
+    expect((agy.provider, agy.account), (AgentProvider.antigravity, 'likin.do'));
+    final old = parseSummary({'id': 'b'});
+    expect((old.provider, old.account), (AgentProvider.anthropic, null));
+  });
+
+  test('ImageAttachment.mediaTypeOf recognizes PNG, JPEG, GIF and WebP by their bytes', () {
+    Uint8List b(List<int> bytes) => Uint8List.fromList([...bytes, ...List.filled(12, 0)]);
+    expect(ImageAttachment.mediaTypeOf(b([0x89, 0x50, 0x4E, 0x47])), 'image/png');
+    expect(ImageAttachment.mediaTypeOf(b([0xFF, 0xD8, 0xFF])), 'image/jpeg');
+    expect(ImageAttachment.mediaTypeOf(b([0x47, 0x49, 0x46, 0x38])), 'image/gif');
+    expect(ImageAttachment.mediaTypeOf(b([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])), 'image/webp');
+    expect(ImageAttachment.mediaTypeOf(b([0x49, 0x49, 0x2A, 0x00])), isNull, reason: 'TIFF');
+  });
+
+  test('a user_text with a /skill updates the summary skill; plain text keeps it', () {
+    var d = _reduce([_event(1, {'kind': 'user_text', 'text': 'me explica'})]);
+    expect(d.summary.skill, isNull);
+    d = applyFrame(d, _event(2, {'kind': 'user_text', 'text': '  /kickoff --manual idioma'}));
+    expect(d.summary.skill, '/kickoff');
+    d = applyFrame(d, _event(3, {'kind': 'user_text', 'text': 'e o default?'}));
+    expect(d.summary.skill, '/kickoff');
+    expect(parseSummary({'id': 'x', 'skill': '/plan'}).skill, '/plan');
+    expect(parseSummary({'id': 'x', 'asideOf': 'p1', 'permissionMode': 'plan'}).asideOf, 'p1');
+    expect(parseSummary({'id': 'x', 'permissionMode': 'plan'}).permissionMode, PermissionMode.plan);
+  });
+
+  test('parseHandoff reads only well-formed open-terminal frames', () {
+    expect(
+      parseHandoff(SseFrame('open-terminal', jsonEncode({'sdkSessionId': 'a', 'cwd': '/x'}))),
+      (sdkSessionId: 'a', cwd: '/x'),
+    );
+    expect(parseHandoff(SseFrame('open-terminal', jsonEncode({'sdkSessionId': 'a'}))), isNull);
+    expect(parseHandoff(SseFrame('summary', jsonEncode({'sdkSessionId': 'a', 'cwd': '/x'}))), isNull);
+  });
+
+  test('imported adds a note and its first reattached is no interruption; forked adds another note', () {
+    final detached = _summary.copyWith(status: SessionStatus.detached);
+    var d = _reduce([
+      _event(1, {'kind': 'user_text', 'text': 'oi'}),
+      _event(2, {'kind': 'imported', 'dropped': 12}),
+    ], summary: detached);
+    expect(d.events.last, isA<SessionNote>().having((n) => n.dropped, 'dropped', 12));
+    d = applyFrame(d, _event(3, {'kind': 'reattached', 'forked': true}));
+    expect(d.summary.interrupted, isFalse);
+    expect(d.summary.status, SessionStatus.idle);
+    expect(d.events.last, isA<SessionNote>().having((n) => n.kind, 'kind', SessionNoteKind.forked));
+    d = applyFrame(d, _event(4, {'kind': 'reattached'}));
+    expect(d.summary.interrupted, isTrue, reason: 'a later reattach is the engine restarting');
+  });
+
+  test('user_text keeps the attachment names', () {
+    final detail = applyFrame(
+      const SessionDetail(
+        summary: SessionSummary(
+          id: 's',
+          project: 'p',
+          command: 'c',
+          title: 't',
+          status: SessionStatus.idle,
+          createdAt: '',
+        ),
+      ),
+      SseFrame(
+        'event',
+        jsonEncode({
+          'seq': 1,
+          'at': 'x',
+          'kind': 'user_text',
+          'text': 'oi',
+          'images': ['a.png'],
+        }),
+      ),
+    );
+    expect((detail.events.single as UserText).images, ['a.png']);
+  });
+
+  test('AgentQuota.label: percent or esgotado, then the time to reset', () {
+    final now = DateTime.utc(2026, 10, 6, 17);
+    expect(
+      AgentQuota(remaining: 0.97, resetsAt: DateTime.utc(2026, 10, 13, 12, 12)).label(now),
+      '97% · renova em 6d 19h',
+    );
+    expect(
+      AgentQuota(remaining: 0, resetsAt: DateTime.utc(2026, 10, 6, 19, 5)).label(now),
+      'esgotado · renova em 2h 5min',
+    );
+    expect(AgentQuota(remaining: 0, resetsAt: DateTime.utc(2026, 10, 6, 16)).label(now), 'esgotado · renovando');
+    expect(const AgentQuota(remaining: 0.5).label(now), '50%');
   });
 }

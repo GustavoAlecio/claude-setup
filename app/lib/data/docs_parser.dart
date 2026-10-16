@@ -298,3 +298,13 @@ List<DiffRow> buildDiffRows(List<DiffFile> files, List<ReviewComment> comments, 
   }
   return rows;
 }
+
+/// Stage of the Fluxo Smart that writes a root artifact, from its file name; `null` when none does.
+String? artifactStage(String rel) => switch (rel) {
+  'spec.md' => 'specify',
+  'challenge.md' || 'challenge-spec.md' => 'challenge-spec',
+  'plan.md' || 'adr-candidates.md' => 'plan',
+  'phases.md' || 'tasks.md' => 'tasks',
+  'verify.md' || 'qa.md' => 'verify',
+  _ => null,
+};
