@@ -24,6 +24,7 @@ const atLeast = (floor, tier) => (RANK[tier] >= RANK[floor] ? tier : floor)
 const nextTier = t => LADDER[RANK[t] + 1] || 'human'
 const fkey = f => `${f.gate || ''}:${f.file || ''}:${f.rule_ref || f.id || ''}`
 const blocking = v => (v && v.findings ? v.findings.filter(f => BLOCKING.includes(f.severity)).map(f => ({ ...f, gate: v.gate })) : [])
+const slim = f => ({ id: f.id, severity: f.severity, file: f.file, line: f.line, rule_ref: f.rule_ref, message: (f.message || '').slice(0, 300) })
 
 const FINDING = {
   type: 'object',
@@ -80,13 +81,15 @@ const spent = () => budget.spent()
 async function step(role, task, attempt, tier, fn) {
   const before = spent()
   const out = await fn()
+  const open = out && out.findings ? blocking(out) : []
   trace.push({
     role,
     task: task.id,
     attempt,
     tier,
     verdict: out ? out.verdict || out.status || (out.ok === undefined ? null : out.ok ? 'ok' : 'error') : 'agent_failed',
-    blocking: out && out.findings ? blocking(out).map(fkey) : [],
+    blocking: open.map(fkey),
+    findings: open.map(slim),
     tokens_out: spent() - before,
   })
   return out
@@ -122,7 +125,7 @@ Implemente SOMENTE esta task, seguindo o plano. Crie os testes listados se ainda
 - "decisions": decisões não-óbvias que tomou e que podem merecer ADR.${fb}`
 }
 
-function g1Prompt(task, checkpoint) {
+function g1Prompt(task, checkpoint, attempt, tier) {
   return `${context(task)}
 
 Você é o gate G1 (arquitetural) desta task. Ignore o formato de saída em array JSON da sua definição: devolva pela ferramenta StructuredOutput no schema dado, com gate="G1".
@@ -131,7 +134,7 @@ Julgue contra rules do projeto, ADRs aceitos que casam com os arquivos, CLAUDE.m
 - critical/major só com prova (linha, cenário, regra violada em rule_ref: caminho da rule ou ADR). Esses reprovam.
 - Estilo, preferência, melhoria opcional → minor/nit (não reprovam).
 - Não revise o que o G0 já cobre (format, lints do analyzer, testes).
-Ao final rode: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role g1 --task ${task.id} --verdict <pass|fail> --count <n bloqueantes>\``
+Ao final rode: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role g1 --task ${task.id} --attempt ${attempt} --tier ${tier} --verdict <pass|fail> --count <n bloqueantes>\``
 }
 
 async function diagnose(task, history) {
@@ -190,7 +193,7 @@ python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --che
     let g1 = null
     if (g0.verdict === 'pass') {
       g1 = await step('g1', task, attempts, tier, () =>
-        agent(g1Prompt(task, cp),
+        agent(g1Prompt(task, cp, attempts, tier),
           { label: `g1:${task.id}#${attempts}`, phase: 'G1', model: atLeast('opus', tier), effort: 'high', agentType: A.stack.g1_task_reviewer, schema: VERDICT }))
       if (!g1) { outcome = { status: 'blocked', reason: 'g1_failed_to_run' }; break }
     }
@@ -221,7 +224,7 @@ python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --che
 
     const ops = await step('ops', task, attempts, tier, () =>
       agent(`Rode exatamente: bash ${BIN}/wf-checkpoint.sh restore ${A.project_path} ${cp}
-Depois: python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role escalate --task ${task.id} --tier ${nt} --note "from ${tier}"
+Depois: python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role escalate --task ${task.id} --attempt ${attempts} --tier ${nt} --note "from ${tier}"
 Devolva ok=true se o restore imprimiu "restored", e o stdout em output.`,
         { label: `rollback:${task.id}`, phase: 'Ops', model: 'haiku', effort: 'low', schema: OPS }))
     if (!ops || !ops.ok) { outcome = { status: 'blocked', reason: 'rollback_failed' }; break }

@@ -1,0 +1,23 @@
+name: claude_flow
+description: "macOS dashboard for the Claude Code Smart Flow"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_bloc: ^9.1.1
+  go_router: ^17.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_driver:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

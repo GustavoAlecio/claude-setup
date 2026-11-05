@@ -59,6 +59,7 @@ const QA = {
 }
 
 const blocking = v => (v && v.findings ? v.findings.filter(f => BLOCKING.includes(f.severity)).map(f => ({ ...f, gate: v.gate })) : [])
+const slim = f => ({ id: f.id, severity: f.severity, file: f.file, line: f.line, rule_ref: f.rule_ref, message: (f.message || '').slice(0, 300) })
 const topTier = tasks => tasks.reduce((t, x) => (RANK[x.tier] > RANK[t] ? x.tier : t), 'opus')
 const trace = []
 
@@ -87,7 +88,8 @@ Rodada ${round}. Ao final: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_di
 async function timed(role, round, fn) {
   const before = budget.spent()
   const out = await fn()
-  trace.push({ role, stage: 'verify', round, verdict: out ? out.verdict : 'agent_failed', blocking: blocking(out).map(f => `${f.gate}:${f.file}:${f.rule_ref || f.id}`), tokens_out: budget.spent() - before })
+  const open = blocking(out)
+  trace.push({ role, stage: 'verify', round, verdict: out ? out.verdict : 'agent_failed', blocking: open.map(f => `${f.gate}:${f.file}:${f.rule_ref || f.id}`), findings: open.map(slim), tokens_out: budget.spent() - before })
   return out
 }
 

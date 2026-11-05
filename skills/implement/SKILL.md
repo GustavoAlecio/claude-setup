@@ -21,7 +21,7 @@ Cada item de `tasks.items` precisa de `complexity`, `tier0`, `tests` e `affects`
 
 ## 3. Stack
 
-Escolha o profile em `~/.claude/stacks/*.json` cujo `detect` existe na raiz do repo (Flutter: `pubspec.yaml`). Monorepo com mais de uma stack: use a do diretório onde a maioria dos `affects` cai. Nenhum profile casa → pare e diga qual stack falta (o motor não roda sem G0).
+Escolha o profile em `~/.claude/stacks/*.json` cujo `detect` existe na raiz do repo ou no package root mais próximo dos `affects` (Flutter: `pubspec.yaml`; app em subdiretório como `app/` conta). Monorepo com mais de uma stack: use a do diretório onde a maioria dos `affects` cai. Nenhum profile casa → pare e diga qual stack falta (o motor não roda sem G0).
 
 ## 4. Preparar run
 

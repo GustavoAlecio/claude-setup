@@ -1,0 +1,102 @@
+{
+  "current": {
+    "phases": {
+      "specify": {
+        "start": "2026-03-10T06:00:00Z",
+        "end": "2026-03-10T06:05:00Z"
+      }
+    },
+    "status": "implementing",
+    "feature": "Fixture quebrada",
+    "project": "broken",
+    "project_path": "/synthetic/broken",
+    "start_date": "2026-03-10T06:00:00Z",
+    "end_date": null,
+    "blockers": [],
+    "tags": [],
+    "tasks": {
+      "total": 1,
+      "completed": 0,
+      "current_task_id": null,
+      "items": [
+        {
+          "id": "T1",
+          "title": "Task quebrada",
+          "complexity": "S",
+          "risk": "low",
+          "tier0": "haiku",
+          "affects": [],
+          "tests": [],
+          "description": "Tarefa sintética T1.",
+          "tier": "haiku",
+          "attempts": 0,
+          "status": "pending"
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "id": "impl-20260312T060000Z",
+      "result": null,
+      "events": [
+        {
+          "ts": "2026-03-12T06:00:05Z",
+          "run_id": "impl-20260312T060000Z",
+          "role": "dev",
+          "task": "T1",
+          "tier": "haiku",
+          "verdict": "start",
+          "attempt": 1
+        },
+        {
+          "ts": "2026-03-12T06:01:00Z",
+          "run_id": "impl-20260312T060000Z",
+          "role": "g0",
+          "task": "T1",
+          "tier": "haiku",
+          "verdict": "pass",
+          "attempt": 1,
+          "count": 0
+        }
+      ],
+      "events_tail_raw": "{\"ts\": \"2026-03-12T06:02:00Z\", \"run_id\": \"impl-20260312T0600"
+    },
+    {
+      "id": "impl-20260312T070000Z",
+      "result": {
+        "status": "done",
+        "checkpoint": "0000000000000000000000000000000000000c3d",
+        "tasks": [
+          {
+            "id": "T1",
+            "complexity": "S",
+            "risk": "low",
+            "tier0": "haiku",
+            "tier": "haiku",
+            "attempts": 1,
+            "escalations": [],
+            "status": "done",
+            "reason": null,
+            "files_changed": [],
+            "decisions": [],
+            "summary": "ok"
+          }
+        ],
+        "trace": [
+          {
+            "role": "dev",
+            "task": "T1",
+            "attempt": 1,
+            "tier": "haiku",
+            "verdict": "done",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 100
+          }
+        ]
+      },
+      "result_raw": "{\"status\": \"done\", \"tasks\": [ {\"id\": "
+    }
+  ]
+}

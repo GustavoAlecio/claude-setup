@@ -1,0 +1,417 @@
+{
+  "current": {
+    "phases": {
+      "specify": {
+        "start": "2026-03-10T08:00:00Z",
+        "end": "2026-03-10T08:10:00Z"
+      },
+      "plan": {
+        "start": "2026-03-10T08:15:00Z",
+        "end": "2026-03-10T08:40:00Z"
+      },
+      "tasks": {
+        "start": "2026-03-10T08:41:00Z",
+        "end": "2026-03-10T08:45:00Z"
+      },
+      "implement": {
+        "start": "2026-03-10T08:50:00Z",
+        "end": "2026-03-10T10:20:00Z"
+      }
+    },
+    "status": "verifying",
+    "feature": "Tela gamma",
+    "project": "gamma",
+    "project_path": "/synthetic/gamma",
+    "ado_id": 2002,
+    "start_date": "2026-03-10T08:00:00Z",
+    "end_date": null,
+    "blockers": [],
+    "tags": [],
+    "tasks": {
+      "total": 2,
+      "completed": 2,
+      "current_task_id": null,
+      "items": [
+        {
+          "id": "T1",
+          "title": "View gamma",
+          "complexity": "M",
+          "risk": "low",
+          "tier0": "sonnet",
+          "affects": [
+            "lib/gamma/view.dart"
+          ],
+          "tests": [],
+          "description": "Tarefa sintética T1.",
+          "tier": "sonnet",
+          "attempts": 1,
+          "status": "done"
+        },
+        {
+          "id": "T2",
+          "title": "Modelo gamma",
+          "complexity": "S",
+          "risk": "low",
+          "tier0": "haiku",
+          "affects": [
+            "lib/gamma/model.dart"
+          ],
+          "tests": [],
+          "description": "Tarefa sintética T2.",
+          "tier": "haiku",
+          "attempts": 1,
+          "status": "done"
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "id": "verify-20260310T110000Z",
+      "result": {
+        "status": "inconclusive",
+        "reason": "qa_inconclusive",
+        "report": {
+          "round": 1,
+          "g1": [],
+          "g2": {
+            "verdict": "inconclusive",
+            "criteria": [],
+            "findings": [],
+            "evidence": "app nao iniciou"
+          }
+        },
+        "tasks": [],
+        "checkpoint": "0000000000000000000000000000000000000b2e",
+        "trace": [
+          {
+            "role": "g1:flutter-architecture",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3111
+          },
+          {
+            "role": "g1:flutter-correctness",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3111
+          },
+          {
+            "role": "g1:dart-correctness",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3111
+          },
+          {
+            "role": "g2",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "inconclusive",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 4077
+          },
+          {
+            "role": "g2",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "inconclusive",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 4077
+          }
+        ]
+      }
+    },
+    {
+      "id": "verify-20260310T113000Z",
+      "result": {
+        "status": "verified",
+        "report": {
+          "round": 2,
+          "g1": [
+            {
+              "gate": "g1",
+              "verdict": "pass",
+              "findings": []
+            }
+          ],
+          "g2": {
+            "verdict": "pass",
+            "criteria": [
+              {
+                "id": "C1",
+                "status": "pass"
+              }
+            ],
+            "findings": [],
+            "evidence": "sintetico"
+          }
+        },
+        "tasks": [
+          {
+            "id": "T1",
+            "complexity": "M",
+            "risk": "low",
+            "tier0": "sonnet",
+            "tier": "sonnet",
+            "attempts": 2,
+            "escalations": [],
+            "status": "done",
+            "reason": null,
+            "files_changed": [
+              "lib/gamma/view.dart"
+            ],
+            "decisions": [],
+            "summary": "Corrigido acesso a IO."
+          },
+          {
+            "id": "T2",
+            "complexity": "S",
+            "risk": "low",
+            "tier0": "haiku",
+            "tier": "haiku",
+            "attempts": 1,
+            "escalations": [],
+            "status": "done",
+            "reason": null,
+            "files_changed": [
+              "lib/gamma/model.dart"
+            ],
+            "decisions": [],
+            "summary": "Modelo criado."
+          },
+          {
+            "id": "V1",
+            "complexity": "M",
+            "risk": "high",
+            "tier0": "opus",
+            "tier": "opus",
+            "attempts": 2,
+            "escalations": [],
+            "status": "done",
+            "reason": null,
+            "files_changed": [
+              "lib/gamma/unowned.dart"
+            ],
+            "decisions": [],
+            "summary": "Correcao transversal."
+          }
+        ],
+        "checkpoint": "0000000000000000000000000000000000000b2e",
+        "trace": [
+          {
+            "role": "g1:flutter-architecture",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "fail",
+            "blocking": [
+              "g1:lib/gamma/view.dart:flutter-app/estado"
+            ],
+            "findings": [
+              {
+                "id": "G1-ARCH-LAYER",
+                "severity": "critical",
+                "file": "lib/gamma/view.dart",
+                "message": "Widget acessa dart:io diretamente.",
+                "line": 30,
+                "rule_ref": "flutter-app/estado"
+              }
+            ],
+            "tokens_out": 3111
+          },
+          {
+            "role": "g1:flutter-correctness",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3111
+          },
+          {
+            "role": "g1:dart-correctness",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3111
+          },
+          {
+            "role": "g2",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "inconclusive",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 4077
+          },
+          {
+            "role": "g2",
+            "stage": "verify",
+            "round": 1,
+            "verdict": "fail",
+            "blocking": [
+              "g2:lib/gamma/unowned.dart:G2-QA-CRIT"
+            ],
+            "findings": [
+              {
+                "id": "G2-QA-CRIT",
+                "severity": "major",
+                "file": "lib/gamma/unowned.dart",
+                "message": "Criterio de aceite 2 nao atendido no app rodando.",
+                "line": 0
+              }
+            ],
+            "tokens_out": 4077
+          },
+          {
+            "role": "dev",
+            "task": "T1",
+            "attempt": 1,
+            "tier": "sonnet",
+            "round": 1,
+            "verdict": "done",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 2200
+          },
+          {
+            "role": "g0",
+            "task": "T1",
+            "attempt": 1,
+            "tier": "sonnet",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 300
+          },
+          {
+            "role": "g1",
+            "task": "T1",
+            "attempt": 1,
+            "tier": "sonnet",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 1900
+          },
+          {
+            "role": "dev",
+            "task": "V1",
+            "attempt": 1,
+            "tier": "opus",
+            "round": 1,
+            "verdict": "done",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 2600
+          },
+          {
+            "role": "g0",
+            "task": "V1",
+            "attempt": 1,
+            "tier": "opus",
+            "round": 1,
+            "verdict": "fail",
+            "blocking": [
+              "g0:lib/features/alpha/alpha_page.dart:unused_import"
+            ],
+            "findings": [
+              {
+                "id": "G0-ANALYZE-UNUSED_IMPORT",
+                "severity": "major",
+                "file": "lib/features/alpha/alpha_page.dart",
+                "message": "Import nao utilizado em alpha_page.dart.",
+                "line": 12,
+                "rule_ref": "unused_import"
+              }
+            ],
+            "tokens_out": 310
+          },
+          {
+            "role": "dev",
+            "task": "V1",
+            "attempt": 2,
+            "tier": "opus",
+            "round": 1,
+            "verdict": "done",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 2500
+          },
+          {
+            "role": "g0",
+            "task": "V1",
+            "attempt": 2,
+            "tier": "opus",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 290
+          },
+          {
+            "role": "g1",
+            "task": "V1",
+            "attempt": 2,
+            "tier": "opus",
+            "round": 1,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 1800
+          },
+          {
+            "role": "g1:flutter-architecture",
+            "stage": "verify",
+            "round": 2,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3222
+          },
+          {
+            "role": "g1:flutter-correctness",
+            "stage": "verify",
+            "round": 2,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3222
+          },
+          {
+            "role": "g1:dart-correctness",
+            "stage": "verify",
+            "round": 2,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 3222
+          },
+          {
+            "role": "g2",
+            "stage": "verify",
+            "round": 2,
+            "verdict": "pass",
+            "blocking": [],
+            "findings": [],
+            "tokens_out": 4154
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "hidden": {
+    ".hidden/current.json": {
+      "project": "hidden",
+      "status": "planning",
+      "phases": {},
+      "blockers": [],
+      "tags": []
+    }
+  },
+  "dashboard": {
+    "cwds": {
+      "beta": "/synthetic/beta"
+    }
+  },
+  "auto_mode": "on\n"
+}

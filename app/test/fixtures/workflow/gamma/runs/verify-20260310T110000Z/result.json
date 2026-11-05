@@ -1,0 +1,63 @@
+{
+  "status": "inconclusive",
+  "reason": "qa_inconclusive",
+  "report": {
+    "round": 1,
+    "g1": [],
+    "g2": {
+      "verdict": "inconclusive",
+      "criteria": [],
+      "findings": [],
+      "evidence": "app nao iniciou"
+    }
+  },
+  "tasks": [],
+  "checkpoint": "0000000000000000000000000000000000000b2e",
+  "trace": [
+    {
+      "role": "g1:flutter-architecture",
+      "stage": "verify",
+      "round": 1,
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 3111
+    },
+    {
+      "role": "g1:flutter-correctness",
+      "stage": "verify",
+      "round": 1,
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 3111
+    },
+    {
+      "role": "g1:dart-correctness",
+      "stage": "verify",
+      "round": 1,
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 3111
+    },
+    {
+      "role": "g2",
+      "stage": "verify",
+      "round": 1,
+      "verdict": "inconclusive",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 4077
+    },
+    {
+      "role": "g2",
+      "stage": "verify",
+      "round": 1,
+      "verdict": "inconclusive",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 4077
+    }
+  ]
+}
