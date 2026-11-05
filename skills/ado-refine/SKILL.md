@@ -22,7 +22,8 @@ Sobrescritos por `--org=...` / `--project=...` nos args. Primeiro argumento nume
 
 ```bash
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+source ~/.claude/bin/get-project.sh
+PROJECT_NAME=$(get-project-name)
 DETAILS_DIR="$HOME/.claude/workflow/$PROJECT_NAME/details"
 mkdir -p "$DETAILS_DIR"
 ```

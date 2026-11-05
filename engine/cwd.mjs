@@ -23,7 +23,8 @@ async function isDir(dir) {
   }
 }
 
-async function scan(root, target, depth, out) {
+/** `level` e a profundidade abaixo da raiz varrida (`<raiz>/x` e 0), como `ScanCandidate.depth` no app. */
+async function scan(root, target, depth, out, level = 0) {
   if (depth < 0 || out.length >= 8) return;
   let entries;
   try {
@@ -34,12 +35,15 @@ async function scan(root, target, depth, out) {
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || SKIP.has(entry.name)) continue;
     const full = path.join(root, entry.name);
-    if (entry.name === target) out.push(full);
-    else await scan(full, target, depth - 1, out);
+    if (entry.name === target) out.push({ dir: full, level });
+    else await scan(full, target, depth - 1, out, level + 1);
   }
 }
 
-/** project_path do current.json > override salvo pelo usuario > varredura das raizes de dev. */
+/**
+ * project_path do current.json > override salvo pelo usuario > varredura das raizes de dev. Na varredura
+ * vence o candidato mais raso; empate no nivel mais raso nao escolhe nenhum (mesma regra de `resolvePath`).
+ */
 export async function resolveCwd(project, current) {
   const name = safeSegment(project);
   const config = await readConfig();
@@ -48,12 +52,19 @@ export async function resolveCwd(project, current) {
   const candidates = [];
   if (current?.project_path && (await isDir(current.project_path))) candidates.push(current.project_path);
   if (override && (await isDir(override)) && !candidates.includes(override)) candidates.push(override);
+  const preferred = candidates[0];
 
+  const scanned = [];
   for (const root of SCAN_ROOTS) {
     const found = [];
     await scan(root, name, 3, found);
-    for (const dir of found) if (!candidates.includes(dir)) candidates.push(dir);
+    scanned.push(...found);
   }
+  scanned.sort((a, b) => a.level - b.level);
+  for (const { dir } of scanned) if (!candidates.includes(dir)) candidates.push(dir);
 
-  return { cwd: override ?? candidates[0] ?? null, candidates, override: override ?? null };
+  const [first, second] = scanned;
+  const tie = second !== undefined && first.level === second.level && first.dir !== second.dir;
+  const shallowest = tie ? undefined : first?.dir;
+  return { cwd: override ?? preferred ?? shallowest ?? null, candidates, override: override ?? null };
 }

@@ -1,5 +1,14 @@
 {
   "cwds": {
     "beta": "/synthetic/beta"
-  }
+  },
+  "orgs": [
+    {
+      "name": "synthetic",
+      "roots": [
+        "/synthetic"
+      ]
+    }
+  ],
+  "lastOrg": "synthetic"
 }

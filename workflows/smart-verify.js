@@ -105,9 +105,12 @@ for (let round = 1; round <= MAX_ROUNDS + 1; round++) {
   const g1Failed = g1.some(v => v === null)
 
   phase('G2')
-  let g2 = await timed('g2', round, () => agent(qaPrompt(round),
-    { label: `g2:r${round}`, phase: 'G2', model: 'sonnet', agentType: A.stack.g2_agent, schema: QA }))
-  if (g2 && g2.verdict === 'inconclusive') {
+  // Driving the app from a QA agent has repeatedly restarted the host session; skip_g2 leaves UI QA to a human.
+  let g2 = A.skip_g2
+    ? { gate: 'G2', verdict: 'pass', findings: [], criteria: [], evidence: ['skip_g2: QA de UI manual guiado fora do workflow'] }
+    : await timed('g2', round, () => agent(qaPrompt(round),
+      { label: `g2:r${round}`, phase: 'G2', model: 'sonnet', agentType: A.stack.g2_agent, schema: QA }))
+  if (!A.skip_g2 && g2 && g2.verdict === 'inconclusive') {
     g2 = await timed('g2', round, () => agent(qaPrompt(round),
       { label: `g2:r${round}:opus`, phase: 'G2', model: 'opus', effort: 'high', agentType: A.stack.g2_agent, schema: QA }))
   }

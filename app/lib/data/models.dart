@@ -206,13 +206,39 @@ class Cycle {
   Run? get latestRun => runs.isEmpty ? null : runs.first;
 }
 
+/// Reserved org name for projects outside every configured root.
+const kNoOrg = 'Sem org';
+
 class Project {
-  const Project({required this.name, this.path, this.stack, this.cycle});
+  const Project({
+    required this.name,
+    this.path,
+    this.stack,
+    this.cycle,
+    this.org = kNoOrg,
+    this.hidden = false,
+    this.registered = false,
+  });
 
   final String name;
   final String? path;
   final String? stack;
   final Cycle? cycle;
+  final String org;
+  final bool hidden;
+
+  /// Listed in `.dashboard.json` `projects`, as opposed to discovered from a workflow dir.
+  final bool registered;
+
+  Project copyWith({String? path, String? org, bool? hidden, bool? registered}) => Project(
+    name: name,
+    path: path ?? this.path,
+    stack: stack,
+    cycle: cycle,
+    org: org ?? this.org,
+    hidden: hidden ?? this.hidden,
+    registered: registered ?? this.registered,
+  );
 }
 
 int? _sumKnown(Iterable<int?> values) {

@@ -1,11 +1,11 @@
 ---
 id: 0001
 title: Fonte reativa do app com um único watcher e classificação pura
-status: accepted
+status: superseded
 date: 2026-10-01
 affects: ["app/lib/data/file_flow_repository.dart", "app/lib/data/workflow_parser.dart"]
 supersedes: []
-superseded_by: []
+superseded_by: ["0009"]
 tags: [flutter, io, realtime]
 ---
 

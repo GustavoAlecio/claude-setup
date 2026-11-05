@@ -7,7 +7,8 @@ description: Etapa 3 do Fluxo Smart — cria tasks ordenadas e atomicas baseadas
 ## 1. Detectar projeto
 ```bash
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+source ~/.claude/bin/get-project.sh
+PROJECT_NAME=$(get-project-name)
 ```
 
 ## 2. Verificar pre-requisito

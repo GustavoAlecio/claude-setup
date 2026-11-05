@@ -420,6 +420,16 @@ void main() {
     });
   });
 
+  test('create sends cwd only when given', () async {
+    await repo.watchSessions().first.timeout(_timeout);
+    await expectLater(repo.create('demo', 'a', cwd: '/repos/demo'), throwsA(isA<Exception>()));
+    await expectLater(repo.create('demo', 'b'), throwsA(isA<Exception>()));
+    expect(engine.posts('/api/sessions').map((r) => r.body), [
+      {'project': 'demo', 'command': 'a', 'cwd': '/repos/demo'},
+      {'project': 'demo', 'command': 'b'},
+    ]);
+  });
+
   test('default backoff is 0.5/1/2/4 s capped at 10 s', () {
     expect(
       [for (var i = 0; i < 7; i++) HttpSessionsRepository.defaultBackoff(i).inMilliseconds],

@@ -525,7 +525,7 @@ void main() {
       final engine = _EngineSpy();
       addTearDown(engine.states.close);
       await tester.pumpWidget(
-        ClaudeFlowApp(repository: const MockFlowRepository(), sessions: MockSessionsRepository(), engine: engine),
+        ClaudeFlowApp(repository: MockFlowRepository(), sessions: MockSessionsRepository(), engine: engine),
       );
       await tester.pumpAndSettle();
 

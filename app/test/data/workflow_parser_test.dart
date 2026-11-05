@@ -560,10 +560,16 @@ void main() {
       expect(classify(root, '$root/alpha/current.tmp'), isNull);
       expect(classify(root, '$root/alpha/runs/impl-20260310T101500Z/result.json.tmp'), isNull);
       expect(classify(root, '$root/.hidden/x'), isNull);
-      expect(classify(root, '$root/.dashboard.json'), isA<RootScope>());
       expect(classify(root, '$root/.dashboard/engine.log'), isNull);
       expect(classify(root, '$root/alpha/.dashboard.json'), isNull);
       expect(classify(root, '$root/alpha/x.lock'), isNull);
+    });
+
+    test('classify .dashboard.json', () {
+      expect(classify(root, '$root/.dashboard.json'), isA<ConfigScope>());
+      expect(classify(root, '$root/.dashboard.json.tmp'), isNull);
+      expect(classify(root, '$root/.dashboard.json.tmp', destination: '$root/.dashboard.json'), isA<ConfigScope>());
+      expect(classify(root, '$root/.dashboard.json'), isNot(isA<RootScope>()));
     });
 
     test('move uses the destination', () {

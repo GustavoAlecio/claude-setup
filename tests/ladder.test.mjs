@@ -176,3 +176,11 @@ test('dev without structured result and no changes counts as a failed attempt an
   assert.equal(r.status, 'done')
   assert.equal(r.tasks[0].tier, 'sonnet')
 })
+
+test('verify with skip_g2 never spawns the QA agent', async () => {
+  const labels = []
+  const agent = async (_p, o) => { labels.push(o.label); return { gate: 'G1', verdict: 'pass', findings: [] } }
+  const r = await verify({ args: { ...baseArgs([{ id: 'T1', tier: 'sonnet', files_changed: ['lib/a.dart'] }]), base_checkpoint: 'cp0', skip_g2: true }, agent })
+  assert.equal(r.status, 'verified')
+  assert.ok(!labels.some(l => l.startsWith('g2')))
+})
