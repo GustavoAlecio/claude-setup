@@ -21,6 +21,7 @@ import '../../data/sessions_repository.dart';
 import '../../engine/engine_config.dart';
 import '../../engine/engine_supervisor.dart';
 import '../launcher/command_palette.dart';
+import '../launcher/kickoff_form.dart';
 
 enum AppTab {
   flow('Fluxo'),
@@ -597,6 +598,19 @@ class _TopBar extends StatelessWidget {
             ),
             const SizedBox(width: 12),
           ],
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: c.textPrimary,
+              side: BorderSide(color: c.borderStrong),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            ),
+            onPressed: paletteProject == null ? null : () => showKickoffForm(context, paletteProject),
+            icon: const Icon(Icons.rocket_launch_outlined, size: 15),
+            label: const Text('Kickoff'),
+          ),
+          const SizedBox(width: 8),
           FilledButton.icon(
             style: FilledButton.styleFrom(
               backgroundColor: c.accent,

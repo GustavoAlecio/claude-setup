@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/inline_markdown.dart';
 import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/flow_repository.dart';
@@ -88,9 +89,11 @@ class _TaskView extends StatelessWidget {
         if (task.description != null) ...[
           Panel(
             title: 'Descrição',
-            child: SelectableText(
-              task.description!,
-              style: TextStyle(fontSize: 12.5, height: 1.5, color: c.textSecondary),
+            child: SelectionArea(
+              child: InlineMarkdown(
+                task.description!,
+                style: TextStyle(fontSize: 12.5, height: 1.5, color: c.textSecondary),
+              ),
             ),
           ),
           const SizedBox(height: 20),

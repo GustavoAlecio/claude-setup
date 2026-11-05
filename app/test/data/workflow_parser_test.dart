@@ -81,6 +81,7 @@ void main() {
       expect(l.feature, 'F');
       expect(l.branch, 'main');
       expect(parseCycle({'status': 'planning'}, projectName: 'p').tracker, isNull);
+      expect(parseCycle({'status': 'planning', 'tracker': 'manual'}, projectName: 'p').tracker, 'manual');
     });
 
     test('parseCycle keeps the planned tasks in plan order without attempts', () {

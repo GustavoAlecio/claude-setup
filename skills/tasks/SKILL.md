@@ -36,7 +36,7 @@ Use `TaskCreate` para cada unidade de trabalho. Regras:
 - 1 responsabilidade por task
 - Ordenadas por dependencia (infra → feature → testes)
 - Se TDD: task de teste (Red) antes da task de implementacao (Green)
-- Titulo objetivo, descricao com: o que + onde + criterio de conclusao
+- Titulo objetivo, descricao no formato de 4 blocos (ver `description` abaixo)
 
 **Estimativa de complexidade por task:**
 Classifique cada task como:
@@ -51,7 +51,33 @@ Baseie a classificacao na tabela "Arquivos impactados" do plano e no tipo de mud
 - `tests` — arquivos de teste da task (da tabela "Estrategia de testes"), relativos ao repo. O G0 roda exatamente esses. Task de teste (Red) lista o proprio teste; task Green lista o teste que deve passar. Task sem teste aplicavel: `[]`.
 - `risk` — `high` se mexe em contrato (API, gRPC, WebSocket, schema), estado compartilhado/real-time, auth/assinatura, migracao, ou codigo citado por ADR; senao `low`.
 - `tier0` — modelo inicial: `S→haiku`, `M→sonnet`, `L→opus`. `risk: high` sobe um degrau (max `opus`). Override aprendido: se `~/.claude/projects/$PROJECT_NAME/routing.json` tiver `overrides["<S|M|L>:<low|high>"].tier0`, ele vence — diga quando aplicar.
-- `description` — o que + onde + criterio de conclusao, autocontido: o dev-implementer le o plano, mas nao le esta conversa.
+- `description` — autocontida (o dev-implementer le o plano, mas nao le esta conversa), com **exatamente 4 blocos nesta ordem**, separados por uma linha em branco:
+  - `**Contexto:** ...` — 1-2 linhas, com ponteiros para plano/spec (secoes, passo do plano).
+  - `**O que fazer:**` + bullets — o que mudar e onde.
+  - `**Testes:**` + bullets — os arquivos de teste (ou o comando, se nao houver teste novo).
+  - `**Concluído quando:**` + bullets verificaveis.
+
+**Restricoes do renderer do app** (ele so entende paragrafo, `- `, `**negrito**` e `` `codigo` ``):
+- bullets so `- ` na coluna 0; sem aninhar e sem lista numerada
+- sem blocos de codigo cercados, cabecalhos, tabelas ou links
+- paths, simbolos e comandos entre crases simples, sem crase interna
+
+Exemplo literal de `description` (e a fixture do teste de renderizacao do app):
+
+```markdown
+**Contexto:** Passo 2 do plano.
+
+**O que fazer:**
+- Criar `lib/x.dart`
+
+**Testes:**
+- `test/x_test.dart`
+
+**Concluído quando:**
+- `flutter analyze` limpo
+```
+
+No `current.json` a string vai com `\n` nas quebras de linha (ver exemplo do passo 6).
 
 ## 5. Salvar tasks.md
 
@@ -79,7 +105,7 @@ Atualize o objeto `tasks` no `current.json`:
   "current_task_id": null,
   "items": [
     {
-      "id": "T1", "title": "<titulo>", "description": "<o que + onde + criterio>",
+      "id": "T1", "title": "<titulo>", "description": "**Contexto:** Passo 2 do plano.\n\n**O que fazer:**\n- Criar `lib/x.dart`\n\n**Testes:**\n- `test/x_test.dart`\n\n**Concluído quando:**\n- `flutter analyze` limpo",
       "complexity": "S", "risk": "low", "tier0": "haiku", "tier": "haiku", "attempts": 0,
       "affects": ["lib/features/auth/bloc/**"], "tests": ["test/features/auth/auth_bloc_test.dart"],
       "status": "pending"
