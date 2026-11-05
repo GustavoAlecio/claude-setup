@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/theme/app_colors.dart';
+import 'package:claude_flow/data/metrics_models.dart';
+import 'package:claude_flow/data/metrics_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
@@ -11,7 +14,9 @@ import 'package:claude_flow/data/report_parser.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/session_reducer.dart';
 import 'package:claude_flow/data/sse.dart';
+import 'package:claude_flow/features/flow/flow_page.dart';
 import 'package:claude_flow/features/sessions/session_labels.dart';
+import 'package:claude_flow/features/sessions/session_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -46,6 +51,28 @@ class _Sessions extends MockSessionsRepository {
 
   @override
   Future<void> send(String id, String text) async => sendCalls.add((id, text));
+}
+
+class _LiveSessions extends _Sessions {
+  _LiveSessions(this.controller) : super(const [], const {});
+
+  final StreamController<List<SessionSummary>> controller;
+
+  @override
+  Stream<List<SessionSummary>> watchSessions() => controller.stream;
+
+  @override
+  Stream<SessionDetail> watchSession(String id) => Stream.value(SessionDetail(summary: _session(id, '/kickoff')));
+}
+
+class _CountingMetrics implements MetricsRepository {
+  int loads = 0;
+
+  @override
+  Future<ProjectMetrics> loadProject(Project project) async {
+    loads++;
+    return const ProjectMetrics.empty();
+  }
 }
 
 SessionSummary _session(String id, String command, {SessionStatus status = SessionStatus.idle, int pending = 0}) =>
@@ -262,6 +289,64 @@ void main() {
 
     expect(_inSide(find.text('nenhuma sessão ativa nesta etapa')), findsOneWidget);
     expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Kickoff')).onPressed, isNotNull);
+  });
+
+  testWidgets('sem ciclo, o painel aparecer não remonta o empty state nem recarrega o histórico', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final controller = StreamController<List<SessionSummary>>();
+    addTearDown(controller.close);
+    final metrics = _CountingMetrics();
+    await tester.pumpWidget(
+      ClaudeFlowApp(
+        repository: MockFlowRepository(
+          data: [const Project(name: _project, path: '/synthetic/$_project')],
+        ),
+        sessions: _LiveSessions(controller),
+        engine: const MockEngineController(),
+        metrics: metrics,
+      ),
+    );
+    controller.add(const []);
+    await tester.pump();
+    _router(tester).go('/p/$_project/flow');
+    await tester.pumpAndSettle();
+    expect(_side, findsNothing);
+    final loads = metrics.loads;
+    expect(loads, greaterThan(0));
+
+    controller.add([_session('s-kick', '/kickoff', pending: 1)]);
+    await tester.pumpAndSettle();
+
+    expect(_side, findsOneWidget);
+    expect(metrics.loads, loads);
+  });
+
+  testWidgets('sem ciclo e sem sessão: um único empty state, sem painel da direita', (tester) async {
+    await _open(tester, const Project(name: _project, path: '/synthetic/$_project'), const [], const {});
+
+    expect(find.widgetWithText(FilledButton, 'Novo kickoff'), findsOneWidget);
+    expect(find.descendant(of: find.byType(FlowPage), matching: find.byType(FilledButton)), findsOneWidget);
+    expect(_side, findsNothing);
+    expect(find.byType(SessionPanel), findsNothing);
+    expect(find.byKey(const ValueKey('flow-no-session')), findsNothing);
+    expect(find.byKey(const ValueKey('flow-awaiting')), findsNothing);
+    expect(find.byKey(const ValueKey('flow-drawer-toggle')), findsNothing);
+  });
+
+  testWidgets('sem ciclo, o painel volta quando há sessão de etapa', (tester) async {
+    await _open(
+      tester,
+      const Project(name: _project, path: '/synthetic/$_project'),
+      [_session('s-kick', '/kickoff')],
+      {
+        's-kick': [_text('Triando o card.')],
+      },
+    );
+
+    expect(_side, findsOneWidget);
+    expect(_inFeed(_md('Triando o card.')), findsOneWidget);
   });
 
   testWidgets('responder a pergunta no painel chama answer', (tester) async {

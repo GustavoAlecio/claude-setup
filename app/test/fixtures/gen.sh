@@ -55,7 +55,7 @@ def run_report(wf, steps):
     with tempfile.TemporaryDirectory() as scratch:
         for i, step in enumerate(steps):
             cmd = ["python3", report_script, step["cmd"]]
-            if step["cmd"] != "reset":
+            if "stage" in step:
                 cmd.append(step["stage"])
             cmd += ["--workflow-dir", str(wf)]
             def text_file(name, text):
@@ -81,6 +81,14 @@ def run_report(wf, steps):
                 cmd += ["--source", step["source"], "--file", payload]
             if "run" in step:
                 cmd += ["--run-dir", str(wf / "runs" / step["run"])]
+            if "qa" in step:
+                cmd += ["--file", text_file("qa.json", json.dumps(step["qa"], ensure_ascii=False))]
+            if "real_data" in step:
+                cmd += ["--file", text_file("real-data.md", step["real_data"])]
+            if step.get("not_run"):
+                cmd.append("--not-run")
+            if "pr_url" in step:
+                cmd += ["--url", step["pr_url"]]
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
     for leftover in (".report.json.lock", "report.json.tmp"):
         (wf / leftover).unlink(missing_ok=True)

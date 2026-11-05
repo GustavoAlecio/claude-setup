@@ -38,5 +38,14 @@
       "run_ids": [],
       "ended_at": "2026-03-10T07:25:00Z"
     }
-  ]
+  ],
+  "qa": [
+    "Abrir a página alpha e conferir a lista de itens.",
+    "Alternar o tema e conferir o contraste."
+  ],
+  "real_data_md": "Rodado contra dados sintéticos.\n\n- Resultado: **ok**\n- Evidência: `alpha --check`\n",
+  "pr": {
+    "url": "https://github.com/acme/alpha/pull/12",
+    "number": 12
+  }
 }

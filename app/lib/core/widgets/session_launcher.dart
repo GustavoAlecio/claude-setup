@@ -54,11 +54,5 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
     }
   }
 
-  void openLink(Uri uri) {
-    if (opensExternally(uri)) {
-      unawaited(DocsScope.openerOf(context)(uri));
-    } else {
-      log('link ignored: $uri', name: logName);
-    }
-  }
+  void openLink(Uri uri) => DocsScope.openExternal(context, uri, logName: logName);
 }

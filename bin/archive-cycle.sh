@@ -135,5 +135,7 @@ with open(f"{cycle_dir}/metrics.json", "w") as f:
 print(f"Archived to {cycle_dir}")
 PYEOF
 
-rm -rf "$WORKFLOW_DIR"
+# phases.md is the project's roadmap across cycles, not part of this one.
+find "$WORKFLOW_DIR" -mindepth 1 -maxdepth 1 ! -name phases.md -exec rm -rf {} +
+rmdir "$WORKFLOW_DIR" 2>/dev/null || true
 echo "Archive complete: $CYCLE_DIR"

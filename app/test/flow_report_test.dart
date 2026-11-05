@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:claude_flow/app/app.dart';
@@ -5,6 +6,7 @@ import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/theme/app_colors.dart';
 import 'package:claude_flow/core/widgets/primitives.dart';
 import 'package:claude_flow/data/file_flow_repository.dart';
+import 'package:claude_flow/data/mock_docs_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
@@ -358,6 +360,99 @@ void main() {
       final banner = find.byKey(const ValueKey('stage-banner'));
       expect(find.text('Etapa em andamento: /verify (aguardando permissão)'), findsOneWidget);
       expect(tester.getTopLeft(banner).dy, lessThan(tester.getTopLeft(_stage(Stage.kickoff)).dy));
+    });
+  });
+
+  group('painéis de fechamento (QA, dados reais, PR)', () {
+    Project withClosing(Map<String, Object?> extra) => Project(
+      name: 'closing-app',
+      path: '/synthetic/closing-app',
+      cycle: Cycle(
+        stage: Stage.complete,
+        autoMode: false,
+        stageMinutes: const {},
+        runs: const [],
+        report: parseReport(
+          jsonEncode({
+            'version': 1,
+            'cycle': {'feature': 'F'},
+            'stages': [],
+            ...extra,
+          }),
+        ),
+      ),
+    );
+
+    Future<MockDocsRepository> openClosing(WidgetTester tester, Project project) async {
+      tester.view.physicalSize = const Size(1600, 3200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final docs = MockDocsRepository.empty();
+      await tester.pumpWidget(
+        ClaudeFlowApp(
+          repository: MockFlowRepository(data: [project]),
+          sessions: _Sessions(const []),
+          engine: const MockEngineController(),
+          docs: docs,
+        ),
+      );
+      await tester.pump();
+      _router(tester).go('/p/closing-app/flow');
+      await tester.pumpAndSettle();
+      return docs;
+    }
+
+    testWidgets('os três painéis renderizam e o link do PR passa pelo opener', (tester) async {
+      final docs = await openClosing(
+        tester,
+        withClosing({
+          'qa': ['Abrir a tela.', 'Conferir o tema.'],
+          'real_data_md': 'Rodado **ok** com `alpha`.',
+          'pr': {'url': 'https://github.com/acme/app/pull/12', 'number': 12},
+        }),
+      );
+
+      expect(_inPanel('flow-qa', find.text('Roteiro de QA')), findsOneWidget);
+      expect(_inPanel('flow-qa', find.textContaining('Abrir a tela.', findRichText: true)), findsOneWidget);
+      expect(_inPanel('flow-qa', find.textContaining('Conferir o tema.', findRichText: true)), findsOneWidget);
+      expect(_inPanel('flow-real-data', find.text('Teste com dados reais')), findsOneWidget);
+      expect(_inPanel('flow-real-data', find.textContaining('Rodado', findRichText: true)), findsOneWidget);
+      expect(_inPanel('flow-pr', find.text('PR #12')), findsOneWidget);
+
+      await tester.ensureVisible(find.byKey(const ValueKey('flow-pr-link')));
+      await tester.tap(find.byKey(const ValueKey('flow-pr-link')));
+      await tester.pump();
+      expect(docs.opened, [Uri.parse('https://github.com/acme/app/pull/12')]);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('não executado aparece no painel de dados reais', (tester) async {
+      await openClosing(tester, withClosing({'real_data_md': null, 'real_data_status': 'não executado'}));
+
+      expect(_inPanel('flow-real-data', find.text('não executado')), findsOneWidget);
+      expect(find.byKey(const ValueKey('flow-qa')), findsNothing);
+      expect(find.byKey(const ValueKey('flow-pr')), findsNothing);
+    });
+
+    testWidgets('sem dados nenhum painel aparece', (tester) async {
+      await openClosing(tester, withClosing({}));
+
+      expect(find.byKey(const ValueKey('flow-qa')), findsNothing);
+      expect(find.byKey(const ValueKey('flow-real-data')), findsNothing);
+      expect(find.byKey(const ValueKey('flow-pr')), findsNothing);
+    });
+
+    testWidgets('PR com URL que não abre fora do app não vira link', (tester) async {
+      final docs = await openClosing(
+        tester,
+        withClosing({
+          'pr': {'url': 'file:///etc/passwd', 'number': 1},
+        }),
+      );
+
+      expect(find.byKey(const ValueKey('flow-pr')), findsOneWidget);
+      expect(find.byKey(const ValueKey('flow-pr-link')), findsNothing);
+      expect(docs.opened, isEmpty);
     });
   });
 }

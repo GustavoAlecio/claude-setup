@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -194,13 +193,7 @@ class _ReviewsPageState extends State<ReviewsPage> with RefreshLoop<ReviewsPage>
     _rows = _buildRows(_review!);
   });
 
-  void _onLink(Uri uri) {
-    if (opensExternally(uri)) {
-      unawaited(DocsScope.openerOf(context)(uri));
-    } else {
-      log('link ignored: $uri', name: 'ReviewsPage');
-    }
-  }
+  void _onLink(Uri uri) => DocsScope.openExternal(context, uri, logName: 'ReviewsPage');
 
   @override
   Widget build(BuildContext context) {

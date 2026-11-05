@@ -20,6 +20,7 @@ O resultado de cada etapa do Fluxo Smart existia só nos transcripts das sessõe
 - **Origem dos dados:** dados determinísticos (decisões dos agentes, escaladas, backtracks e blockers, `challenge`) vêm do `import-run` sobre `result.json`. Decisões livres do orquestrador são best-effort.
 - **Quem escreve:** as skills do pipeline chamam o script. Workflows nunca chamam.
 - **App:** lê o relatório com teto de 2 MB e parse puro. Mostra linha do tempo, painéis e fallback quando não há relatório. O relatório do histórico fica em Métricas.
+- **Fechamento:** `qa` (array de strings), `real_data_md`/`real_data_status` e `pr` (`{url, number}`, só URL de PR do GitHub) entram pelos subcomandos de mesmo nome, com as mesmas garantias. Só o `/complete` grava `pr`: invoca `/pr-open --from-complete`, que devolve a URL na última linha e nunca escreve no relatório. O `stage-end complete` e o archive vêm depois, para o histórico levar o PR.
 
 ## Alternativas consideradas
 - **App montando o relatório só a partir dos arquivos existentes** — perde a narrativa e as decisões do orquestrador.

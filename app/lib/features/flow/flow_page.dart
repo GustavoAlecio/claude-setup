@@ -15,6 +15,8 @@ import '../../data/session_reducer.dart';
 import '../../data/session_models.dart';
 import '../launcher/kickoff_form.dart';
 import 'flow_panels.dart';
+import 'last_cycle_line.dart';
+import 'report_extras.dart';
 import 'flow_side_panel.dart';
 import 'stage_timeline.dart';
 
@@ -59,74 +61,79 @@ class _FlowView extends StatelessWidget {
       runningStage: project == null ? null : runningStageSession(sessions, project),
       report: report,
     );
-    final side = FlowSidePanel(
-      projectName: projectName,
-      project: project,
-      report: report,
-      session: sessions.where((s) => s.id == shownId).firstOrNull,
-    );
+    final shown = sessions.where((s) => s.id == shownId).firstOrNull;
     final main = _FlowMain(projectName: projectName, project: project, sessions: sessions, selected: stage);
+    final pending = pendingByProject(sessions)[projectName] ?? 0;
+    final side =
+        showsFlowSidePanel(
+          hasCycle: project?.cycle != null,
+          hasShownSession: shown != null,
+          stage: stage,
+          pending: pending,
+        )
+        ? FlowSidePanel(projectName: projectName, project: project, report: report, session: shown)
+        : null;
     final c = context.colors;
+    // `main` keeps the same ancestors with or without `side`, so its state (e.g. LastCycleLine) survives the toggle.
     return LayoutBuilder(
       builder: (context, constraints) => constraints.maxWidth >= kFlowSplitWidth
           ? _split(c, main, side)
-          : _withDrawer(
-              c,
-              main,
-              side,
-              (pendingByProject(sessions)[projectName] ?? 0) + endedStageSessions(report, sessions).length,
-            ),
+          : _withDrawer(c, main, side, pending + endedStageSessions(report, sessions).length),
     );
   }
 
-  Widget _split(AppColors c, Widget main, Widget side) => Row(
+  Widget _split(AppColors c, Widget main, Widget? side) => Row(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Expanded(child: main),
-      Container(
-        width: kFlowSidePanelWidth,
-        decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: c.border)),
+      Expanded(key: const ValueKey('flow-main'), child: main),
+      if (side != null)
+        Container(
+          width: kFlowSidePanelWidth,
+          decoration: BoxDecoration(
+            border: Border(left: BorderSide(color: c.border)),
+          ),
+          child: side,
         ),
-        child: side,
-      ),
     ],
   );
 
-  Widget _withDrawer(AppColors c, Widget main, Widget side, int pending) => Scaffold(
+  Widget _withDrawer(AppColors c, Widget main, Widget? side, int pending) => Scaffold(
     backgroundColor: Colors.transparent,
-    endDrawer: Drawer(
-      width: kFlowSidePanelWidth,
-      backgroundColor: c.canvas,
-      shape: const RoundedRectangleBorder(),
-      child: side,
-    ),
+    endDrawer: side == null
+        ? null
+        : Drawer(
+            width: kFlowSidePanelWidth,
+            backgroundColor: c.canvas,
+            shape: const RoundedRectangleBorder(),
+            child: side,
+          ),
     body: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-          child: Align(
-            alignment: Alignment.centerRight,
-            child: Builder(
-              builder: (context) => OutlinedButton.icon(
-                key: const ValueKey('flow-drawer-toggle'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: c.textPrimary,
-                  side: BorderSide(color: c.borderStrong),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                ),
-                onPressed: () => Scaffold.of(context).openEndDrawer(),
-                icon: const Icon(Icons.forum_outlined, size: 15),
-                label: Text(
-                  pending > 0 ? 'Sessão da etapa · $pending aguardando' : 'Sessão da etapa',
-                  style: const TextStyle(fontSize: 12),
+        if (side != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Builder(
+                builder: (context) => OutlinedButton.icon(
+                  key: const ValueKey('flow-drawer-toggle'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: c.textPrimary,
+                    side: BorderSide(color: c.borderStrong),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  ),
+                  onPressed: () => Scaffold.of(context).openEndDrawer(),
+                  icon: const Icon(Icons.forum_outlined, size: 15),
+                  label: Text(
+                    pending > 0 ? 'Sessão da etapa · $pending aguardando' : 'Sessão da etapa',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-        Expanded(child: main),
+        Expanded(key: const ValueKey('flow-main'), child: main),
       ],
     ),
   );
@@ -168,6 +175,10 @@ class _FlowMain extends StatelessWidget {
                     icon: const Icon(Icons.rocket_launch_outlined, size: 15),
                     label: const Text('Novo kickoff'),
                   ),
+                  if (project != null) ...[
+                    const SizedBox(height: 20),
+                    LastCycleLine(key: ValueKey('last-cycle-${project.name}'), project: project),
+                  ],
                 ],
               ),
             ),
@@ -219,6 +230,7 @@ class _FlowMain extends StatelessWidget {
         VerifyPanel(runs: cycle.runs),
         const SizedBox(height: 16),
         DecisionsPanel(report: report),
+        ReportExtras(report: report),
       ],
     );
   }

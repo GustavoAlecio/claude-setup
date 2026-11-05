@@ -70,3 +70,5 @@ Não mude estado/assignee do card — isso é do `/ado-close`.
 ## 8. Finalizar
 
 Resumo em 3 linhas: número do PR + URL, base, e se o card foi anotado. Sugira: "Acompanhe com `/pr-status`."
+
+**Chamado pelo `/complete`** (argumento `--from-complete`): a **última linha** do resultado é só a URL do PR, sem texto, formatação ou pontuação depois. O `/complete` grava a URL no relatório. Este skill nunca grava no relatório: avulso, não grava relatório.

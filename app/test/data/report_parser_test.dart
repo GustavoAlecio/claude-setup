@@ -225,6 +225,80 @@ void main() {
     });
   });
 
+  group('fechamento do ciclo (qa, real_data, pr)', () {
+    String closing(Map<String, Object?> extra) => jsonEncode({
+      'version': 1,
+      'cycle': {'feature': 'F'},
+      'stages': [],
+      ...extra,
+    });
+
+    test('lê qa, dados reais e PR', () {
+      final doc = parseReport(
+        closing({
+          'qa': ['Abrir a tela.', 'Conferir o tema.'],
+          'real_data_md': 'Rodado **ok**.',
+          'pr': {'url': 'https://github.com/acme/app/pull/12', 'number': 12},
+        }),
+      )!;
+
+      expect(doc.qa, ['Abrir a tela.', 'Conferir o tema.']);
+      expect(doc.realDataMd, 'Rodado **ok**.');
+      expect(doc.hasRealData, isTrue);
+      expect(doc.pr!.url, 'https://github.com/acme/app/pull/12');
+      expect(doc.pr!.number, 12);
+    });
+
+    test('não executado: status sem markdown conta como dados reais', () {
+      final doc = parseReport(closing({'real_data_md': null, 'real_data_status': 'não executado'}))!;
+
+      expect(doc.realDataMd, isNull);
+      expect(doc.realDataStatus, 'não executado');
+      expect(doc.hasRealData, isTrue);
+    });
+
+    test('sem os campos: tudo vazio', () {
+      final doc = parseReport(closing({}))!;
+
+      expect(doc.qa, isEmpty);
+      expect(doc.hasRealData, isFalse);
+      expect(doc.pr, isNull);
+    });
+
+    test('entradas malformadas são descartadas', () {
+      final doc = parseReport(
+        closing({
+          'qa': ['ok', 3, '  ', null],
+          'real_data_md': 7,
+          'real_data_status': ['x'],
+          'pr': {'url': 5, 'number': 1},
+        }),
+      )!;
+
+      expect(doc.qa, ['ok']);
+      expect(doc.hasRealData, isFalse);
+      expect(doc.pr, isNull);
+    });
+
+    test('PR sem número válido mantém a URL', () {
+      final doc = parseReport(
+        closing({
+          'pr': {'url': 'https://github.com/a/b/pull/3', 'number': '3'},
+        }),
+      )!;
+
+      expect(doc.pr!.number, isNull);
+    });
+
+    test('fixture do histórico do alpha (gen.sh com wf-report.py real)', () {
+      final doc = parseReport(_fixture('../projects/alpha/history/2026-04-02_metricas-alpha/report.json'))!;
+
+      expect(doc.qa, hasLength(2));
+      expect(doc.realDataMd, contains('Rodado contra dados sintéticos'));
+      expect(doc.pr!.number, 12);
+    });
+  });
+
   group('decisões', () {
     test('todas as etapas em ordem, e o filtro por autor', () {
       final doc = parseReport(_fixture('gamma/report.json'));
@@ -491,5 +565,25 @@ void main() {
 
       expect([for (final e in endedStageSessions(doc, sessions)) (e.stage, e.session.id)], [(Stage.challenge, 'dead')]);
     });
+  });
+
+  group('showsFlowSidePanel', () {
+    bool shows({bool cycle = false, bool session = false, Stage? stage, int pending = 0}) =>
+        showsFlowSidePanel(hasCycle: cycle, hasShownSession: session, stage: stage, pending: pending);
+
+    test('sem ciclo, sessão, ?stage e pendência → sem painel', () => expect(shows(), isFalse));
+    test('qualquer um deles traz o painel de volta', () {
+      expect(shows(cycle: true), isTrue);
+      expect(shows(session: true), isTrue);
+      expect(shows(stage: Stage.plan), isTrue);
+      expect(shows(pending: 1), isTrue);
+    });
+  });
+
+  test('realDataMarkdown ignora markdown só com espaço', () {
+    ReportDoc doc(String? md) => parseReport(jsonEncode({'version': 1, 'stages': [], 'real_data_md': md}))!;
+    expect(doc('  \n').realDataMarkdown, isNull);
+    expect(doc('  \n').hasRealData, isFalse);
+    expect(doc('ok').realDataMarkdown, 'ok');
   });
 }

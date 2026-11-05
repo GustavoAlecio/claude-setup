@@ -192,4 +192,52 @@ void main() {
     expect(timeline, findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('o dialog do relatório mostra QA, dados reais e PR do ciclo arquivado', (tester) async {
+    await _open(tester, '/p/demo-app/metrics', metrics: await _alphaHistory(tester));
+
+    await tester.tap(find.byKey(const ValueKey('metrics-report-2026-04-02_metricas-alpha')));
+    await tester.pumpAndSettle();
+
+    Finder inPanel(String key, Finder f) => find.descendant(of: find.byKey(ValueKey(key)), matching: f);
+    expect(inPanel('flow-qa', find.textContaining('Abrir a página alpha', findRichText: true)), findsOneWidget);
+    expect(inPanel('flow-real-data', find.textContaining('dados sintéticos', findRichText: true)), findsOneWidget);
+    expect(inPanel('flow-pr', find.text('PR #12')), findsOneWidget);
+  });
+
+  group('Último ciclo no Fluxo sem ciclo ativo', () {
+    final lastCycle = find.byKey(const ValueKey('last-cycle'));
+
+    testWidgets('mostra a feature e o PR do ciclo mais recente com relatório e abre o dialog', (tester) async {
+      await _open(tester, '/p/web-console/flow', metrics: await _alphaHistory(tester));
+
+      expect(lastCycle, findsOneWidget);
+      expect(find.textContaining('Último ciclo: Métricas alpha'), findsOneWidget);
+      expect(find.text('ver relatório (PR #12)'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('last-cycle-open')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('metrics-report-timeline')), findsOneWidget);
+      expect(find.byKey(const ValueKey('flow-pr')), findsOneWidget);
+    });
+
+    testWidgets('sem histórico com relatório não mostra nada', (tester) async {
+      await _open(tester, '/p/web-console/flow', metrics: const MockMetricsRepository.empty());
+
+      expect(lastCycle, findsNothing);
+    });
+
+    testWidgets('ignora ciclos arquivados sem relatório', (tester) async {
+      await _open(tester, '/p/web-console/flow', metrics: MockMetricsRepository.sample());
+
+      expect(lastCycle, findsNothing);
+    });
+
+    testWidgets('com ciclo ativo a linha não aparece', (tester) async {
+      await _open(tester, '/p/demo-app/flow', metrics: await _alphaHistory(tester));
+
+      expect(lastCycle, findsNothing);
+    });
+  });
 }

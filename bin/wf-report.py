@@ -7,6 +7,9 @@ Stage report for the smart pipeline: $WF_DIR/report.json, written only by this s
   wf-report.py decision    <stage> --workflow-dir W --by WHO --text-file MD [--alternative-file MD] [--mistake]
   wf-report.py findings    <stage> --workflow-dir W --source X --file JSON
   wf-report.py import-run  <stage> --workflow-dir W --run-dir D
+  wf-report.py qa          --workflow-dir W --file JSON
+  wf-report.py real-data   --workflow-dir W (--file MD | --not-run)
+  wf-report.py pr          --workflow-dir W --url URL
   wf-report.py reset       --workflow-dir W
   wf-report.py gate        spec|plan|tasks|pr
 
@@ -299,6 +302,22 @@ def required_gates(workflow_root: Path) -> list:
     return required
 
 
+def cmd_qa(report, qa):
+    report["qa"] = qa
+
+
+def cmd_real_data(report, md):
+    report["real_data_md"] = md
+    if md is None:
+        report["real_data_status"] = "não executado"
+    else:
+        report.pop("real_data_status", None)
+
+
+def cmd_pr(report, pr):
+    report["pr"] = pr
+
+
 def cmd_gate(name: str) -> str:
     root = Path.home() / ".claude" / "workflow"
     if not (root / "auto_mode.flag").exists():
@@ -332,6 +351,17 @@ def parse_args():
     sp.add_argument("--file", required=True)
     sp = stage_cmd("import-run")
     sp.add_argument("--run-dir", required=True)
+    sp = sub.add_parser("qa")
+    sp.add_argument("--workflow-dir", required=True)
+    sp.add_argument("--file", required=True)
+    sp = sub.add_parser("real-data")
+    sp.add_argument("--workflow-dir", required=True)
+    grp = sp.add_mutually_exclusive_group(required=True)
+    grp.add_argument("--file")
+    grp.add_argument("--not-run", action="store_true")
+    sp = sub.add_parser("pr")
+    sp.add_argument("--workflow-dir", required=True)
+    sp.add_argument("--url", required=True)
     sp = sub.add_parser("reset")
     sp.add_argument("--workflow-dir", required=True)
     sp = sub.add_parser("gate")
@@ -358,6 +388,18 @@ def load_inputs(a):
         if not isinstance(result, dict):
             raise InputError("result.json não é um objeto")
         return {"result": result}
+    if a.cmd == "qa":
+        payload = read_json(a.file)
+        if not isinstance(payload, list) or not all(isinstance(x, str) for x in payload):
+            raise InputError("--file precisa ser um array de strings")
+        return {"qa": payload}
+    if a.cmd == "real-data":
+        return {"md": None if a.not_run else read_text(a.file)}
+    if a.cmd == "pr":
+        m = re.fullmatch(r"https://github\.com/[^/\s]+/[^/\s]+/pull/(\d+)(?:[/?#]\S*)?", a.url)
+        if not m:
+            raise InputError(f"--url não é um PR do GitHub: {a.url}")
+        return {"pr": {"url": a.url, "number": int(m.group(1))}}
     return {}
 
 
@@ -397,6 +439,12 @@ def main():
             cmd_findings(a, report, inputs["payload"])
         elif a.cmd == "import-run":
             cmd_import_run(a, report, inputs["result"], current)
+        elif a.cmd == "qa":
+            cmd_qa(report, inputs["qa"])
+        elif a.cmd == "real-data":
+            cmd_real_data(report, inputs["md"])
+        elif a.cmd == "pr":
+            cmd_pr(report, inputs["pr"])
         return report
 
     update_json(wf / "report.json", wf / ".report.json.lock", modify, default=empty_report(cycle))

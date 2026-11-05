@@ -2,15 +2,43 @@ import 'models.dart';
 
 /// Contrato `report.json` (version 1), escrito só por `bin/wf-report.py`; o app lê um recorte e ignora o resto.
 class ReportDoc {
-  const ReportDoc({required this.feature, required this.startedAt, required this.stages});
+  const ReportDoc({
+    required this.feature,
+    required this.startedAt,
+    required this.stages,
+    this.qa = const [],
+    this.realDataMd,
+    this.realDataStatus,
+    this.pr,
+  });
 
   final String? feature;
   final String? startedAt;
+
+  /// Roteiro de QA manual; vazio = sem painel.
+  final List<String> qa;
+
+  /// Evidência do teste com dados reais; `null` com [realDataStatus] = "não executado".
+  final String? realDataMd;
+  final String? realDataStatus;
+  final ReportPr? pr;
+
+  /// [realDataMd] só quando tem conteúdo além de espaço.
+  String? get realDataMarkdown => (realDataMd ?? '').trim().isEmpty ? null : realDataMd;
+
+  bool get hasRealData => realDataMarkdown != null || (realDataStatus ?? '').trim().isNotEmpty;
 
   /// Na ordem do enum [Stage], no máximo uma entrada por etapa.
   final List<StageReport> stages;
 
   StageReport? stage(Stage s) => stages.where((x) => x.stage == s).firstOrNull;
+}
+
+class ReportPr {
+  const ReportPr({required this.url, this.number});
+
+  final String url;
+  final int? number;
 }
 
 enum ReportStatus { running, done, blocked }

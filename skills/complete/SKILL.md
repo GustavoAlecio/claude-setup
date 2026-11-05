@@ -1,7 +1,7 @@
 ---
 name: complete
 model: sonnet
-description: Etapa final do Fluxo Smart — após verify aprovado, propõe ADRs, gera lessons a partir de falhas recorrentes, atualiza routing stats da escada, arquiva o ciclo e aponta /pr-open.
+description: Etapa final do Fluxo Smart — após verify aprovado, propõe ADRs, gera lessons a partir de falhas recorrentes, atualiza routing stats da escada, registra QA e dados reais no relatório, abre o PR atrás de um gate e arquiva o ciclo.
 ---
 
 ## 1. Detectar projeto
@@ -63,9 +63,46 @@ python3 ~/.claude/bin/routing-stats.py --project "$PROJECT_NAME" --write
 ```
 Mostre a tabela e as sugestões de tier0 que mudaram.
 
-## 6. Arquivar
+## 6. Roteiro de QA
 
-Feche o relatório antes de arquivar (o archive copia o `report.json`).
+Junte os critérios `UNTESTABLE` do último verify (`$WF_DIR/runs/*/result.json`) e os itens "QA manual" da spec. Escreva um array JSON de strings com **Write** em `$WF_DIR/.qa.json` (array vazio se não houver) e rode:
+
+```bash
+python3 ~/.claude/bin/wf-report.py qa --workflow-dir "$WF_DIR" --file "$WF_DIR/.qa.json" || true
+```
+
+## 7. Teste com dados reais
+
+Com a evidência de runtime do G2 do último verify, escreva um resumo em markdown com **Write** em `$WF_DIR/.real-data.md` e rode:
+
+```bash
+python3 ~/.claude/bin/wf-report.py real-data --workflow-dir "$WF_DIR" --file "$WF_DIR/.real-data.md" || true
+```
+
+Sem evidência de runtime: `python3 ~/.claude/bin/wf-report.py real-data --workflow-dir "$WF_DIR" --not-run || true`.
+
+## 8. Gate `pr`
+
+Apresente em 3-5 linhas o que o PR conterá (feature, tasks, ADRs propostos).
+
+Gate `pr` (decisão determinística; nunca leia `gates.json`):
+
+```bash
+python3 ~/.claude/bin/wf-report.py gate pr
+```
+
+- `skip`: trate como Aprovar.
+- `ask`: faça um `AskUserQuestion` ("Abrir o PR deste ciclo?") com as opções:
+  - **Aprovar (Recommended)**: invoque `/pr-open --from-complete` (passe o `ado_id` do `current.json` se houver). A última linha do resultado é a URL do PR; grave-a:
+    ```bash
+    python3 ~/.claude/bin/wf-report.py pr --workflow-dir "$WF_DIR" --url "<URL>" || true
+    ```
+    Se o `/pr-open` parar (ex.: mudanças não commitadas), avise e repita este gate depois de o usuário resolver.
+  - **Ajustar**: o usuário escreve o ajuste em Other; aplique o texto e repita este mesmo gate.
+  - **Rejeitar**: siga sem PR; não grave `pr` no relatório.
+- A resposta do usuário vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision complete --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.
+
+## 9. Fechar relatório
 
 Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode:
 
@@ -73,12 +110,15 @@ Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$
 python3 ~/.claude/bin/wf-report.py stage-end complete --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
 ```
 
+## 10. Arquivar
+
+O archive copia o `report.json`, por isso vem depois do `stage-end`.
 
 ```bash
 bash ~/.claude/bin/archive-cycle.sh completed "$PROJECT_NAME"
 ```
 (O archive copia `runs/` para o histórico — o dashboard e o routing continuam lendo de lá.)
 
-## 7. Próximo passo
+## 11. Próximo passo
 
-"Ciclo concluído. Abra o PR com `/pr-open`." Não abra PR nem commite aqui.
+"Ciclo concluído." Com PR aberto, acompanhe com `/pr-status`; sem PR, `/pr-open` abre depois (avulso, sem gravar relatório). Não commite aqui.

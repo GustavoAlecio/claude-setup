@@ -238,3 +238,7 @@ ProjectMetrics projectSummary(List<CycleMetrics> cycles) {
     hasTokens: hasTokens,
   );
 }
+
+/// Ciclo arquivado mais recente com `report.json`; o ciclo atual não conta (o Fluxo já o mostra).
+CycleMetrics? lastCycleWithReport(ProjectMetrics metrics) =>
+    metrics.cycles.where((c) => !c.current && c.report != null).firstOrNull;
