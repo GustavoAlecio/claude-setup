@@ -2,12 +2,16 @@ import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+
+import '../../app/config_cubit.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/kickoff.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
 
@@ -16,22 +20,32 @@ Future<void> showKickoffForm(BuildContext context, Project? project) async {
   if (project == null) return;
   final router = GoRouter.of(context);
   final sessions = SessionsScope.of(context);
+  final githubAccount = githubFor(project.org, context.read<ConfigCubit>().state.data).account;
   await showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
     builder: (_) => _KickoffForm(
       project: project,
       sessions: sessions,
+      githubAccount: githubAccount,
       onCreated: (s) => router.go('/p/${s.project}/sessions/${s.id}'),
     ),
   );
 }
 
 class _KickoffForm extends StatefulWidget {
-  const _KickoffForm({required this.project, required this.sessions, required this.onCreated});
+  const _KickoffForm({
+    required this.project,
+    required this.sessions,
+    required this.githubAccount,
+    required this.onCreated,
+  });
 
   final Project project;
   final SessionsRepository sessions;
+
+  /// Of the project's org; `null` keeps the `gh` active account.
+  final String? githubAccount;
   final void Function(SessionSummary session) onCreated;
 
   @override
@@ -84,7 +98,12 @@ class _KickoffFormState extends State<_KickoffForm> {
       _error = null;
     });
     try {
-      final session = await widget.sessions.create(project.name, command, cwd: project.path);
+      final session = await widget.sessions.create(
+        project.name,
+        command,
+        cwd: project.path,
+        githubAccount: widget.githubAccount,
+      );
       if (!mounted) return;
       Navigator.of(context).pop();
       widget.onCreated(session);

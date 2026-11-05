@@ -301,6 +301,9 @@ String? validateOrgs(List<OrgConfig> orgs) {
     for (final root in org.roots) {
       if (normalizePath(root).isEmpty) return 'informe uma pasta para "$name"';
     }
+    final account = org.github?.account;
+    if (account != null && !kGithubLogin.hasMatch(account)) return 'conta do GitHub inválida: "$account" em "$name"';
+    if (validateOwners(org.github?.owners ?? const []) case final error?) return '$error em "$name"';
   }
   for (var i = 0; i < orgs.length; i++) {
     for (var j = i + 1; j < orgs.length; j++) {
@@ -312,6 +315,45 @@ String? validateOrgs(List<OrgConfig> orgs) {
     }
   }
   return null;
+}
+
+/// First invalid or repeated (ignoring case) GitHub owner, as an inline message; `null` when all are valid.
+String? validateOwners(List<String> owners) {
+  final seen = <String>{};
+  for (final owner in owners) {
+    if (!kGithubLogin.hasMatch(owner)) return 'org do GitHub inválida: "$owner"';
+    if (!seen.add(owner.toLowerCase())) return 'org do GitHub repetida: "$owner"';
+  }
+  return null;
+}
+
+/// GitHub account and owners an org's PRs, inbox and sessions run with.
+class GithubScope {
+  const GithubScope({this.account, this.owners = const []});
+
+  static const none = GithubScope();
+
+  /// `null`: the `gh` active account.
+  final String? account;
+
+  /// Empty: no `--owner` filter.
+  final List<String> owners;
+
+  @override
+  bool operator ==(Object other) =>
+      other is GithubScope && other.account == account && sameStrings(other.owners, owners);
+
+  @override
+  int get hashCode => Object.hash(account, Object.hashAll(owners));
+
+  @override
+  String toString() => 'GithubScope($account, $owners)';
+}
+
+/// [GithubScope.none] for [kNoOrg], for an org the config does not have and for one without `github`.
+GithubScope githubFor(String? orgName, DashboardConfig? config) {
+  final github = orgName == null ? null : orgConfigOf(config, orgName)?.github;
+  return github == null ? GithubScope.none : GithubScope(account: github.account, owners: github.owners);
 }
 
 sealed class Landing {

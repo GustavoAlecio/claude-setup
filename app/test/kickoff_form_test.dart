@@ -18,7 +18,7 @@ const _engineError = 'engine indisponível';
 
 class _FailingSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async =>
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async =>
       throw const SessionsException(_engineError, statusCode: 500);
 }
 
@@ -26,9 +26,9 @@ class _SlowSessions extends MockSessionsRepository {
   final gate = Completer<void>();
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
   }
 }
 
@@ -67,7 +67,12 @@ void main() {
     view.devicePixelRatio = 1;
   });
 
-  Future<MockSessionsRepository> pump(WidgetTester tester, String location, {MockSessionsRepository? sessions}) async {
+  Future<MockSessionsRepository> pump(
+    WidgetTester tester,
+    String location, {
+    MockSessionsRepository? sessions,
+    Map<String, dynamic>? config,
+  }) async {
     final repo = sessions ?? MockSessionsRepository();
     await tester.pumpWidget(
       ClaudeFlowApp(
@@ -76,6 +81,7 @@ void main() {
             ...MockFlowRepository().data,
             const Project(name: 'loose'),
           ],
+          config: config,
         ),
         sessions: repo,
         engine: const MockEngineController(),
@@ -93,6 +99,21 @@ void main() {
   }
 
   group('submit', () {
+    testWidgets('the session runs with the gh account of the project org', (tester) async {
+      final config = MockFlowRepository.defaultConfig(MockFlowRepository().data);
+      (config['orgs'] as List).first['github'] = {
+        'account': 'acct-a',
+        'owners': ['org-x'],
+      };
+      final sessions = await pump(tester, '/p/demo-app/flow', config: config);
+      await openFromTopBar(tester);
+
+      await tester.enterText(_idField, '123');
+      await tester.tap(_start);
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, 'acct-a')]);
+    });
+
     testWidgets('a card ID starts the tracker kickoff in the project folder', (tester) async {
       final sessions = await pump(tester, '/p/demo-app/flow');
       await openFromTopBar(tester);
@@ -104,7 +125,7 @@ void main() {
 
       await tester.tap(_start);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath)]);
+      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, null)]);
       expect(_location(tester), '/p/demo-app/sessions/mock-1');
       expect(_form('demo-app'), findsNothing);
     });
@@ -116,7 +137,7 @@ void main() {
       await tester.enterText(_idField, 'lc-101');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [('demo-app', '/kickoff LC-101', _demoPath)]);
+      expect(sessions.createCalls, [('demo-app', '/kickoff LC-101', _demoPath, null)]);
     });
 
     testWidgets('manual bug sends the description verbatim and opens the session', (tester) async {
@@ -131,7 +152,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(sessions.createCalls, hasLength(1));
-      final (project, command, cwd) = sessions.createCalls.single;
+      final (project, command, cwd, _) = sessions.createCalls.single;
       expect(project, 'demo-app');
       expect(cwd, _demoPath);
       expect(command.codeUnits, '/kickoff --manual --bug\n\n$description'.codeUnits);
@@ -208,7 +229,7 @@ void main() {
       expect(_form('demo-app'), findsOneWidget);
 
       await _meta(tester, LogicalKeyboardKey.enter);
-      expect(sessions.createCalls, [('demo-app', '/kickoff --manual\n\nalgo', _demoPath)]);
+      expect(sessions.createCalls, [('demo-app', '/kickoff --manual\n\nalgo', _demoPath, null)]);
     });
 
     testWidgets('project without a folder shows the same error as the palette', (tester) async {

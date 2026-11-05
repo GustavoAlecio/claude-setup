@@ -21,11 +21,12 @@ class MockSessionsRepository implements SessionsRepository {
   final _updates = StreamController<void>.broadcast();
   var _created = 0;
 
-  /// Every [create] call, in order, for tests to assert the exact command and cwd.
-  final createCalls = <(String project, String command, String? cwd)>[];
+  /// Every [create] call, in order, for tests to assert the exact command, cwd and account.
+  final createCalls = <(String project, String command, String? cwd, String? githubAccount)>[];
 
   /// Every [createInOrg] call, in order.
-  final orgCreateCalls = <(String org, String command, String cwd, List<String> additionalDirectories)>[];
+  final orgCreateCalls =
+      <(String org, String command, String cwd, List<String> additionalDirectories, String? githubAccount)>[];
 
   List<SessionSummary> get _list => [for (final id in _order) _details[id]!.summary];
 
@@ -56,8 +57,8 @@ class MockSessionsRepository implements SessionsRepository {
   ];
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
-    createCalls.add((project, command, cwd));
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
+    createCalls.add((project, command, cwd, githubAccount));
     return _add(
       (id) => SessionSummary(
         id: id,
@@ -76,8 +77,9 @@ class MockSessionsRepository implements SessionsRepository {
     String command, {
     required String cwd,
     List<String> additionalDirectories = const [],
+    String? githubAccount,
   }) async {
-    orgCreateCalls.add((org, command, cwd, additionalDirectories));
+    orgCreateCalls.add((org, command, cwd, additionalDirectories, githubAccount));
     return _add(
       (id) => SessionSummary(
         id: id,

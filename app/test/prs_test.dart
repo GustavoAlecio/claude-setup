@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/widgets/markdown_view.dart';
+import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/github_models.dart';
 import 'package:claude_flow/data/github_repository.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';
@@ -12,6 +13,7 @@ import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/sessions_repository.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/engine/engine_supervisor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,16 +23,16 @@ class _SlowSessions extends MockSessionsRepository {
   final gate = Completer<void>();
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
   }
 }
 
 class _FailingSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
-    createCalls.add((project, command, cwd));
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
+    createCalls.add((project, command, cwd, githubAccount));
     throw const SessionsException('cwd fora das raízes', statusCode: 400);
   }
 }
@@ -95,11 +97,12 @@ Future<void> _open(
   MockDocsRepository? docs,
   EngineController engine = const MockEngineController(),
   List<Project>? projects,
+  Map<String, dynamic>? config,
   String location = '/p/x/prs',
 }) async {
   await tester.pumpWidget(
     ClaudeFlowApp(
-      repository: MockFlowRepository(data: projects ?? _projects),
+      repository: MockFlowRepository(data: projects ?? _projects, config: config),
       sessions: sessions ?? MockSessionsRepository(),
       engine: engine,
       docs: docs ?? MockDocsRepository(),
@@ -109,6 +112,33 @@ Future<void> _open(
   await tester.pumpAndSettle();
   _router(tester).go(location);
   await tester.pumpAndSettle();
+}
+
+/// Org `A` over `/dev/org` (project `x`) with `gh` account `acct-a`.
+Map<String, dynamic> _scopedConfig() => {
+  'orgs': [
+    {
+      'name': 'A',
+      'roots': ['/dev/org'],
+      'github': {
+        'account': 'acct-a',
+        'owners': ['org-x'],
+      },
+    },
+  ],
+  'lastOrg': 'A',
+};
+
+class _IdentityGitHub extends MockGitHubRepository {
+  _IdentityGitHub({super.pullRequests, required this.byCwd});
+
+  final Map<String, SshIdentity> byCwd;
+
+  @override
+  Future<SshIdentity> sshIdentity({String? owner, String? cwd, bool fresh = false}) async {
+    sshCalls.add((owner: owner, cwd: cwd, fresh: fresh));
+    return byCwd[cwd] ?? const SshIdentity(owner: 'acme', host: 'github.com');
+  }
 }
 
 Finder _resolve(int n) => find.byKey(ValueKey('pr-resolve-$n'));
@@ -252,7 +282,7 @@ void main() {
 
     sessions.gate.complete();
     await tester.pumpAndSettle();
-    expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a'));
+    expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', null));
     expect(_location(tester), '/p/x/sessions/mock-1');
   });
 
@@ -270,7 +300,7 @@ void main() {
 
     await tester.tap(_resolve(1));
     await tester.pumpAndSettle();
-    expect(sessions.createCalls.single, ('x', '/pr-status', '/dev/org/a/'));
+    expect(sessions.createCalls.single, ('x', '/pr-status', '/dev/org/a/', null));
   });
 
   testWidgets('known project path with a divergent remote keeps Resolver disabled', (tester) async {
@@ -317,11 +347,11 @@ void main() {
   testWidgets('refresh: 1 call on open, again every 60 s, none after leaving the tab', (tester) async {
     final github = MockGitHubRepository(pullRequests: [_pr()]);
     await _open(tester, github);
-    expect(github.prsCalls, ['x']);
+    expect(github.prsCalls, [('x', null)]);
 
     await tester.pump(const Duration(seconds: 60));
     await tester.pump();
-    expect(github.prsCalls, ['x', 'x']);
+    expect(github.prsCalls, [('x', null), ('x', null)]);
 
     _router(tester).go('/p/x/flow');
     await tester.pumpAndSettle();
@@ -368,7 +398,7 @@ void main() {
 
     engine.states.add(EngineState.ok(Uri.parse('http://127.0.0.1:1')));
     await tester.pumpAndSettle();
-    expect(github.prsCalls, ['x']);
+    expect(github.prsCalls, [('x', null)]);
     expect(find.text('PR 12'), findsOneWidget);
   });
 
@@ -379,15 +409,15 @@ void main() {
 
     engine.states.add(EngineState.ok(Uri.parse('http://127.0.0.1:1')));
     await tester.pumpAndSettle();
-    expect(github.prsCalls, ['x']);
+    expect(github.prsCalls, [('x', null)]);
 
     engine.states.add(EngineState.ok(Uri.parse('http://127.0.0.1:1'), versionWarning: 'v'));
     await tester.pumpAndSettle();
-    expect(github.prsCalls, ['x'], reason: 'same endpoint does not reload');
+    expect(github.prsCalls, [('x', null)], reason: 'same endpoint does not reload');
 
     engine.states.add(EngineState.ok(Uri.parse('http://127.0.0.1:2')));
     await tester.pumpAndSettle();
-    expect(github.prsCalls, ['x', 'x']);
+    expect(github.prsCalls, [('x', null), ('x', null)]);
   });
 
   testWidgets('switching project drops the answer for the previous one', (tester) async {
@@ -400,11 +430,11 @@ void main() {
         const Project(name: 'y', path: '/dev/org/y'),
       ],
     );
-    expect(github.prsCalls, ['x']);
+    expect(github.prsCalls, [('x', null)]);
 
     _router(tester).go('/p/y/prs');
     await tester.pumpAndSettle();
-    expect(github.prsCalls, ['x', 'y']);
+    expect(github.prsCalls, [('x', null), ('y', null)]);
 
     github.gates['x']!.complete([_pr(number: 99)]);
     await tester.pumpAndSettle();
@@ -414,6 +444,112 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('PR 12'), findsOneWidget);
   });
+
+  group('account of the project org', () {
+    testWidgets('prs is called with the org account and Resolver passes it as githubAccount', (tester) async {
+      final sessions = MockSessionsRepository();
+      final github = MockGitHubRepository(pullRequests: [_pr()]);
+      await _open(tester, github, sessions: sessions, config: _scopedConfig());
+
+      expect(github.prsCalls, [('x', 'acct-a')]);
+
+      await tester.tap(_resolve(1));
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', 'acct-a'));
+    });
+
+    testWidgets('project outside any org uses the active account', (tester) async {
+      final github = MockGitHubRepository(pullRequests: [_pr()]);
+      await _open(
+        tester,
+        github,
+        config: _scopedConfig(),
+        projects: [
+          ..._projects,
+          const Project(name: 'loose', path: '/elsewhere/loose'),
+        ],
+        location: '/p/loose/prs',
+      );
+
+      expect(github.prsCalls, [('loose', null)]);
+    });
+
+    testWidgets('changing the org account reloads with the new one', (tester) async {
+      final repo = MockFlowRepository(data: _projects, config: _scopedConfig());
+      final github = MockGitHubRepository(pullRequests: [_pr()]);
+      await tester.pumpWidget(
+        ClaudeFlowApp(
+          repository: repo,
+          sessions: MockSessionsRepository(),
+          engine: const MockEngineController(),
+          docs: MockDocsRepository(),
+          github: github,
+        ),
+      );
+      await tester.pumpAndSettle();
+      _router(tester).go('/p/x/prs');
+      await tester.pumpAndSettle();
+      expect(github.prsCalls, [('x', 'acct-a')]);
+
+      final org = repo.config.orgs.single;
+      await repo.updateConfig(
+        saveOrgs([
+          OrgConfig(
+            name: org.name,
+            roots: org.roots,
+            github: const OrgGithub(account: 'acct-b', owners: ['org-x']),
+          ),
+        ]),
+      );
+      await tester.pumpAndSettle();
+      expect(github.prsCalls, [('x', 'acct-a'), ('x', 'acct-b')]);
+    });
+
+    testWidgets('https push remote shows the credential helper warning and keeps Resolver enabled', (tester) async {
+      final github = _IdentityGitHub(
+        pullRequests: [
+          _pr(),
+          _pr(number: 2, repo: 'b', cwd: '/tmp/b'),
+        ],
+        byCwd: {
+          '/tmp/a': const SshIdentity(
+            owner: 'acme',
+            error: 'remote https: identidade definida pelo credential helper, não verificável',
+          ),
+          '/tmp/b': const SshIdentity(owner: 'acme', host: 'github.com', login: 'acct-a'),
+        },
+      );
+      await _open(tester, github, config: _scopedConfig());
+
+      expect(
+        find.text('a: remote HTTPS: push usa o credential helper do git (osxkeychain), não a conta @acct-a'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('prs-https-/tmp/b')), findsNothing);
+      expect(github.sshCalls.map((c) => c.cwd), ['/tmp/a', '/tmp/b']);
+      expect(_enabled(tester, 1), isTrue);
+    });
+
+    testWidgets('SSH push identity of another account shows the divergence', (tester) async {
+      final github = _IdentityGitHub(
+        pullRequests: [_pr()],
+        byCwd: {'/tmp/a': const SshIdentity(owner: 'acme', host: 'github.com-alias', login: 'acct-b')},
+      );
+      await _open(tester, github, config: _scopedConfig());
+
+      expect(find.text('SSH de acme autentica como @acct-b, diferente da conta @acct-a'), findsOneWidget);
+    });
+
+    testWidgets('identity of a cwd is asked once across refreshes', (tester) async {
+      final github = _IdentityGitHub(pullRequests: [_pr()], byCwd: const {});
+      await _open(tester, github, config: _scopedConfig());
+      await tester.pump(const Duration(seconds: 60));
+      await tester.pumpAndSettle();
+
+      expect(github.prsCalls, hasLength(2));
+      expect(github.sshCalls, hasLength(1));
+    });
+  });
 }
 
 class _GatedGitHub extends MockGitHubRepository {
@@ -422,8 +558,8 @@ class _GatedGitHub extends MockGitHubRepository {
   final gates = <String, Completer<List<PullRequest>>>{};
 
   @override
-  Future<List<PullRequest>> prs(String project) {
-    prsCalls.add(project);
+  Future<List<PullRequest>> prs(String project, {String? account}) {
+    prsCalls.add((project, account));
     return (gates[project] = Completer()).future;
   }
 }

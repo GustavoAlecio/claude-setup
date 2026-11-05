@@ -9,7 +9,8 @@ abstract interface class SessionsRepository {
   Future<List<PaletteSkill>> skills();
 
   /// [cwd] overrides the engine's own lookup (`cwds` + scan); `null` lets the engine resolve it.
-  Future<SessionSummary> create(String project, String command, {String? cwd});
+  /// [githubAccount] is the `gh` login the session's `gh` runs as; `null` keeps the active account.
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount});
 
   /// Session of the org itself, outside any project: [cwd] is its first root, [additionalDirectories] the others.
   Future<SessionSummary> createInOrg(
@@ -17,6 +18,7 @@ abstract interface class SessionsRepository {
     String command, {
     required String cwd,
     List<String> additionalDirectories = const [],
+    String? githubAccount,
   });
   Future<void> send(String id, String text);
   Future<void> answer(String id, String requestId, PermissionDecision decision, {Map<String, String>? answers});

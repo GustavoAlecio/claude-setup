@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 /// Must match `version` in `engine/package.json`; a mismatch only raises a non-blocking warning.
-const kEngineVersion = '0.3.0';
+const kEngineVersion = '0.4.0';
 
 const kEnvSentinel = '\x00__ENV__\x00';
 
@@ -9,11 +9,52 @@ const kMissingEngineDir = 'configure engineDir em ~/.claude/workflow/.dashboard.
 const kMissingNode = 'node não encontrado: defina nodePath em ~/.claude/workflow/.dashboard.json';
 String missingNodeModules(String engineDir) => 'rode: cd $engineDir && npm ci';
 
+/// GitHub login format: also what the engine accepts for `account` and `owner`.
+final kGithubLogin = RegExp(r'^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$');
+
+/// `orgs[].github`: [account] `null` is the `gh` active account; [owners] empty means no filter.
+class OrgGithub {
+  const OrgGithub({this.account, this.owners = const []});
+
+  final String? account;
+  final List<String> owners;
+
+  /// `null` when [value] is not a map. An [account] that is not a login becomes `null`; invalid owners and case-insensitive duplicates are dropped.
+  static OrgGithub? fromRaw(Object? value) {
+    if (value is! Map) return null;
+    final account = value['account'];
+    final owners = value['owners'];
+    final seen = <String>{};
+    return OrgGithub(
+      account: account is String && kGithubLogin.hasMatch(account) ? account : null,
+      owners: [
+        if (owners is List)
+          for (final o in owners)
+            if (o is String && kGithubLogin.hasMatch(o) && seen.add(o.toLowerCase())) o,
+      ],
+    );
+  }
+
+  Map<String, Object?> toRaw() => {'account': account, 'owners': owners};
+
+  @override
+  bool operator ==(Object other) => other is OrgGithub && other.account == account && sameStrings(other.owners, owners);
+
+  @override
+  int get hashCode => Object.hash(account, Object.hashAll(owners));
+}
+
+bool sameStrings(List<String> a, List<String> b) =>
+    a.length == b.length && Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
+
 class OrgConfig {
-  const OrgConfig({required this.name, this.roots = const []});
+  const OrgConfig({required this.name, this.roots = const [], this.github});
 
   final String name;
   final List<String> roots;
+
+  /// `null` when the key is absent: writes then keep whatever the file has.
+  final OrgGithub? github;
 }
 
 class ProjectEntry {
@@ -71,7 +112,8 @@ class DashboardConfig {
           : const {},
       orgs: [
         for (final o in _maps(decoded['orgs']))
-          if (_nonEmpty(o['name']) != null) OrgConfig(name: o['name'] as String, roots: _strings(o['roots'])),
+          if (_nonEmpty(o['name']) != null)
+            OrgConfig(name: o['name'] as String, roots: _strings(o['roots']), github: OrgGithub.fromRaw(o['github'])),
       ],
       projects: [
         for (final p in _maps(decoded['projects']))

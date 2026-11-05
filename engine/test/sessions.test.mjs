@@ -265,11 +265,32 @@ test("stop encerra o processo e o resume seguinte devolve 'resumed' e aceita inp
   await waitFor(async () => (await statusOf(port, id)) === "stopped");
   await waitFor(() => session.query === null);
 
-  assert.equal(session.resume(), "resumed");
-  assert.equal(session.resume(), "attached");
+  assert.equal(await session.resume(), "resumed");
+  assert.equal(await session.resume(), "attached");
   await api(port, "POST", `/api/sessions/${id}/input`, { text: "volta" });
   await waitFor(() => session.events.filter((e) => e.kind === "result").length === 2);
   assert.equal(await statusOf(port, id), "idle");
+});
+
+test("sessao sem githubAccount religa a cada resume depois que o processo termina", async () => {
+  const calls = [];
+  const engine = createEngine({ query: (args) => (calls.push(args), query(args)), sessionsDir: tmpDir() });
+  engines.add(engine);
+  const server = http.createServer(engine.app);
+  servers.add(server);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const id = await createIdle(port);
+  const session = engine.sessions.get(id);
+  assert.equal(session.githubAccount, null);
+
+  for (let round = 2; round <= 3; round++) {
+    session.stop();
+    await waitFor(() => session.query === null);
+    assert.equal(await session.resume(), "resumed");
+    assert.equal(calls.length, round);
+    assert.ok(session.query);
+  }
 });
 
 test("interrupt leva a idle e o input seguinte e aceito", async () => {

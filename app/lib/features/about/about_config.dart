@@ -41,7 +41,7 @@ class AboutConfig extends StatelessWidget {
         ),
         const SectionTitle('ORGS'),
         if (config.orgs.isEmpty) const Muted('nenhuma'),
-        for (final org in config.orgs)
+        for (final org in config.orgs) ...[
           _Row(
             key: ValueKey('about-config-org-${org.name}'),
             label: org.name,
@@ -49,6 +49,12 @@ class AboutConfig extends StatelessWidget {
                 '${org.roots.isEmpty ? 'sem raízes' : org.roots.join(', ')} · '
                 '${projectsInOrg(projects, org.name).length} projetos visíveis',
           ),
+          _Row(
+            key: ValueKey('about-config-org-github-${org.name}'),
+            label: '${org.name} · GitHub',
+            value: _githubLabel(githubFor(org.name, config)),
+          ),
+        ],
         _Row(label: 'lastOrg', value: config.lastOrg ?? '—'),
         const SectionTitle('PROJETOS REGISTRADOS'),
         if (config.projects.isEmpty) const Muted('nenhum'),
@@ -97,6 +103,11 @@ class AboutConfig extends StatelessWidget {
     );
   }
 }
+
+String _githubLabel(GithubScope scope) => [
+  scope.account == null ? 'conta ativa do gh' : 'conta @${scope.account}',
+  scope.owners.isEmpty ? 'todas as orgs' : 'orgs: ${scope.owners.join(', ')}',
+].join(' · ');
 
 class _Row extends StatelessWidget {
   const _Row({super.key, required this.label, required this.value});

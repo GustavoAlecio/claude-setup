@@ -43,7 +43,7 @@ class _FakeEngine {
   Uri get uri => Uri.parse('http://127.0.0.1:${_server.port}');
 
   void json(String path, Object body, {int status = 200}) =>
-      replies[path] = (status: status, body: jsonEncode(body), contentType: 'application/json');
+      replies[path] = (status: status, body: jsonEncode(body), contentType: 'application/json; charset=utf-8');
 
   Future<void> close() => _server.close(force: true);
 }
@@ -94,6 +94,76 @@ void main() {
     final inbox = await repo.inbox();
     expect(inbox.login, 'me');
     expect(inbox.items.single.number, 7);
+  });
+
+  test('prs and inbox send account and repeated owners only when given', () async {
+    engine.json('/api/projects/p/prs', {'prs': []});
+    engine.json('/api/review-inbox', {'items': []});
+    await up();
+    await repo.prs('p', account: 'acct-a');
+    await repo.prs('p');
+    await repo.inbox(account: 'acct-b', owners: ['org-x', 'org-y']);
+    await repo.inbox(owners: const []);
+    expect(engine.paths, [
+      '/api/projects/p/prs?account=acct-a',
+      '/api/projects/p/prs',
+      '/api/review-inbox?account=acct-b&owner=org-x&owner=org-y',
+      '/api/review-inbox',
+    ]);
+  });
+
+  test('accounts, orgs and protocol parse the new routes', () async {
+    engine.json('/api/github/accounts', {
+      'accounts': [
+        {'login': 'acct-a', 'active': true, 'valid': true},
+        {'login': 'acct-b', 'active': false, 'valid': false},
+      ],
+    });
+    engine.json('/api/github/orgs', {
+      'login': 'acct-a',
+      'orgs': ['acct-a', 'org-x'],
+    });
+    engine.json('/api/github/protocol', {'protocol': 'ssh'});
+    await up();
+    final accounts = await repo.accounts();
+    expect(
+      [for (final a in accounts) (a.login, a.active, a.valid)],
+      [('acct-a', true, true), ('acct-b', false, false)],
+    );
+    expect(await repo.orgs('acct-a'), ['acct-a', 'org-x']);
+    expect(await repo.orgs(null), ['acct-a', 'org-x']);
+    expect(await repo.protocol(), 'ssh');
+    expect(engine.paths, [
+      '/api/github/accounts',
+      '/api/github/orgs?account=acct-a',
+      '/api/github/orgs',
+      '/api/github/protocol',
+    ]);
+  });
+
+  test('sshIdentity sends owner or cwd and fresh=1 only when asked', () async {
+    engine.json('/api/github/ssh-identity', {'owner': 'org-x', 'host': 'github.com-alias', 'login': 'acct-b'});
+    await up();
+    final identity = await repo.sshIdentity(owner: 'org-x', fresh: true);
+    expect(
+      (identity.owner, identity.host, identity.login, identity.error),
+      ('org-x', 'github.com-alias', 'acct-b', null),
+    );
+    await repo.sshIdentity(cwd: '/dev/org x/repo');
+    expect(engine.paths, [
+      '/api/github/ssh-identity?owner=org-x&fresh=1',
+      '/api/github/ssh-identity?cwd=%2Fdev%2Forg+x%2Frepo',
+    ]);
+  });
+
+  test('a 400 from the account routes carries the fixed engine message', () async {
+    const message = 'conta acct-z não está logada no gh (gh auth login)';
+    engine.json('/api/github/orgs', {'error': message}, status: 400);
+    await up();
+    await expectLater(
+      repo.orgs('acct-z'),
+      throwsA(isA<GitHubException>().having((e) => e.message, 'message', message)),
+    );
   });
 
   test('502 with a JSON error carries the engine message', () async {

@@ -67,8 +67,8 @@ class HttpSessionsRepository implements SessionsRepository {
   }
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) =>
-      _create({'project': project, 'command': command, 'cwd': ?cwd});
+  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) =>
+      _create({'project': project, 'command': command, 'cwd': ?cwd, 'githubAccount': ?githubAccount});
 
   @override
   Future<SessionSummary> createInOrg(
@@ -76,7 +76,14 @@ class HttpSessionsRepository implements SessionsRepository {
     String command, {
     required String cwd,
     List<String> additionalDirectories = const [],
-  }) => _create({'org': org, 'command': command, 'cwd': cwd, 'additionalDirectories': additionalDirectories});
+    String? githubAccount,
+  }) => _create({
+    'org': org,
+    'command': command,
+    'cwd': cwd,
+    'additionalDirectories': additionalDirectories,
+    'githubAccount': ?githubAccount,
+  });
 
   Future<SessionSummary> _create(Map<String, Object?> body) async {
     final json = await _request('POST', '/api/sessions', body: body);

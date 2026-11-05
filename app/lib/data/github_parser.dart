@@ -54,6 +54,38 @@ List<PullRequest> parsePullRequests(Object? json) {
   return [if (prs is List) ...prs.whereType<Map<Object?, Object?>>().map(parsePullRequest)];
 }
 
+/// Body of `GET /api/github/accounts`; entries without a `login` are dropped.
+List<GithubAccount> parseAccounts(Object? json) {
+  final list = json is Map ? json['accounts'] : null;
+  return [
+    if (list is List)
+      for (final raw in list.whereType<Map<Object?, Object?>>())
+        if (_str(raw['login']) case final login?)
+          GithubAccount(login: login, active: raw['active'] == true, valid: raw['valid'] == true),
+  ];
+}
+
+/// Body of `GET /api/github/orgs`: owner suggestions, the account's own login first.
+List<String> parseOrgs(Object? json) => [
+  if (json is Map)
+    for (final o in _strings(json['orgs']))
+      if (o.isNotEmpty) o,
+];
+
+/// Body of `GET /api/github/ssh-identity`; [owner] fills a missing `owner`.
+SshIdentity parseSshIdentity(Object? json, {required String owner}) {
+  final m = json is Map ? json : const {};
+  return SshIdentity(
+    owner: _str(m['owner']) ?? owner,
+    host: _str(m['host']),
+    login: _str(m['login']),
+    error: _str(m['error']),
+  );
+}
+
+/// Body of `GET /api/github/protocol`: `gh config get git_protocol`, `null` when unset.
+String? parseProtocol(Object? json) => json is Map ? _str(json['protocol']) : null;
+
 /// Items without an integer `number` are dropped: they cannot be reviewed.
 Inbox parseInbox(Object? json) {
   final m = json is Map ? json : const {};
@@ -184,4 +216,22 @@ String reviewProjectName(
     remoteUrl: item.nameWithOwner.isEmpty ? null : 'https://github.com/${item.nameWithOwner}',
     workflowExists: workflowExists ?? (name) => projects.any((p) => p.name == name),
   ).name;
+}
+
+/// Alert for an SSH identity that authenticates as someone other than [account] (ignoring case); `null` with no
+/// [account] (the active one), no login or a match.
+String? sshDivergence(SshIdentity identity, String? account) {
+  final login = identity.login;
+  if (login == null || account == null || login.toLowerCase() == account.toLowerCase()) return null;
+  return 'SSH de ${identity.owner} autentica como @$login, diferente da conta @$account';
+}
+
+/// The engine reports an `https`/`git://` push URL with no host: its credential comes from the git helper.
+bool isHttpsRemote(SshIdentity identity) =>
+    identity.host == null && (identity.error?.startsWith('remote https') ?? false);
+
+/// Header of the inbox: the login the engine used (else the configured one) and the owner filter.
+String? inboxScopeLabel(String? login, List<String> owners) {
+  if (login == null) return null;
+  return owners.isEmpty ? 'conta do gh: @$login' : 'conta do gh: @$login · orgs: ${owners.join(', ')}';
 }

@@ -83,9 +83,16 @@ class _Sessions extends MockSessionsRepository {
     String command, {
     required String cwd,
     List<String> additionalDirectories = const [],
+    String? githubAccount,
   }) async {
     if (orgError case final error?) throw error;
-    return super.createInOrg(org, command, cwd: cwd, additionalDirectories: additionalDirectories);
+    return super.createInOrg(
+      org,
+      command,
+      cwd: cwd,
+      additionalDirectories: additionalDirectories,
+      githubAccount: githubAccount,
+    );
   }
 
   List<SessionSummary> list = _fixed;
@@ -400,7 +407,7 @@ void main() {
     Finder inPalette(String text) => find.descendant(of: palette, matching: find.text(text));
 
     void expectOrgCall(String command) {
-      final (org, cmd, cwd, additional) = sessions.orgCreateCalls.single;
+      final (org, cmd, cwd, additional, _) = sessions.orgCreateCalls.single;
       expect((org, cmd, cwd), ('A', command, '/dev/a'));
       expect(additional, ['/dev/a2']);
     }
@@ -436,6 +443,32 @@ void main() {
       expect(sessions.createCalls, isEmpty);
       expect(_location(tester), '/o/A/sessions/mock-1');
       expect(_orgPalette, findsNothing);
+    });
+
+    testWidgets('the activity runs with the gh account of the org', (tester) async {
+      final config = _config();
+      (config['orgs'] as List).first['github'] = {
+        'account': 'acct-a',
+        'owners': ['org-x'],
+      };
+      await pump(tester, config: config);
+      await _go(tester, '/o/A/sessions');
+
+      await _metaShift(tester, LogicalKeyboardKey.keyK);
+      await startAndSend(tester);
+
+      expectOrgCall('liste as pastas');
+      expect(sessions.orgCreateCalls.single.$5, 'acct-a');
+    });
+
+    testWidgets('an org without github keeps the active account', (tester) async {
+      await pump(tester);
+      await _go(tester, '/o/A/sessions');
+
+      await _metaShift(tester, LogicalKeyboardKey.keyK);
+      await startAndSend(tester);
+
+      expect(sessions.orgCreateCalls.single.$5, isNull);
     });
 
     testWidgets('⌘⇧K on / opens the org of lastOrg', (tester) async {

@@ -134,7 +134,7 @@ class _CreateOrgState extends State<_CreateOrg> {
           maxRoots: 1,
           suggestions: snapshot.data ?? const [],
           saveLabel: 'Criar org',
-          onSave: (org) => repository.updateConfig(createOrg(org.name, org.roots)),
+          onSave: (org) => repository.updateConfig(createOrg(org.name, org.roots, github: org.github)),
         ),
       ),
     );

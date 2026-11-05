@@ -41,13 +41,13 @@ Map<String, dynamic>? applyConfigMutation(Map<String, dynamic> raw, ConfigMutati
 }
 
 /// Appends the org and opens the app in it (`lastOrg`).
-ConfigMutation createOrg(String name, List<String> roots) => (raw) {
+ConfigMutation createOrg(String name, List<String> roots, {OrgGithub? github}) => (raw) {
   final current = DashboardConfig.fromMap(raw);
-  _check(validateOrgs([...current.orgs, OrgConfig(name: name, roots: roots)]));
+  _check(validateOrgs([...current.orgs, OrgConfig(name: name, roots: roots, github: github)]));
   final out = _copy(raw);
   out['orgs'] = [
     ..._list(raw['orgs']),
-    {'name': name, 'roots': roots},
+    {'name': name, 'roots': roots, 'github': ?github?.toRaw()},
   ];
   out['lastOrg'] = name;
   return out;
@@ -69,9 +69,7 @@ ConfigMutation saveOrgs(List<OrgConfig> orgs, {Map<String, String> renames = con
     if (e is Map && e['name'] is String) previous[renames[e['name']] ?? e['name'] as String] = _map(e);
   }
   final out = _copy(raw);
-  out['orgs'] = [
-    for (final o in orgs) {...?previous[o.name], 'name': o.name, 'roots': o.roots},
-  ];
+  out['orgs'] = [for (final o in orgs) _orgEntry(previous[o.name], o)];
   out['projects'] = [
     for (final p in _list(raw['projects']))
       if (p is Map && p['org'] is String) _withOrg(_map(p), follow(p['org'] as String)) else _clone(p),
@@ -186,6 +184,18 @@ Map<String, dynamic> _setHidden(
     out['hidden'] = list;
   }
   return out;
+}
+
+/// `github` is rewritten only when it differs from what [previous] parses to, so an untouched org keeps its raw
+/// entry (unknown keys and dropped owners included); a rewrite still keeps unknown keys inside `github`.
+Map<String, dynamic> _orgEntry(Map<String, dynamic>? previous, OrgConfig org) {
+  final entry = {...?previous, 'name': org.name, 'roots': org.roots};
+  final github = org.github;
+  final before = previous?['github'];
+  if (github != null && github != OrgGithub.fromRaw(before)) {
+    entry['github'] = {if (before is Map<String, dynamic>) ...before, ...github.toRaw()};
+  }
+  return entry;
 }
 
 Map<String, dynamic> _withOrg(Map<String, dynamic> entry, String? org) {

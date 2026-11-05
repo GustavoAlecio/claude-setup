@@ -450,7 +450,7 @@ test("inbox: codigo 1, stdout que nao e JSON e sem login -> 502", async () => {
   assert.equal(res3.body.error, GH_NO_LOGIN);
 });
 
-test("health: versao 0.3.0", async () => {
+test("health: versao 0.4.0", async () => {
   const port = await start({ gh: fakeGh(() => assert.fail("sem gh")).gh });
-  assert.deepEqual(await get(port, "/api/health"), { status: 200, body: { ok: true, version: "0.3.0" } });
+  assert.deepEqual(await get(port, "/api/health"), { status: 200, body: { ok: true, version: "0.4.0" } });
 });

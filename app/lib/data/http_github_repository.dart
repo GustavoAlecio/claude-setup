@@ -19,24 +19,42 @@ class HttpGitHubRepository implements GitHubRepository {
   Uri? _base;
 
   @override
-  Future<List<PullRequest>> prs(String project) async =>
-      parsePullRequests(await _get('/api/projects/${Uri.encodeComponent(project)}/prs'));
+  Future<List<PullRequest>> prs(String project, {String? account}) async =>
+      parsePullRequests(await _get('/api/projects/${Uri.encodeComponent(project)}/prs', {'account': ?account}));
 
   @override
-  Future<Inbox> inbox() async => parseInbox(await _get('/api/review-inbox'));
+  Future<Inbox> inbox({String? account, List<String> owners = const []}) async =>
+      parseInbox(await _get('/api/review-inbox', {'account': ?account, if (owners.isNotEmpty) 'owner': owners}));
+
+  @override
+  Future<List<GithubAccount>> accounts() async => parseAccounts(await _get('/api/github/accounts'));
+
+  @override
+  Future<List<String>> orgs(String? account) async => parseOrgs(await _get('/api/github/orgs', {'account': ?account}));
+
+  @override
+  Future<SshIdentity> sshIdentity({String? owner, String? cwd, bool fresh = false}) async => parseSshIdentity(
+    await _get('/api/github/ssh-identity', {'owner': ?owner, 'cwd': ?cwd, if (fresh) 'fresh': '1'}),
+    owner: owner ?? '',
+  );
+
+  @override
+  Future<String?> protocol() async => parseProtocol(await _get('/api/github/protocol'));
 
   Future<void> dispose() async {
     await _sub.cancel();
     _client.close(force: true);
   }
 
-  Future<Object?> _get(String path) async {
+  /// [query] values are a `String` or a repeated `List<String>` parameter.
+  Future<Object?> _get(String path, [Map<String, Object> query = const {}]) async {
     final base = _base;
     if (base == null) throw const GitHubException('engine iniciando');
+    final uri = query.isEmpty ? base.replace(path: path) : base.replace(path: path, queryParameters: query);
     final int status;
     final Object? json;
     try {
-      (status, json) = await _fetch(base.replace(path: path)).timeout(timeout);
+      (status, json) = await _fetch(uri).timeout(timeout);
     } on TimeoutException {
       throw const GitHubException('engine não respondeu');
     } on IOException catch (e) {

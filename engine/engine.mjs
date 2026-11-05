@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
+import { format, promisify } from "node:util";
 import express from "express";
 import { readConfig, resolveCwd } from "./cwd.mjs";
 import { HttpError, listSkills, readCurrent } from "./data.mjs";
+import { createTokens, loginParam, ownersParam, redact } from "./gh_env.mjs";
 import { createGitHub } from "./github.mjs";
 import { createSessions } from "./sessions.mjs";
 import { createStore } from "./store.mjs";
@@ -14,9 +15,14 @@ export const VERSION = JSON.parse(readFileSync(new URL("./package.json", import.
 const KEEPALIVE_MS = 20_000;
 
 const execFileAsync = promisify(execFile);
-const runner = (bin) => (args) => execFileAsync(bin, args, { timeout: 20_000, maxBuffer: 8 * 1024 * 1024 });
+const runner =
+  (bin, timeout = 20_000) =>
+  (args, { env } = {}) =>
+    execFileAsync(bin, args, { timeout, maxBuffer: 8 * 1024 * 1024, ...(env ? { env } : {}) });
 const execGh = runner("gh");
 const execGit = runner("git");
+// Acima do `ConnectTimeout=8`: o timeout do proprio ssh vira mensagem; o nosso so pega travas.
+const execSsh = runner("ssh", 12_000);
 
 function openSse(req, res) {
   res.writeHead(200, {
@@ -53,10 +59,21 @@ function validateOrgDirs(org, cwd, additionalDirectories) {
   return extra;
 }
 
-export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, git = execGit, now = Date.now }) {
+export function createEngine({
+  query,
+  sessionsDir,
+  log: rawLog = () => {},
+  gh = execGh,
+  git = execGit,
+  ssh = execSsh,
+  now = Date.now,
+}) {
+  const tokens = createTokens({ gh, now });
+  // Todo log passa por aqui ja formatado: um Error com o token no stderr nao sai inteiro.
+  const log = (...args) => rawLog(redact(format(...args), tokens.known()));
   const store = createStore(sessionsDir, { log });
-  const sessions = createSessions({ query, store });
-  const github = createGitHub({ gh, git, now, resolveCwd, log });
+  const sessions = createSessions({ query, store, tokens });
+  const github = createGitHub({ gh, git, ssh, now, resolveCwd, log, tokens });
   const app = express();
   app.use(express.json());
 
@@ -66,7 +83,7 @@ export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, 
     } catch (err) {
       const status = err instanceof HttpError ? err.status : 500;
       if (status === 500) log(req.method, req.path, err);
-      res.status(status).json({ error: err.message });
+      res.status(status).json({ error: redact(err.message, tokens.known()) });
     }
   };
 
@@ -74,9 +91,31 @@ export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, 
 
   app.get("/api/skills", route(paletteSkills));
 
-  app.get("/api/projects/:name/prs", route(async (req) => ({ prs: await github.prs(req.params.name) })));
+  app.get(
+    "/api/projects/:name/prs",
+    route(async (req) => ({ prs: await github.prs(req.params.name, { account: loginParam(req.query.account) }) }))
+  );
 
-  app.get("/api/review-inbox", route(() => github.inbox()));
+  app.get(
+    "/api/review-inbox",
+    route((req) => github.inbox({ account: loginParam(req.query.account), owners: ownersParam(req.query.owner) }))
+  );
+
+  app.get("/api/github/accounts", route(() => github.accounts()));
+
+  app.get("/api/github/orgs", route((req) => github.orgs(loginParam(req.query.account))));
+
+  app.get("/api/github/protocol", route(() => github.protocol()));
+
+  app.get(
+    "/api/github/ssh-identity",
+    route((req) => {
+      const fresh = req.query.fresh === "1";
+      if (req.query.owner !== undefined) return github.sshIdentity({ owner: loginParam(req.query.owner), fresh });
+      if (typeof req.query.cwd === "string") return github.sshIdentity({ cwd: req.query.cwd, fresh });
+      throw new HttpError(400, "owner ou cwd ausente");
+    })
+  );
 
   app.get("/api/sessions", route(() => sessions.list()));
 
@@ -95,12 +134,14 @@ export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, 
     route(async (req) => {
       const { project, command, model, cwd: explicitCwd, org, additionalDirectories } = req.body ?? {};
       if (typeof command !== "string" || !command.trim()) throw new HttpError(400, "comando vazio");
+      const githubAccount = loginParam(req.body?.githubAccount);
 
       if (org !== undefined) {
         const dirs = validateOrgDirs(org, explicitCwd, additionalDirectories);
-        const session = sessions.create({
+        const session = await sessions.create({
           project: "",
           org,
+          githubAccount,
           cwd: explicitCwd,
           additionalDirectories: dirs,
           command: command.trim(),
@@ -112,8 +153,9 @@ export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, 
 
       if (explicitCwd) {
         if (!existsSync(explicitCwd)) throw new HttpError(400, `diretorio invalido: ${explicitCwd}`);
-        const session = sessions.create({
+        const session = await sessions.create({
           project: project || path.basename(explicitCwd),
+          githubAccount,
           cwd: explicitCwd,
           command: command.trim(),
           model,
@@ -128,7 +170,7 @@ export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, 
         throw new HttpError(400, `sem diretório para ${project}: defina cwds.${project} em ~/.claude/workflow/.dashboard.json`);
       }
 
-      const session = sessions.create({ project, cwd, command: command.trim(), model });
+      const session = await sessions.create({ project, githubAccount, cwd, command: command.trim(), model });
       log("sessao criada", session.id, session.project);
       return session.summary();
     })
@@ -144,24 +186,26 @@ export function createEngine({ query, sessionsDir, log = () => {}, gh = execGh, 
   app.get("/api/sessions/:id", withSession((session) => session.summary()));
 
   /** Retomar o que ja esta rodando nao e erro do usuario: `resume()` e no-op e devolvemos o estado. */
-  function ensureAttached(session) {
-    if (session.resume() === "not_resumable") throw new HttpError(409, "sessao nao e retomavel — sem session_id do SDK");
+  async function ensureAttached(session) {
+    if ((await session.resume()) === "not_resumable") {
+      throw new HttpError(409, "sessao nao e retomavel — sem session_id do SDK");
+    }
   }
 
   app.post(
     "/api/sessions/:id/resume",
-    withSession((session) => {
-      ensureAttached(session);
+    withSession(async (session) => {
+      await ensureAttached(session);
       return session.summary();
     })
   );
 
   app.post(
     "/api/sessions/:id/input",
-    withSession((session, req) => {
+    withSession(async (session, req) => {
       const text = req.body?.text;
       if (typeof text !== "string" || !text.trim()) throw new HttpError(400, "texto vazio");
-      ensureAttached(session);
+      await ensureAttached(session);
       session.send(text.trim());
       return session.summary();
     })

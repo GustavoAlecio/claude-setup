@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
  * - `perm:Edit`: pede permissao de Edit e reporta o resultado da decisao;
  * - `ask2`: AskUserQuestion com duas perguntas (a segunda multiSelect);
  * - `slow`: um delta a cada 100 ms ate `interrupt()` ou abort;
+ * - `leak`: ecoa `options.env.GH_TOKEN` em tool_use, tool_result, delta, texto e result;
  * - qualquer outro: 3 deltas, texto final e result.
  * Abort rejeita como o SDK real; `interrupt()` encerra o turno corrente com um result.
  */
@@ -90,6 +91,16 @@ export function query({ prompt, options }) {
       });
       return;
     }
+    if (text === "leak") {
+      const token = options.env?.GH_TOKEN ?? "";
+      const id = `tool-${randomUUID()}`;
+      yield assistant([{ type: "tool_use", id, name: "Bash", input: { command: `echo ${token}` } }]);
+      yield toolResult(id, `token=${token}`);
+      yield delta(token);
+      yield assistant([{ type: "text", text: `vi ${token}` }]);
+      yield result(`fim ${token}`);
+      return;
+    }
     if (text === "slow") {
       while (!interrupted) {
         yield delta(".");
@@ -125,6 +136,18 @@ export function query({ prompt, options }) {
     async interrupt() {
       interrupted = true;
       wakeInterrupt?.();
+    },
+  };
+}
+
+/** Espiao de `options`: registra o que cada `query` recebeu e delega ao fake. */
+export function spyQuery() {
+  const calls = [];
+  return {
+    calls,
+    query(args) {
+      calls.push(args.options);
+      return query(args);
     },
   };
 }
