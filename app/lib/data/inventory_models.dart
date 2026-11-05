@@ -54,13 +54,54 @@ class StackInfo {
 }
 
 class AdrEntry {
-  const AdrEntry({required this.id, required this.title, required this.status, required this.path, this.error});
+  const AdrEntry({
+    required this.id,
+    required this.title,
+    required this.status,
+    required this.path,
+    this.date,
+    this.affects = const [],
+    this.supersedes = const [],
+    this.supersededBy = const [],
+    this.tags = const [],
+    this.warning,
+    this.error,
+  });
 
   final String id;
   final String title;
   final String status;
   final String path;
+  final String? date;
+  final List<String> affects;
+  final List<String> supersedes;
+  final List<String> supersededBy;
+  final List<String> tags;
+  final String? warning;
   final String? error;
+
+  AdrEntry withError(String error) => AdrEntry(
+    id: id,
+    title: title,
+    status: status,
+    path: path,
+    date: date,
+    affects: affects,
+    supersedes: supersedes,
+    supersededBy: supersededBy,
+    tags: tags,
+    warning: warning,
+    error: error,
+  );
+}
+
+class AdrChainItem {
+  const AdrChainItem({required this.id, this.entry});
+
+  final String id;
+
+  /// `null` quando o id é citado por outro ADR mas não existe.
+  final AdrEntry? entry;
 }
 
 class RuleEntry {

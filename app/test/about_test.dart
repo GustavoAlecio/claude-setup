@@ -1,6 +1,7 @@
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/core/claude_home.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/core/theme/app_colors.dart';
 import 'package:claude_flow/core/widgets/primitives.dart';
 import 'package:claude_flow/data/flow_repository.dart';
 import 'package:claude_flow/data/inventory_models.dart';
@@ -54,8 +55,8 @@ Map<String, dynamic> _config() => {
 ProjectInventory _projectData(String name) => ProjectInventory(
   rules: [RuleEntry(name: '$name-rule', path: '/r/$name.md', summary: 'regra de $name')],
   adrs: [
-    AdrEntry(id: '0002', title: 'Segunda de $name', status: 'superseded', path: '/a/2.md'),
     AdrEntry(id: '0001', title: 'Primeira de $name', status: 'accepted', path: '/a/1.md'),
+    AdrEntry(id: '0002', title: 'Segunda de $name', status: 'superseded', path: '/a/2.md'),
   ],
   lessons: ['[flutter] lição de $name'],
   routing: Routing(
@@ -106,6 +107,9 @@ class _SearchInventory implements InventoryRepository {
 
   @override
   Future<ProjectInventory> loadProject(Project project) async => const ProjectInventory();
+
+  @override
+  Future<({AdrEntry entry, String body})?> loadAdr(Project project, String id) async => null;
 }
 
 GoRouter _router(WidgetTester tester) => GoRouter.of(tester.element(find.byType(Scaffold).first));
@@ -317,6 +321,11 @@ void main() {
       expect(find.text('regra de alpha'), findsOneWidget);
       final first = tester.getTopLeft(find.text('Primeira de alpha')).dy;
       expect(first, lessThan(tester.getTopLeft(find.text('Segunda de alpha')).dy), reason: 'ADRs by id');
+      final colors = tester.element(find.text('Primeira de alpha')).colors;
+      for (final status in ['accepted', 'superseded']) {
+        final pill = tester.widget<Pill>(find.widgetWithText(Pill, status));
+        expect(pill.color, adrStatusColor(colors, status));
+      }
       expect(find.textContaining('lição de alpha', findRichText: true), findsOneWidget);
       expect(find.text('L:high → alpha-tier'), findsOneWidget);
       expect(find.textContaining('tentativas/task 1.3'), findsOneWidget);

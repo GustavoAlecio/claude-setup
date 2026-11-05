@@ -1,0 +1,14 @@
+{
+  "feature": "Ciclo sem trace",
+  "project": "alpha",
+  "start_date": "",
+  "end_date": "",
+  "duration_minutes": 0,
+  "tokens_spent": 0,
+  "tasks_total": 2,
+  "tasks_completed": 1,
+  "completion_rate": 50,
+  "status": "blocked",
+  "backtracks": [],
+  "phases": {}
+}

@@ -1,0 +1,81 @@
+{
+  "status": "verified",
+  "checkpoint": "dddd444",
+  "tasks": [],
+  "trace": [
+    {
+      "role": "g1:flutter-architecture",
+      "stage": "verify",
+      "round": 1,
+      "verdict": "fail",
+      "blocking": [
+        "G1:lib/b.dart:rule#di"
+      ],
+      "findings": [],
+      "tokens_out": 80
+    },
+    {
+      "role": "g2",
+      "stage": "verify",
+      "round": 1,
+      "verdict": "fail",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 30
+    },
+    {
+      "role": "dev",
+      "task": "V1",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "done",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 60,
+      "stage": "verify-reentry",
+      "round": 1
+    },
+    {
+      "role": "g0",
+      "task": "V1",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 0,
+      "stage": "verify-reentry",
+      "round": 1
+    },
+    {
+      "role": "g1",
+      "task": "V1",
+      "attempt": 1,
+      "tier": "sonnet",
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 20,
+      "stage": "verify-reentry",
+      "round": 1
+    },
+    {
+      "role": "g1:flutter-architecture",
+      "stage": "verify",
+      "round": 2,
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 70
+    },
+    {
+      "role": "g2",
+      "stage": "verify",
+      "round": 2,
+      "verdict": "pass",
+      "blocking": [],
+      "findings": [],
+      "tokens_out": 25
+    }
+  ]
+}

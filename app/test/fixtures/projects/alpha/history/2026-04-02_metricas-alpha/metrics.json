@@ -1,0 +1,14 @@
+{
+  "feature": "Métricas alpha",
+  "project": "alpha",
+  "start_date": "",
+  "end_date": "",
+  "duration_minutes": 0,
+  "tokens_spent": 999999999,
+  "tasks_total": 2,
+  "tasks_completed": 2,
+  "completion_rate": 100,
+  "status": "completed",
+  "backtracks": [],
+  "phases": {}
+}

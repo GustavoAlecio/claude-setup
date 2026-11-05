@@ -94,12 +94,23 @@ void main() {
 
       final p = await repo.loadProject(project(path: projectDir));
 
-      expect(p.adrs.map((a) => a.id), ['0001', '']);
+      expect(p.adrs.map((a) => (a.id, a.status)), [('0001', 'accepted'), ('0002', '?')]);
       expect(p.adrs.last.error, contains('0002-bad.md'));
       expect(p.rules.single.name, 'app');
       expect(p.rules.single.summary, 'Resumo da rule.');
       expect(p.lessons, ['[a] uma', '[b] duas']);
       expect(p.routing.overrides, {'L:high': 'fable'});
+    });
+
+    test('duplicate ADR ids: the first file wins, the other gets an error', () async {
+      _write('$projectDir/docs/adr/0003-a.md', '---\nid: "0003"\ntitle: A\nstatus: accepted\n---\n');
+      _write('$projectDir/docs/adr/0003-b.md', '---\nid: "0003"\ntitle: B\nstatus: accepted\n---\n');
+
+      final p = await repo.loadProject(project(path: projectDir));
+
+      expect(p.adrs.map((a) => a.title), ['A', 'B']);
+      expect(p.adrs.first.error, isNull);
+      expect(p.adrs.last.error, contains('id duplicado'));
     });
 
     test('uses rules_dir and adr_dir from the detected stack', () async {
@@ -133,6 +144,48 @@ void main() {
       final p = await repo.loadProject(project());
 
       expect(p.routing.error, isNotNull);
+    });
+  });
+
+  group('loadAdr', () {
+    const project = Project(name: 'proj', path: null);
+
+    test('returns the body after the closing --- and null for an unknown id', () async {
+      _write(
+        '$projectDir/docs/adr/0001-x.md',
+        '---\nid: "0001"\ntitle: X\nstatus: accepted\nsupersedes: [0000]\n---\n# X\n\ncorpo\n---\nfim\n',
+      );
+      final p = Project(name: 'proj', path: projectDir);
+
+      final r = await repo.loadAdr(p, '0001');
+
+      expect(r!.entry.title, 'X');
+      expect(r.entry.supersedes, ['0000']);
+      expect(r.body, '# X\n\ncorpo\n---\nfim\n');
+      expect(await repo.loadAdr(p, '0042'), isNull);
+    });
+
+    test('an ADR without frontmatter is found by the filename digits with the raw body', () async {
+      _write('$projectDir/docs/adr/0002-bad.md', 'sem frontmatter\nlinha');
+
+      final r = await repo.loadAdr(Project(name: 'proj', path: projectDir), '0002');
+
+      expect(r!.entry.status, '?');
+      expect(r.entry.error, contains('0002-bad.md'));
+      expect(r.body, 'sem frontmatter\nlinha');
+    });
+
+    test('duplicate id resolves to the first file', () async {
+      _write('$projectDir/docs/adr/0003-a.md', '---\nid: "0003"\ntitle: A\nstatus: accepted\n---\nA');
+      _write('$projectDir/docs/adr/0003-b.md', '---\nid: "0003"\ntitle: B\nstatus: accepted\n---\nB');
+
+      final r = await repo.loadAdr(Project(name: 'proj', path: projectDir), '0003');
+
+      expect((r!.entry.title, r.body), ('A', 'A'));
+    });
+
+    test('a project without path has no ADR', () async {
+      expect(await repo.loadAdr(project, '0001'), isNull);
     });
   });
 }

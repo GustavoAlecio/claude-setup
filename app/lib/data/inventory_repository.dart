@@ -8,6 +8,9 @@ abstract interface class InventoryRepository {
 
   /// Projects without a path only get lessons and routing.
   Future<ProjectInventory> loadProject(Project project);
+
+  /// `body` = linhas após o `---` de fechamento. `null` para id inexistente ou projeto sem path.
+  Future<({AdrEntry entry, String body})?> loadAdr(Project project, String id);
 }
 
 class InventoryScope extends InheritedWidget {

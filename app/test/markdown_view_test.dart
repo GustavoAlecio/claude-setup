@@ -1,5 +1,7 @@
 import 'package:claude_flow/core/theme/app_theme.dart';
+import 'package:claude_flow/core/theme/app_colors.dart';
 import 'package:claude_flow/core/widgets/markdown_view.dart';
+import 'package:claude_flow/core/widgets/wiki_link_syntax.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -134,5 +136,80 @@ void main() {
   testWidgets('wrapped in a SelectionArea', (tester) async {
     await tester.pumpWidget(_host(MarkdownView('texto', onLink: (_) {})));
     expect(find.byType(SelectionArea), findsOneWidget);
+  });
+
+  group('wikilink', () {
+    String? resolve(String target) => target == '0002-cubit' ? '0002' : null;
+
+    List<TextSpan> spans(WidgetTester tester) {
+      final out = <TextSpan>[];
+      void walk(InlineSpan s) {
+        if (s is TextSpan) {
+          out.add(s);
+          s.children?.forEach(walk);
+        }
+      }
+
+      for (final t in tester.widgetList<Text>(find.byType(Text))) {
+        if (t.textSpan != null) walk(t.textSpan!);
+      }
+      return out;
+    }
+
+    testWidgets('resolved becomes an adr: link with the label', (tester) async {
+      final calls = <Uri>[];
+      await tester.pumpWidget(
+        _host(
+          MarkdownView(
+            'veja [[docs/adr/0002-cubit.md|o cubit]] agora',
+            onLink: calls.add,
+            inlineSyntaxes: [WikiLinkSyntax(resolve)],
+          ),
+        ),
+      );
+      final link = spans(tester).firstWhere((s) => s.recognizer is TapGestureRecognizer);
+      expect(link.toPlainText(), 'o cubit');
+      (link.recognizer as TapGestureRecognizer).onTap!();
+      expect(calls, [Uri(scheme: 'adr', path: '0002')]);
+      expect(_plain(tester), isNot(contains('[[')));
+    });
+
+    testWidgets('unresolved renders muted text without brackets or a link', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          MarkdownView(
+            'veja [[9999-x]] e [[9999-x|rótulo]]',
+            onLink: (_) {},
+            inlineSyntaxes: [WikiLinkSyntax(resolve)],
+          ),
+        ),
+      );
+      final text = _plain(tester);
+      expect(text, contains('9999-x'));
+      expect(text, contains('rótulo'));
+      expect(text, isNot(contains('[[')));
+      expect(spans(tester).where((s) => s.recognizer != null), isEmpty);
+      final muted = tester.element(find.byType(MarkdownView)).colors.textMuted;
+      expect(spans(tester).where((s) => s.style?.color == muted).map((s) => s.toPlainText()), ['9999-x', 'rótulo']);
+    });
+
+    testWidgets('inside code it stays literal', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          MarkdownView(
+            'inline `[[0002-cubit]]` e\n\n```\n[[0002-cubit]]\n```\n',
+            onLink: (_) {},
+            inlineSyntaxes: [WikiLinkSyntax(resolve)],
+          ),
+        ),
+      );
+      expect('[[0002-cubit]]'.allMatches(_plain(tester)), hasLength(2));
+      expect(spans(tester).where((s) => s.recognizer != null), isEmpty);
+    });
+
+    testWidgets('without the syntax the text is untouched', (tester) async {
+      await tester.pumpWidget(_host(MarkdownView('a [[0002-cubit]] b', onLink: (_) {})));
+      expect(_plain(tester), contains('[[0002-cubit]]'));
+    });
   });
 }

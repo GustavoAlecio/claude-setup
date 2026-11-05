@@ -41,7 +41,7 @@ class FileInventoryRepository implements InventoryRepository {
     final routing = await _read('$stateDir/routing.json');
     return ProjectInventory(
       rules: path == null ? const [] : await _rules('${normalizePath(path)}/$rulesDir'),
-      adrs: path == null ? const [] : await _adrs('${normalizePath(path)}/$adrDir'),
+      adrs: path == null ? const [] : sortAdrs(await _adrs('${normalizePath(path)}/$adrDir')),
       lessons: lessons.text == null ? const [] : parseLessons(lessons.text!),
       routing: routing.text != null
           ? parseRouting(routing.text!)
@@ -49,6 +49,18 @@ class FileInventoryRepository implements InventoryRepository {
           ? const Routing()
           : Routing(error: 'não foi possível ler routing.json: ${routing.error}'),
     );
+  }
+
+  @override
+  Future<({AdrEntry entry, String body})?> loadAdr(Project project, String id) async {
+    final path = project.path;
+    if (path == null) return null;
+    final stack = (await _stacks()).where((s) => s.name == project.stack).firstOrNull;
+    final adrDir = '${normalizePath(path)}/${stack?.adrDir ?? const StackInfo(name: '').adrDir}';
+    for (final (entry, raw) in await _adrFiles(adrDir)) {
+      if (entry.id == id) return (entry: entry, body: raw == null ? '' : adrBody(raw));
+    }
+    return null;
   }
 
   Future<List<InventoryItem>> _skills() async {
@@ -128,18 +140,24 @@ class FileInventoryRepository implements InventoryRepository {
     return out;
   }
 
-  Future<List<AdrEntry>> _adrs(String dir) async {
-    final out = <AdrEntry>[];
+  Future<List<AdrEntry>> _adrs(String dir) async => [for (final (entry, _) in await _adrFiles(dir)) entry];
+
+  /// Entries in file-name order, duplicates already marked; the raw text is `null` when unreadable.
+  Future<List<(AdrEntry, String?)>> _adrFiles(String dir) async {
+    final entries = <AdrEntry>[];
+    final raws = <String?>[];
     for (final file in await _files(dir, '.md')) {
       if (!RegExp(r'^[0-9]').hasMatch(_basename(file))) continue;
       final read = await _read(file);
-      out.add(
+      raws.add(read.text);
+      entries.add(
         read.text == null
-            ? AdrEntry(id: '', title: '', status: '', path: file, error: _unreadable(file, read.error))
+            ? parseAdr('', path: file).withError(_unreadable(file, read.error))
             : parseAdr(read.text!, path: file),
       );
     }
-    return out;
+    final marked = markDuplicateAdrs(entries);
+    return [for (var i = 0; i < marked.length; i++) (marked[i], raws[i])];
   }
 
   /// Sorted direct children; empty when [dir] is missing or unreadable.

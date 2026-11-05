@@ -4,33 +4,39 @@ import 'package:markdown/markdown.dart' as md;
 
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import 'wiki_link_syntax.dart';
 
 /// Renders GitHub-flavored markdown as selectable widgets. Raw HTML and unknown nodes render as literal
 /// text; the caller decides what each link tap does.
 class MarkdownView extends StatefulWidget {
-  const MarkdownView(this.source, {super.key, required this.onLink, this.style});
+  const MarkdownView(this.source, {super.key, required this.onLink, this.style, this.inlineSyntaxes = const []});
 
   final String source;
   final void Function(Uri) onLink;
   final TextStyle? style;
+
+  /// Run before the built-in syntaxes; the document is re-parsed whenever this list instance changes.
+  final List<md.InlineSyntax> inlineSyntaxes;
 
   @override
   State<MarkdownView> createState() => _MarkdownViewState();
 }
 
 class _MarkdownViewState extends State<MarkdownView> {
-  late List<md.Node> _nodes = _parse(widget.source);
+  late List<md.Node> _nodes = _parse(widget.source, widget.inlineSyntaxes);
   final _recognizers = <TapGestureRecognizer>[];
 
-  static List<md.Node> _parse(String source) {
-    final doc = md.Document(extensionSet: md.ExtensionSet.gitHubFlavored, encodeHtml: false);
+  static List<md.Node> _parse(String source, List<md.InlineSyntax> syntaxes) {
+    final doc = md.Document(extensionSet: md.ExtensionSet.gitHubFlavored, inlineSyntaxes: syntaxes, encodeHtml: false);
     return doc.parseLines(source.split(RegExp(r'\r?\n')));
   }
 
   @override
   void didUpdateWidget(MarkdownView old) {
     super.didUpdateWidget(old);
-    if (old.source != widget.source) _nodes = _parse(widget.source);
+    if (old.source != widget.source || !identical(old.inlineSyntaxes, widget.inlineSyntaxes)) {
+      _nodes = _parse(widget.source, widget.inlineSyntaxes);
+    }
   }
 
   @override
@@ -66,7 +72,7 @@ class _Builder {
   final void Function(Uri) onLink;
   final List<TapGestureRecognizer> recognizers;
 
-  static const _inlineTags = {'strong', 'em', 'del', 'code', 'a', 'img', 'br', 'input'};
+  static const _inlineTags = {'strong', 'em', 'del', 'code', 'a', 'img', 'br', 'input', wikiLinkUnresolvedTag};
 
   static bool _isInline(md.Node n) => n is md.Text || (n is md.Element && _inlineTags.contains(n.tag));
 
@@ -292,6 +298,13 @@ class _Builder {
             recognizers.add(recognizer);
             out.add(TextSpan(children: inline(kids, linkStyle), recognizer: recognizer, style: linkStyle));
           }
+        case wikiLinkUnresolvedTag:
+          out.add(
+            TextSpan(
+              text: e.textContent,
+              style: style.copyWith(color: c.textMuted),
+            ),
+          );
         case 'img':
           out.add(TextSpan(text: e.attributes['alt'] ?? '', style: style));
         case 'br':

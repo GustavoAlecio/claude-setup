@@ -149,24 +149,162 @@ StackInfo? parseStack(String raw, {required String fallbackName}) {
   );
 }
 
+const _adrListKeys = ['affects', 'supersedes', 'superseded_by', 'tags'];
+
+final _adrIdPattern = RegExp(r'^[0-9]{4}$');
+
+/// Leitor próprio do frontmatter de ADR: o genérico ignora listas e `date`. Só lê chaves de topo;
+/// lista de bloco (`- item`) conta como inválida.
 AdrEntry parseAdr(String raw, {required String path}) {
   final fm = parseFrontmatter(raw);
   final f = fm.fields;
-  final id = f['id'];
+  final rawId = f['id'];
   final title = f['title'];
   final status = f['status'];
+  final fileId = RegExp(r'^[0-9]{4}').firstMatch(_basename(path))?.group(0);
+  final hasId = rawId is String && _adrIdPattern.hasMatch(rawId);
+  final id = hasId ? rawId : (fileId ?? '');
+
+  final extra = _adrExtraFields(raw);
+  final warnings = [for (final k in extra.invalid) 'lista inválida em "$k"'];
+
   final String? error = fm.error != null
       ? _unreadable(path, fm.error!)
-      : (id is! String || id.isEmpty || title is! String || status is! String)
+      : (!hasId || title is! String || status is! String)
       ? _unreadable(path, 'frontmatter sem id, title ou status')
       : null;
   return AdrEntry(
-    id: id is String ? id : '',
+    id: id,
     title: title is String ? title : '',
-    status: status is String ? status : '',
+    status: status is String && hasId ? status : '?',
     path: path,
+    date: extra.date,
+    affects: extra.lists['affects'] ?? const [],
+    supersedes: extra.lists['supersedes'] ?? const [],
+    supersededBy: extra.lists['superseded_by'] ?? const [],
+    tags: extra.lists['tags'] ?? const [],
+    warning: warnings.isEmpty ? null : warnings.join('; '),
     error: error,
   );
+}
+
+({String? date, Map<String, List<String>> lists, List<String> invalid}) _adrExtraFields(String raw) {
+  final bounds = _frontmatterBounds(raw);
+  final lists = <String, List<String>>{};
+  final invalid = <String>[];
+  String? date;
+  if (bounds == null || bounds.end < 0) return (date: null, lists: lists, invalid: invalid);
+  for (final line in bounds.lines.sublist(1, bounds.end)) {
+    if (line.startsWith(' ') || line.startsWith('\t')) continue;
+    final m = _keyLine.firstMatch(line.trimRight());
+    if (m == null) continue;
+    final key = m.group(1)!;
+    final value = (m.group(2) ?? '').trim();
+    if (key == 'date') {
+      final text = value.startsWith('"') || value.startsWith("'") ? _unquoteAll(value) : _stripComment(value);
+      date = text == null || text.isEmpty ? null : text;
+    } else if (_adrListKeys.contains(key)) {
+      final items = _inlineList(value);
+      if (items == null) {
+        lists.remove(key);
+        invalid.add(key);
+      } else {
+        invalid.remove(key);
+        lists[key] = items;
+      }
+    }
+  }
+  return (date: date, lists: lists, invalid: invalid);
+}
+
+String _stripComment(String v) {
+  final i = v.indexOf(' #');
+  return (i < 0 ? v : v.substring(0, i)).trim();
+}
+
+String? _unquoteAll(String v) {
+  final q = v[0];
+  if (v.length < 2 || !v.substring(1).contains(q)) return null;
+  final end = v.indexOf(q, 1);
+  final rest = v.substring(end + 1).trim();
+  if (rest.isNotEmpty && !rest.startsWith('#')) return null;
+  return v.substring(1, end);
+}
+
+/// `[a, "b", 'c']` ou `[]`; itens sem aspas são literais. `null` quando a forma é inválida.
+List<String>? _inlineList(String value) {
+  final v = _stripListComment(value);
+  if (!v.startsWith('[') || !v.endsWith(']')) return null;
+  final inner = v.substring(1, v.length - 1);
+  if (inner.trim().isEmpty) return const [];
+  final items = <String>[];
+  var i = 0;
+  while (true) {
+    while (i < inner.length && inner[i] == ' ') {
+      i++;
+    }
+    if (i >= inner.length) return null;
+    final c = inner[i];
+    String item;
+    if (c == '"' || c == "'") {
+      final end = inner.indexOf(c, i + 1);
+      if (end < 0) return null;
+      item = inner.substring(i + 1, end);
+      i = end + 1;
+      while (i < inner.length && inner[i] == ' ') {
+        i++;
+      }
+      if (i < inner.length && inner[i] != ',') return null;
+    } else {
+      final end = inner.indexOf(',', i);
+      final stop = end < 0 ? inner.length : end;
+      item = inner.substring(i, stop).trim();
+      if (item.isEmpty || item.contains('[') || item.contains(']') || item.contains('"')) return null;
+      i = stop;
+    }
+    items.add(item);
+    if (i >= inner.length) return items;
+    i++;
+  }
+}
+
+String _stripListComment(String v) {
+  final close = v.lastIndexOf(']');
+  if (close < 0) return v.trim();
+  final rest = v.substring(close + 1).trim();
+  return rest.isEmpty || rest.startsWith('#') ? v.substring(0, close + 1).trim() : v.trim();
+}
+
+/// Corpo = linhas após o `---` de fechamento; sem frontmatter válido, o texto inteiro.
+String adrBody(String raw) {
+  final bounds = _frontmatterBounds(raw);
+  if (bounds == null || bounds.end < 0) return raw;
+  return bounds.lines.sublist(bounds.end + 1).join('\n');
+}
+
+/// Id duplicado: vale o primeiro na ordem de [adrs] (por nome de arquivo); os outros ganham erro.
+List<AdrEntry> markDuplicateAdrs(List<AdrEntry> adrs) {
+  final seen = <String>{};
+  return [
+    for (final a in adrs)
+      if (a.id.isEmpty || seen.add(a.id)) a else a.withError('id duplicado: ${a.id} (${_basename(a.path)})'),
+  ];
+}
+
+bool _isDuplicateAdr(AdrEntry a) => a.error != null && a.error!.startsWith('id duplicado');
+
+/// Tile de ADR com id vazio ou duplicado não identifica um ADR único, então não é selecionável.
+bool adrSelectable(AdrEntry a) => a.id.isNotEmpty && !_isDuplicateAdr(a);
+
+/// Alvo de `[[alvo]]`: nome do arquivo sem `.md`, senão os 4 dígitos do id. `null` quando não resolve.
+String? resolveAdrTarget(String target, List<AdrEntry> adrs) {
+  final byId = {for (final a in adrs.reversed) a.id: a};
+  for (final a in adrs) {
+    if (_isDuplicateAdr(a)) continue;
+    if (_basename(a.path).replaceFirst(RegExp(r'\.md$'), '') == target) return a.id;
+  }
+  final digits = RegExp(r'[0-9]{4}').firstMatch(target)?.group(0);
+  return digits != null && byId.containsKey(digits) ? digits : null;
 }
 
 /// Resumo = primeira linha não vazia após o frontmatter e o `# título`. O conteúdo do frontmatter
@@ -485,4 +623,76 @@ Ladder _parseLadder(String source) {
     error ??= 'TIER0 não é um mapa de strings';
   }
   return Ladder(tiers: tiers, tier0: tier0, blocking: blocking, error: error);
+}
+
+/// Maior id `accepted` (comparação de string); sem `accepted`, o maior id; lista vazia → `null`.
+String? defaultAdrId(List<AdrEntry> adrs) {
+  String? max(Iterable<AdrEntry> xs) =>
+      xs.isEmpty ? null : xs.map((a) => a.id).reduce((a, b) => a.compareTo(b) >= 0 ? a : b);
+  return max(adrs.where((a) => a.status == 'accepted')) ?? max(adrs);
+}
+
+enum AdrStatusGroup { all, accepted, proposed, superseded }
+
+bool adrStatusMatches(AdrStatusGroup group, String status) => switch (group) {
+  AdrStatusGroup.all => true,
+  AdrStatusGroup.accepted => status == 'accepted',
+  AdrStatusGroup.proposed => status == 'proposed',
+  AdrStatusGroup.superseded => status == 'superseded' || status == 'deprecated',
+};
+
+/// Ordem canônica `(id, path)`.
+List<AdrEntry> sortAdrs(Iterable<AdrEntry> adrs) => [...adrs]
+  ..sort((a, b) {
+    final byId = a.id.compareTo(b.id);
+    return byId != 0 ? byId : a.path.compareTo(b.path);
+  });
+
+/// Componente conexo de [id] pelas arestas `A.superseded_by ∋ B` e `B.supersedes ∋ A` (A vem antes de B),
+/// em ordem topológica com empate por id; ciclos são quebrados pelo menor id restante. Inclui o próprio
+/// [id]; com um só item não há cadeia.
+List<AdrChainItem> adrChain(String id, List<AdrEntry> adrs) {
+  final byId = <String, AdrEntry>{};
+  for (final a in adrs) {
+    if (a.id.isNotEmpty) byId.putIfAbsent(a.id, () => a);
+  }
+  final next = <String, Set<String>>{};
+  final prev = <String, Set<String>>{};
+  void edge(String from, String to) {
+    if (from == to) return;
+    next.putIfAbsent(from, () => {}).add(to);
+    prev.putIfAbsent(to, () => {}).add(from);
+  }
+
+  for (final a in byId.values) {
+    for (final b in a.supersededBy) {
+      edge(a.id, b);
+    }
+    for (final b in a.supersedes) {
+      edge(b, a.id);
+    }
+  }
+
+  final component = <String>{id};
+  final queue = [id];
+  while (queue.isNotEmpty) {
+    final n = queue.removeLast();
+    for (final m in [...?next[n], ...?prev[n]]) {
+      if (component.add(m)) queue.add(m);
+    }
+  }
+
+  final remaining = {...component};
+  final order = <String>[];
+  while (remaining.isNotEmpty) {
+    var ready = [
+      for (final n in remaining)
+        if (!(prev[n] ?? const <String>{}).any(remaining.contains)) n,
+    ];
+    if (ready.isEmpty) ready = remaining.toList();
+    final pick = ready.reduce((a, b) => a.compareTo(b) <= 0 ? a : b);
+    remaining.remove(pick);
+    order.add(pick);
+  }
+  return [for (final n in order) AdrChainItem(id: n, entry: byId[n])];
 }

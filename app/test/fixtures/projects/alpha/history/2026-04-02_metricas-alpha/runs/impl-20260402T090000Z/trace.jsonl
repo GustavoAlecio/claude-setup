@@ -1,0 +1,8 @@
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 0, "run_id": "impl-20260402T090000Z", "role": "dev", "task": "T1", "attempt": 1, "tier": "sonnet", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 100}
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 1, "run_id": "impl-20260402T090000Z", "role": "g0", "task": "T1", "attempt": 1, "tier": "sonnet", "verdict": "fail", "blocking": ["G0:lib/a.dart:analyze"], "findings": [], "tokens_out": 0}
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 2, "run_id": "impl-20260402T090000Z", "role": "dev", "task": "T1", "attempt": 2, "tier": "opus", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 200}
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 3, "run_id": "impl-20260402T090000Z", "role": "g0", "task": "T1", "attempt": 2, "tier": "opus", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 0}
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 4, "run_id": "impl-20260402T090000Z", "role": "g1", "task": "T1", "attempt": 2, "tier": "opus", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 50}
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 5, "run_id": "impl-20260402T090000Z", "role": "dev", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 150}
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 6, "run_id": "impl-20260402T090000Z", "role": "g0", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 0}
+{"persisted_at": "2026-04-02T10:00:00Z", "seq": 7, "run_id": "impl-20260402T090000Z", "role": "g1", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 40}

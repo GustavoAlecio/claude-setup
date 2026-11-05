@@ -51,6 +51,12 @@ class Pill extends StatelessWidget {
   }
 }
 
+Color adrStatusColor(AppColors c, String status) => switch (status) {
+  'accepted' => c.pass,
+  'proposed' => c.accent,
+  _ => c.idle,
+};
+
 class TierChip extends StatelessWidget {
   const TierChip(this.tier, {super.key});
 

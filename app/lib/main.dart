@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app/app.dart';
 import 'app/docs_from_environment.dart';
 import 'app/inventory_from_environment.dart';
+import 'app/metrics_from_environment.dart';
 import 'app/repository_from_environment.dart';
 import 'app/sessions_from_environment.dart';
 
@@ -15,6 +16,7 @@ void main() {
       engine: engine,
       github: github,
       inventory: inventoryFromEnvironment(),
+      metrics: metricsFromEnvironment(),
       docs: docsFromEnvironment(),
     ),
   );

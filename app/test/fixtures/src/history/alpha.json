@@ -1,0 +1,114 @@
+{
+  "cycles": [
+    {
+      "dir": "2026-04-02_metricas-alpha",
+      "metrics": {
+        "feature": "Métricas alpha",
+        "project": "alpha",
+        "start_date": "",
+        "end_date": "",
+        "duration_minutes": 0,
+        "tokens_spent": 999999999,
+        "tasks_total": 2,
+        "tasks_completed": 2,
+        "completion_rate": 100,
+        "status": "completed",
+        "backtracks": [],
+        "phases": {}
+      },
+      "runs": [
+        {
+          "id": "impl-20260402T080000Z",
+          "events": [
+            {
+              "ts": "2026-04-02T08:00:05Z",
+              "run_id": "impl-20260402T080000Z",
+              "role": "dev",
+              "task": "T1",
+              "tier": "sonnet",
+              "verdict": "start",
+              "attempt": 1
+            }
+          ]
+        },
+        {
+          "id": "impl-20260402T090000Z",
+          "persisted_at": "2026-04-02T10:00:00Z",
+          "result": {
+            "status": "done",
+            "checkpoint": "cccc333",
+            "tasks": [
+              {"id": "T1", "status": "done", "tier0": "sonnet", "tier": "opus", "attempts": 2},
+              {"id": "T2", "status": "done", "tier0": "sonnet", "tier": "sonnet", "attempts": 1}
+            ],
+            "trace": [
+              {"role": "dev", "task": "T1", "attempt": 1, "tier": "sonnet", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 100},
+              {"role": "g0", "task": "T1", "attempt": 1, "tier": "sonnet", "verdict": "fail", "blocking": ["G0:lib/a.dart:analyze"], "findings": [], "tokens_out": 0},
+              {"role": "dev", "task": "T1", "attempt": 2, "tier": "opus", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 200},
+              {"role": "g0", "task": "T1", "attempt": 2, "tier": "opus", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 0},
+              {"role": "g1", "task": "T1", "attempt": 2, "tier": "opus", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 50},
+              {"role": "dev", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 150},
+              {"role": "g0", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 0},
+              {"role": "g1", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 40}
+            ]
+          }
+        },
+        {
+          "id": "verify-20260402T110000Z",
+          "persisted_at": "2026-04-02T12:00:00Z",
+          "result": {
+            "status": "verified",
+            "checkpoint": "dddd444",
+            "tasks": [],
+            "trace": [
+              {"role": "g1:flutter-architecture", "stage": "verify", "round": 1, "verdict": "fail", "blocking": ["G1:lib/b.dart:rule#di"], "findings": [], "tokens_out": 80},
+              {"role": "g2", "stage": "verify", "round": 1, "verdict": "fail", "blocking": [], "findings": [], "tokens_out": 30},
+              {"role": "dev", "task": "V1", "attempt": 1, "tier": "sonnet", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 60, "stage": "verify-reentry", "round": 1},
+              {"role": "g0", "task": "V1", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 0, "stage": "verify-reentry", "round": 1},
+              {"role": "g1", "task": "V1", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 20, "stage": "verify-reentry", "round": 1},
+              {"role": "g1:flutter-architecture", "stage": "verify", "round": 2, "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 70},
+              {"role": "g2", "stage": "verify", "round": 2, "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 25}
+            ]
+          }
+        },
+        {
+          "id": "verify-20260402T130000Z",
+          "persisted_at": "2026-04-02T14:00:00Z",
+          "result": {
+            "status": "verified",
+            "checkpoint": "eeee555",
+            "tasks": [],
+            "trace": [
+              {"role": "g1:flutter-architecture", "stage": "verify", "round": 1, "verdict": "fail", "blocking": ["G1:lib/c.dart:rule#io"], "findings": [], "tokens_out": 90},
+              {"role": "g2", "stage": "verify", "round": 1, "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 20},
+              {"role": "dev", "task": "V1", "attempt": 1, "tier": "sonnet", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 120, "stage": "verify-reentry", "round": 1},
+              {"role": "g0", "task": "V1", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 0, "stage": "verify-reentry", "round": 1},
+              {"role": "g1", "task": "V1", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 30, "stage": "verify-reentry", "round": 1},
+              {"role": "dev", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "done", "blocking": [], "findings": [], "tokens_out": 100, "stage": "verify-reentry", "round": 1},
+              {"role": "g0", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 0, "stage": "verify-reentry", "round": 1},
+              {"role": "g1", "task": "T2", "attempt": 1, "tier": "sonnet", "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 19, "stage": "verify-reentry", "round": 1},
+              {"role": "g1:flutter-architecture", "stage": "verify", "round": 2, "verdict": "pass", "blocking": [], "findings": [], "tokens_out": 30}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "dir": "2026-03-20_sem-trace-alpha",
+      "metrics": {
+        "feature": "Ciclo sem trace",
+        "project": "alpha",
+        "start_date": "",
+        "end_date": "",
+        "duration_minutes": 0,
+        "tokens_spent": 0,
+        "tasks_total": 2,
+        "tasks_completed": 1,
+        "completion_rate": 50,
+        "status": "blocked",
+        "backtracks": [],
+        "phases": {}
+      }
+    }
+  ]
+}
