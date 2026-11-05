@@ -1,11 +1,11 @@
 ---
 id: 0006
 title: Testes de workflow e scripts fora do G0
-status: proposed
+status: superseded
 date: 2026-10-01
 affects: ["tests/**", "workflows/**", "bin/**"]
 supersedes: []
-superseded_by: []
+superseded_by: [0008]
 tags: [pipeline, testing]
 ---
 

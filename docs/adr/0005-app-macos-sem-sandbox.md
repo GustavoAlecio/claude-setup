@@ -1,7 +1,7 @@
 ---
 id: 0005
 title: App macOS sem App Sandbox
-status: proposed
+status: accepted
 date: 2026-10-01
 affects: ["app/macos/Runner/*.entitlements"]
 supersedes: []

@@ -4,11 +4,17 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/session_models.dart';
+import '../../data/session_reducer.dart';
+
+/// Sends the user's decision to the engine; the card's resolved state comes back through the session stream.
+typedef AnswerRequest =
+    Future<void> Function(String requestId, PermissionDecision decision, {Map<String, String>? answers});
 
 class SessionEventView extends StatelessWidget {
-  const SessionEventView(this.event, {super.key});
+  const SessionEventView(this.event, {super.key, required this.onAnswer});
 
   final SessionEvent event;
+  final AnswerRequest onAnswer;
 
   @override
   Widget build(BuildContext context) => switch (event) {
@@ -16,9 +22,10 @@ class SessionEventView extends StatelessWidget {
     final AssistantText e => _AssistantBlock(e),
     final Thinking e => _ThinkingRow(e),
     final ToolCall e => _ToolRow(e),
-    final PermissionRequest e => PermissionCard(e),
-    final QuestionRequest e => QuestionCard(e),
+    final PermissionRequest e => PermissionCard(e, onAnswer: onAnswer),
+    final QuestionRequest e => QuestionCard(e, onAnswer: onAnswer),
     final SessionResult e => _ResultFooter(e),
+    final SessionError e => _ErrorRow(e),
   };
 }
 
@@ -161,7 +168,7 @@ class _ThinkingRowState extends State<_ThinkingRow> {
             children: [
               Icon(_open ? Icons.expand_more : Icons.chevron_right, size: 16, color: c.textMuted),
               const SizedBox(width: 4),
-              Muted('pensou por ${widget.e.seconds}s'),
+              Muted(widget.e.seconds == null ? 'pensou' : 'pensou por ${widget.e.seconds}s'),
             ],
           ),
         ),
@@ -209,6 +216,8 @@ class _ToolRowState extends State<_ToolRow> {
     final e = widget.e;
     final status = e.running
         ? SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5, color: c.running))
+        : e.interrupted
+        ? Icon(Icons.block, size: 14, color: c.idle)
         : Icon(e.isError ? Icons.close : Icons.check, size: 14, color: e.isError ? c.fail : c.pass);
     return Container(
       decoration: BoxDecoration(
@@ -275,22 +284,33 @@ class _ToolRowState extends State<_ToolRow> {
 }
 
 class PermissionCard extends StatefulWidget {
-  const PermissionCard(this.e, {super.key});
+  const PermissionCard(this.e, {super.key, required this.onAnswer});
 
   final PermissionRequest e;
+  final AnswerRequest onAnswer;
 
   @override
   State<PermissionCard> createState() => _PermissionCardState();
 }
 
 class _PermissionCardState extends State<PermissionCard> {
-  late PermissionDecision? _decision = widget.e.decision;
+  bool _sending = false;
+
+  Future<void> _decide(PermissionDecision decision) async {
+    setState(() => _sending = true);
+    try {
+      await widget.onAnswer(widget.e.requestId, decision);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final e = widget.e;
-    final pending = _decision == null;
+    final decision = e.decision;
+    final pending = e.pending;
     return Container(
       decoration: BoxDecoration(
         color: c.surface,
@@ -341,7 +361,7 @@ class _PermissionCardState extends State<PermissionCard> {
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                         ),
-                        onPressed: () => setState(() => _decision = PermissionDecision.allow),
+                        onPressed: _sending ? null : () => _decide(PermissionDecision.allow),
                         child: const Text('Permitir', style: TextStyle(fontSize: 12)),
                       ),
                       const SizedBox(width: 8),
@@ -351,12 +371,12 @@ class _PermissionCardState extends State<PermissionCard> {
                           side: BorderSide(color: c.borderStrong),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                         ),
-                        onPressed: () => setState(() => _decision = PermissionDecision.always),
+                        onPressed: _sending ? null : () => _decide(PermissionDecision.always),
                         child: Text('Sempre permitir ${e.toolName} nesta sessão', style: const TextStyle(fontSize: 12)),
                       ),
                       const Spacer(),
                       TextButton(
-                        onPressed: () => setState(() => _decision = PermissionDecision.deny),
+                        onPressed: _sending ? null : () => _decide(PermissionDecision.deny),
                         child: Text('Negar', style: TextStyle(fontSize: 12, color: c.fail)),
                       ),
                     ],
@@ -364,15 +384,23 @@ class _PermissionCardState extends State<PermissionCard> {
                 : Row(
                     children: [
                       Icon(
-                        _decision == PermissionDecision.deny ? Icons.block : Icons.check_circle_outline,
+                        decision == null || decision == PermissionDecision.deny
+                            ? Icons.block
+                            : Icons.check_circle_outline,
                         size: 14,
-                        color: _decision == PermissionDecision.deny ? c.fail : c.pass,
+                        color: switch (decision) {
+                          null || PermissionDecision.aborted => c.idle,
+                          PermissionDecision.deny => c.fail,
+                          _ => c.pass,
+                        },
                       ),
                       const SizedBox(width: 8),
-                      Muted(switch (_decision!) {
-                        PermissionDecision.allow => 'permitido',
+                      Muted(switch (decision) {
+                        null => 'expirada',
+                        PermissionDecision.allow || PermissionDecision.answer => 'permitido',
                         PermissionDecision.always => 'permitido · ${e.toolName} liberado para esta sessão',
                         PermissionDecision.deny => 'negado',
+                        PermissionDecision.aborted => 'cancelada',
                       }),
                     ],
                   ),
@@ -452,35 +480,61 @@ class DiffView extends StatelessWidget {
 }
 
 class QuestionCard extends StatefulWidget {
-  const QuestionCard(this.e, {super.key});
+  const QuestionCard(this.e, {super.key, required this.onAnswer});
 
   final QuestionRequest e;
+  final AnswerRequest onAnswer;
 
   @override
   State<QuestionCard> createState() => _QuestionCardState();
 }
 
 class _QuestionCardState extends State<QuestionCard> {
-  final _picked = <String>{};
-  final _other = TextEditingController();
-  late String? _answer = widget.e.answer;
+  final _picked = <String, Set<String>>{};
+  late final _other = {for (final q in widget.e.questions) q.question: TextEditingController()};
+  bool _sending = false;
+
+  /// `permission_resolved` from the engine may omit the answers; what this client sent fills the gap.
+  Map<String, String>? _sent;
 
   @override
   void dispose() {
-    _other.dispose();
+    for (final c in _other.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  void _toggle(String label) => setState(() {
-    if (!widget.e.multiSelect) _picked.clear();
-    _picked.contains(label) ? _picked.remove(label) : _picked.add(label);
+  void _toggle(Question q, String label) => setState(() {
+    final picked = _picked.putIfAbsent(q.question, () => <String>{});
+    if (!q.multiSelect) picked.retainAll({label});
+    picked.contains(label) ? picked.remove(label) : picked.add(label);
   });
+
+  Map<String, String> get _draft => answersFor(
+    widget.e.questions,
+    _picked,
+    free: {for (final MapEntry(:key, :value) in _other.entries) key: value.text},
+  );
+
+  Future<void> _respond() async {
+    final answers = _draft;
+    setState(() => _sending = true);
+    try {
+      await widget.onAnswer(widget.e.requestId, PermissionDecision.answer, answers: answers);
+      _sent = answers;
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final e = widget.e;
-    final pending = _answer == null;
+    final answers = e.answers ?? _sent;
+    final pending = e.pending;
+    final complete = _draft.length == e.questions.length;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -491,101 +545,114 @@ class _QuestionCardState extends State<QuestionCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Pill(label: e.header, color: c.accent, dot: false),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  e.question,
-                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: c.textPrimary),
+          for (final q in e.questions) ...[
+            Row(
+              children: [
+                Pill(label: q.header, color: c.accent, dot: false),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    q.question,
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: c.textPrimary),
+                  ),
                 ),
-              ),
-              if (e.multiSelect) const Muted('várias', size: 11),
-            ],
-          ),
-          const SizedBox(height: 10),
+                if (q.multiSelect) const Muted('várias', size: 11),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (pending) ..._options(c, q),
+          ],
           if (!pending)
             Row(
               children: [
-                Icon(Icons.check_circle_outline, size: 14, color: c.pass),
+                Icon(
+                  e.expired ? Icons.block : Icons.check_circle_outline,
+                  size: 14,
+                  color: e.expired ? c.idle : c.pass,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text('respondido: $_answer', style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+                  child: Text(
+                    e.expired
+                        ? 'expirada'
+                        : answers == null || answers.isEmpty
+                        ? 'respondido'
+                        : 'respondido: ${answers.values.join(' · ')}',
+                    style: TextStyle(fontSize: 12.5, color: c.textSecondary),
+                  ),
                 ),
               ],
             )
-          else ...[
-            for (final o in e.options)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(8),
-                  onTap: () => _toggle(o.label),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: _picked.contains(o.label) ? c.accent.withValues(alpha: 0.10) : c.elevated,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: _picked.contains(o.label) ? c.accent : c.border),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          e.multiSelect
-                              ? (_picked.contains(o.label) ? Icons.check_box : Icons.check_box_outline_blank)
-                              : (_picked.contains(o.label) ? Icons.radio_button_checked : Icons.radio_button_off),
-                          size: 16,
-                          color: _picked.contains(o.label) ? c.accent : c.textMuted,
-                        ),
-                        const SizedBox(width: 10),
-                        Mono(o.label, color: c.textPrimary, size: 12.5),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(o.description, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
-                        ),
-                      ],
-                    ),
-                  ),
+          else
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: c.accent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                 ),
+                onPressed: complete && !_sending ? _respond : null,
+                child: const Text('Responder', style: TextStyle(fontSize: 12)),
               ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _other,
-                    onChanged: (_) => setState(() {}),
-                    style: const TextStyle(fontSize: 12.5),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      hintText: 'Outro… (resposta livre substitui a seleção)',
-                      hintStyle: TextStyle(color: c.textMuted, fontSize: 12.5),
-                      enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: c.border)),
-                      focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: c.accent)),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: c.accent,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                  ),
-                  onPressed: _picked.isEmpty && _other.text.trim().isEmpty
-                      ? null
-                      : () => setState(
-                          () => _answer = _other.text.trim().isNotEmpty ? _other.text.trim() : _picked.join(', '),
-                        ),
-                  child: const Text('Responder', style: TextStyle(fontSize: 12)),
-                ),
-              ],
             ),
-          ],
         ],
       ),
     );
+  }
+
+  List<Widget> _options(AppColors c, Question q) {
+    final picked = _picked[q.question] ?? const <String>{};
+    return [
+      for (final o in q.options)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _toggle(q, o.label),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: picked.contains(o.label) ? c.accent.withValues(alpha: 0.10) : c.elevated,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: picked.contains(o.label) ? c.accent : c.border),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    q.multiSelect
+                        ? (picked.contains(o.label) ? Icons.check_box : Icons.check_box_outline_blank)
+                        : (picked.contains(o.label) ? Icons.radio_button_checked : Icons.radio_button_off),
+                    size: 16,
+                    color: picked.contains(o.label) ? c.accent : c.textMuted,
+                  ),
+                  const SizedBox(width: 10),
+                  Mono(o.label, color: c.textPrimary, size: 12.5),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(o.description, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 10),
+        child: TextField(
+          controller: _other[q.question],
+          onChanged: (_) => setState(() {}),
+          style: const TextStyle(fontSize: 12.5),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: 'Outro… (resposta livre substitui a seleção)',
+            hintStyle: TextStyle(color: c.textMuted, fontSize: 12.5),
+            enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: c.border)),
+            focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: c.accent)),
+          ),
+        ),
+      ),
+    ];
   }
 }
 
@@ -615,6 +682,25 @@ class _ResultFooter extends StatelessWidget {
           ),
         ),
         Expanded(child: Divider(color: c.border)),
+      ],
+    );
+  }
+}
+
+class _ErrorRow extends StatelessWidget {
+  const _ErrorRow(this.e);
+
+  final SessionError e;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.error_outline, size: 15, color: c.fail),
+        const SizedBox(width: 10),
+        Expanded(child: Mono(e.message, color: c.fail, size: 12)),
       ],
     );
   }

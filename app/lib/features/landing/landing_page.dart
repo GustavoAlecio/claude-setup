@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/widgets/primitives.dart';
 import '../../data/models.dart';
-import '../shell/projects_cubit.dart';
+import '../../app/projects_cubit.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});

@@ -51,6 +51,8 @@ const VERDICT = {
     changed_files: { type: 'array', items: { type: 'string' } },
   },
 }
+// The haiku relay drops optional fields; without a required snapshot the next task's checkpoint goes stale.
+const G0_VERDICT = { ...VERDICT, required: [...VERDICT.required, 'snapshot', 'changed_files'] }
 const DEV_RESULT = {
   type: 'object',
   required: ['status', 'summary', 'files_changed'],
@@ -80,7 +82,12 @@ const spent = () => budget.spent()
 
 async function step(role, task, attempt, tier, fn) {
   const before = spent()
-  const out = await fn()
+  let out = null
+  try {
+    out = await fn()
+  } catch (e) {
+    log(`${role} ${task.id}#${attempt} sem resultado: ${String(e && e.message || e).slice(0, 160)}`)
+  }
   const open = out && out.findings ? blocking(out) : []
   trace.push({
     role,
@@ -109,14 +116,14 @@ function context(task) {
   ].filter(Boolean).join('\n')
 }
 
-function devPrompt(task, tier, attempt, feedback) {
+function devPrompt(task, tier, attempt, feedback, cp) {
   const fb = !feedback ? '' : feedback.mode === 'fix_in_place'
     ? `\n\n## Tentativa anterior reprovou — corrija no lugar\nO diff atual é da sua tentativa anterior. Corrija exatamente os findings abaixo sem reescrever o que já está certo.\n${JSON.stringify(feedback.findings, null, 2)}`
     : `\n\n## Recomeço do zero (escalado de ${feedback.previous_tier} para ${tier})\nO working tree foi restaurado para o checkpoint da task. Um modelo anterior tentou e falhou nestes pontos — não repita a abordagem que levou a eles.\nResumo da tentativa anterior: ${feedback.previous_summary || 'n/d'}\nFindings que ficaram abertos:\n${JSON.stringify(feedback.findings, null, 2)}`
   return `${context(task)}
 
 Tentativa ${attempt}, tier ${tier}.
-Antes de tudo, registre o início: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role dev --task ${task.id} --attempt ${attempt} --tier ${tier} --verdict start\`
+Antes de tudo, registre o início: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role dev --task ${task.id} --attempt ${attempt} --tier ${tier} --verdict start --checkpoint ${cp}\`
 
 Implemente SOMENTE esta task, seguindo o plano. Crie os testes listados se ainda não existirem.
 - Não commite, não faça stash, não mude de branch.
@@ -178,16 +185,17 @@ for (const task of A.tasks || []) {
     log(`${task.id} tentativa ${attempts} @ ${tier}`)
 
     const dev = await step('dev', task, attempts, tier, () =>
-      agent(devPrompt(task, tier, attempts, feedback),
+      agent(devPrompt(task, tier, attempts, feedback, cp),
         { label: `dev:${task.id}#${attempts}@${tier}`, phase: 'Implement', model: tier, agentType: 'dev-implementer', schema: DEV_RESULT }))
-    if (!dev) { outcome = { status: 'blocked', reason: 'agent_failed' }; break }
-    lastDev = dev
-    if (dev.status === 'blocked') { outcome = { status: 'backtrack', reason: dev.blocked_reason }; break }
+    // A dev that ends without the structured result may still have done the work: let the gates judge the diff.
+    const devReported = !!dev
+    lastDev = dev || { status: 'done', summary: 'dev sem resultado estruturado; gates julgaram o diff', files_changed: [], decisions: [] }
+    if (lastDev.status === 'blocked') { outcome = { status: 'backtrack', reason: lastDev.blocked_reason }; break }
 
     const g0 = await step('g0', task, attempts, tier, () =>
       agent(`Rode exatamente o comando abaixo e devolva o JSON impresso no stdout, campo a campo, sem interpretar nem resumir:
 python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --checkpoint ${cp} --tests "${(task.tests || []).join(',')}" --run-dir ${A.run_dir} --task ${task.id} --attempt ${attempts} --tier ${tier}`,
-        { label: `g0:${task.id}#${attempts}`, phase: 'G0', model: 'haiku', effort: 'low', schema: VERDICT }))
+        { label: `g0:${task.id}#${attempts}`, phase: 'G0', model: 'haiku', effort: 'low', schema: G0_VERDICT }))
     if (!g0) { outcome = { status: 'blocked', reason: 'g0_failed_to_run' }; break }
 
     let g1 = null
@@ -199,6 +207,11 @@ python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --che
     }
 
     const failing = [...blocking(g0), ...blocking(g1)]
+    if (!devReported) {
+      const changed = g0.changed_files || []
+      if (changed.length) lastDev.files_changed = changed
+      else failing.push({ gate: 'DEV', id: 'DEV-NO-RESULT', severity: 'major', file: '', rule_ref: 'structured_output', message: 'dev terminou sem resultado estruturado e sem alterar arquivos' })
+    }
     history.push({ attempt: attempts, tier, failing: failing.map(f => ({ gate: f.gate, file: f.file, rule_ref: f.rule_ref, message: (f.message || '').slice(0, 300) })) })
 
     if (g0.verdict === 'pass' && g1 && g1.verdict !== 'fail' && failing.length === 0) {
@@ -230,7 +243,7 @@ Devolva ok=true se o restore imprimiu "restored", e o stdout em output.`,
     if (!ops || !ops.ok) { outcome = { status: 'blocked', reason: 'rollback_failed' }; break }
 
     escalations.push({ from: tier, to: nt, at_attempt: attempts, open: [...keys] })
-    feedback = { mode: 'fresh_start', previous_tier: tier, previous_summary: dev.summary, findings: failing }
+    feedback = { mode: 'fresh_start', previous_tier: tier, previous_summary: lastDev.summary, findings: failing }
     lastTierKeys = keys
     tier = nt
     tierAttempts = 0

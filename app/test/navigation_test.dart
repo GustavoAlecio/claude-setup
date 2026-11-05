@@ -1,7 +1,15 @@
 import 'package:claude_flow/app/app.dart';
+import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/data/flow_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
+import 'package:claude_flow/data/mock_sessions.dart';
+import 'package:claude_flow/data/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+
+Widget _app(FlowRepository repository) =>
+    ClaudeFlowApp(repository: repository, sessions: MockSessionsRepository(), engine: const MockEngineController());
 
 void main() {
   setUp(() {
@@ -11,7 +19,7 @@ void main() {
   });
 
   testWidgets('flow → runs → blocked task shows the ToT diagnosis', (tester) async {
-    await tester.pumpWidget(const ClaudeFlowApp(repository: MockFlowRepository()));
+    await tester.pumpWidget(_app(const MockFlowRepository()));
     await tester.pumpAndSettle();
 
     expect(find.text('Favoritos offline'), findsWidgets);
@@ -34,7 +42,7 @@ void main() {
   });
 
   testWidgets('pending task row is not navigable', (tester) async {
-    await tester.pumpWidget(const ClaudeFlowApp(repository: MockFlowRepository()));
+    await tester.pumpWidget(_app(const MockFlowRepository()));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Execuções'));
     await tester.pumpAndSettle();
@@ -45,5 +53,189 @@ void main() {
     await tester.tap(t5);
     await tester.pumpAndSettle();
     expect(find.text('Escada por task'), findsOneWidget);
+  });
+
+  testWidgets('runs: legend stays fixed at the bottom while a long table scrolls inside', (tester) async {
+    final tasks = [
+      for (var i = 1; i <= 40; i++)
+        TaskRun(
+          id: 'T$i',
+          title: 'Task numero $i',
+          complexity: Complexity.m,
+          tier0: Tier.sonnet,
+          status: Verdict.pending,
+        ),
+    ];
+    final data = [
+      Project(
+        name: 'longo',
+        cycle: Cycle(
+          stage: Stage.implement,
+          autoMode: false,
+          stageMinutes: const {},
+          runs: [
+            Run(
+              id: 'impl-20260311T140000Z',
+              kind: 'implement',
+              status: Verdict.running,
+              startedAt: '14:00',
+              tasks: tasks,
+            ),
+          ],
+        ),
+      ),
+    ];
+    await tester.pumpWidget(_app(MockFlowRepository(data: data)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Execuções'));
+    await tester.pumpAndSettle();
+
+    final legend = find.text('risco alto');
+    expect(legend, findsOneWidget);
+    final screenHeight = tester.view.physicalSize.height;
+    final before = tester.getTopLeft(legend);
+    expect(before.dy, lessThan(screenHeight));
+    expect(find.text('Task numero 40'), findsNothing);
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, -3000));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Task numero 40'), findsOneWidget);
+    expect(find.text('Task numero 1'), findsNothing);
+    expect(tester.getTopLeft(legend), before);
+    expect(tester.takeException(), isNull);
+  });
+
+  group('two runs in one cycle', () {
+    Attempt attempt(int n, Tier tier, Verdict v, {Tier? escalatedTo}) =>
+        Attempt(number: n, ordinal: n, tier: tier, gates: [GateResult('g0', v)], escalatedTo: escalatedTo);
+
+    TaskRun task(String id, Verdict status, List<Attempt> attempts, {List<Hypothesis> diagnosis = const []}) => TaskRun(
+      id: id,
+      title: 'Titulo $id',
+      complexity: Complexity.m,
+      tier0: Tier.haiku,
+      status: status,
+      attempts: attempts,
+      diagnosis: diagnosis,
+    );
+
+    final older = Run(
+      id: 'impl-20260310T100000Z',
+      kind: 'implement',
+      status: Verdict.blocked,
+      startedAt: '10/03 10:00',
+      tasks: [
+        task('T1', Verdict.pass, [attempt(1, Tier.haiku, Verdict.pass)]),
+        task(
+          'T2',
+          Verdict.blocked,
+          [attempt(1, Tier.haiku, Verdict.fail), attempt(2, Tier.sonnet, Verdict.fail)],
+          diagnosis: const [Hypothesis(lens: 'plan', hypothesis: 'h', confidence: 0.5, evidence: [], action: 'a')],
+        ),
+        task('T3', Verdict.pending, const []),
+      ],
+    );
+    final newer = Run(
+      id: 'impl-20260311T100000Z',
+      kind: 'implement',
+      status: Verdict.running,
+      startedAt: '11/03 10:00',
+      tasks: [
+        task('T2', Verdict.pass, [attempt(1, Tier.opus, Verdict.pass)]),
+        task('T3', Verdict.running, [attempt(1, Tier.haiku, Verdict.running)]),
+      ],
+    );
+    // Cycle.runs is newest first, like the file repository returns it.
+    final data = [
+      Project(
+        name: 'duplo',
+        cycle: Cycle(
+          stage: Stage.implement,
+          autoMode: false,
+          stageMinutes: const {},
+          runs: [newer, older],
+          plan: [
+            for (final id in ['T1', 'T2', 'T3'])
+              TaskRun(
+                id: id,
+                title: 'Titulo $id',
+                complexity: Complexity.m,
+                tier0: Tier.haiku,
+                status: Verdict.pending,
+              ),
+          ],
+        ),
+      ),
+    ];
+
+    String location(WidgetTester tester) =>
+        GoRouter.of(tester.element(find.byType(Scaffold).first)).routeInformationProvider.value.uri.path;
+
+    Future<void> openRuns(WidgetTester tester) async {
+      await tester.pumpWidget(_app(MockFlowRepository(data: data)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Execuções'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('by-run sections are chronological, each with only its own tasks', (tester) async {
+      await openRuns(tester);
+
+      final first = tester.getTopLeft(find.text('impl-20260310T100000Z'));
+      final second = tester.getTopLeft(find.text('impl-20260311T100000Z'));
+      expect(first.dy, lessThan(second.dy));
+      expect(find.text('Titulo T1'), findsOneWidget);
+      expect(find.text('Titulo T2'), findsNWidgets(2));
+      expect(find.text('Titulo T3'), findsNWidgets(2));
+      expect(find.text('Titulo T1').evaluate().length, 1);
+      expect(tester.getTopLeft(find.text('Titulo T1')).dy, lessThan(second.dy));
+      expect(
+        find.text('lente: plan'),
+        findsNothing,
+        reason: 'T2 blocked in the older run was resolved by the newer one',
+      );
+    });
+
+    testWidgets('by-run row opens the task in its own run and sections collapse', (tester) async {
+      await openRuns(tester);
+
+      await tester.tap(find.text('Titulo T2').first);
+      await tester.pumpAndSettle();
+      expect(location(tester), '/p/duplo/runs/impl-20260310T100000Z/T2');
+
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/duplo/runs');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Titulo T2').last);
+      await tester.pumpAndSettle();
+      expect(location(tester), '/p/duplo/runs/impl-20260311T100000Z/T2');
+
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/duplo/runs');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('impl-20260310T100000Z'));
+      await tester.pumpAndSettle();
+      expect(find.text('Titulo T1'), findsNothing);
+      expect(find.text('Titulo T2'), findsOneWidget);
+    });
+
+    testWidgets('cycle mode: one row per task in plan order with attempts of all runs', (tester) async {
+      await openRuns(tester);
+      await tester.tap(find.text('Ciclo'));
+      await tester.pumpAndSettle();
+
+      for (final id in ['T1', 'T2', 'T3']) {
+        expect(find.text('Titulo $id'), findsOneWidget);
+      }
+      expect(tester.getTopLeft(find.text('Titulo T1')).dy, lessThan(tester.getTopLeft(find.text('Titulo T2')).dy));
+      expect(tester.getTopLeft(find.text('Titulo T2')).dy, lessThan(tester.getTopLeft(find.text('Titulo T3')).dy));
+      expect(find.byTooltip('R1 #1 haiku fail  →  R1 #2 sonnet fail  →  R2 #1 opus pass'), findsOneWidget);
+      expect(find.byTooltip('#1 haiku pass'), findsOneWidget);
+      expect(find.byTooltip('R2 #1 haiku running'), findsNothing, reason: 'T3 ran in a single run, no run prefix');
+      expect(find.byTooltip('#1 haiku running'), findsOneWidget);
+
+      await tester.tap(find.text('Titulo T2'));
+      await tester.pumpAndSettle();
+      expect(location(tester), '/p/duplo/runs/impl-20260311T100000Z/T2');
+    });
   });
 }

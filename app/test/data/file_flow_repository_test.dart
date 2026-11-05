@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 const _fixtures = 'test/fixtures/workflow';
 final _stacksDir = Directory('test/fixtures/stacks').absolute.path;
 const _within = Duration(seconds: 1);
+final _script = File('../bin/wf-checkpoint.sh').absolute.path;
 
 void _copyTree(Directory from, Directory to) {
   to.createSync(recursive: true);
@@ -46,7 +47,7 @@ void main() {
     // Not resolved on purpose: /var -> /private/var on macOS must be handled by the repository.
     root = '${tmp.path}/workflow';
     _copyTree(Directory(_fixtures), Directory(root));
-    repo = FileFlowRepository(root, stacksDir: _stacksDir);
+    repo = FileFlowRepository(root, stacksDir: _stacksDir, checkpointScript: _script);
   });
 
   tearDown(() async {
@@ -179,5 +180,95 @@ void main() {
       mode: FileMode.append,
     );
     await g0Fail;
+  });
+
+  test('keeps the current snapshot when listing the root fails', () async {
+    final before = (await loaded()).map((p) => p.name).toList();
+    await settle();
+
+    Process.runSync('chmod', ['000', root]);
+    try {
+      await repo.reload();
+    } finally {
+      Process.runSync('chmod', ['755', root]);
+    }
+
+    expect((await repo.watchProjects().first.timeout(_within)).map((p) => p.name), before);
+  });
+
+  test('discards a load that finishes after the root was torn down', () async {
+    for (final name in ['beta', 'broken', 'gamma', 'legacy']) {
+      Directory('$root/$name').deleteSync(recursive: true);
+    }
+    // A FIFO profile parks _loadProject on a real await until the test writes to it.
+    final stacks = Directory('${tmp.path}/stacks')..createSync();
+    final fifo = '${stacks.path}/blocked.json';
+    expect(Process.runSync('mkfifo', [fifo]).exitCode, 0);
+    await repo.dispose();
+    repo = FileFlowRepository(root, stacksDir: stacks.path, checkpointScript: _script);
+
+    final emissions = <List<Project>>[];
+    final sub = repo.watchProjects().listen(emissions.add);
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    expect(emissions, isEmpty);
+
+    final emptied = repo.watchProjects().firstWhere((l) => l.isEmpty).timeout(const Duration(seconds: 5));
+    Directory(root).deleteSync(recursive: true);
+    await emptied;
+
+    File(fifo).writeAsStringSync('{"detect": ["pubspec.yaml"]}');
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    await sub.cancel();
+    expect(emissions.expand((l) => l), isEmpty);
+  });
+
+  group('numstat', () {
+    late Directory work;
+
+    String git(List<String> args) {
+      final r = Process.runSync('git', ['-C', work.path, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args]);
+      expect(r.exitCode, 0, reason: '${r.stderr}');
+      return (r.stdout as String).trim();
+    }
+
+    setUp(() {
+      work = Directory.systemTemp.createTempSync('numstat_repo_');
+      git(['init', '-q']);
+      File('${work.path}/a.txt').writeAsStringSync('one\n');
+      git(['add', '.']);
+      git(['commit', '-qm', 'init']);
+      Directory('$root/gitproj').createSync();
+      File(
+        '$root/gitproj/current.json',
+      ).writeAsStringSync(jsonEncode({'project_path': work.path, 'status': 'implementing'}));
+    });
+
+    tearDown(() => work.deleteSync(recursive: true));
+
+    test('reports modified and untracked files since the checkpoint', () async {
+      await firstWhere((l) => l.any((p) => p.name == 'gitproj' && p.path == work.path));
+      final tree = Process.runSync('bash', [_script, 'create', work.path]).stdout.toString().trim();
+      File('${work.path}/a.txt').writeAsStringSync('one\ntwo\nthree\n');
+      File('${work.path}/n.txt').writeAsStringSync('x\n');
+
+      final stats = await repo.numstat('gitproj', tree);
+
+      expect(stats.map((s) => (s.path, s.added, s.deleted)), [('a.txt', 2, 0), ('n.txt', 1, 0)]);
+    });
+
+    test('unknown project or invalid checkpoint yields an empty list', () async {
+      await firstWhere((l) => l.any((p) => p.name == 'gitproj'));
+      expect(await repo.numstat('nope', 'abc'), isEmpty);
+      expect(await repo.numstat('gitproj', 'deadbeef'), isEmpty);
+    });
+  });
+
+  test('events run: planned tasks keep current.json metadata and the dev start checkpoint', () async {
+    final run = _project(await loaded(), 'beta').cycle!.runs.single;
+    final t = run.tasks.single;
+    expect((t.complexity, t.risk, t.tier0), (Complexity.m, false, Tier.haiku));
+    expect(t.description, 'Implementar o servico beta; criterio: testes do servico passam.');
+    expect(t.checkpoint, 'aaaa111');
+    expect(t.stage!.label, 'implementando');
   });
 }

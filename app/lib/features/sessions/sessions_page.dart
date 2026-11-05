@@ -1,28 +1,54 @@
+import 'dart:developer';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
-import '../../data/flow_repository.dart';
 import '../../data/models.dart';
 import '../../data/session_models.dart';
+import '../../data/sessions_repository.dart';
+import '../../data/workflow_parser.dart';
+import '../launcher/command_palette.dart';
+import 'session_cubit.dart';
 import 'session_events.dart';
 
-class SessionsPage extends StatelessWidget {
+class SessionsPage extends StatefulWidget {
   const SessionsPage({super.key, required this.projectName, this.sessionId});
 
   final String projectName;
   final String? sessionId;
 
   @override
+  State<SessionsPage> createState() => _SessionsPageState();
+}
+
+class _SessionsPageState extends State<SessionsPage> {
+  /// Without an id in the route the first pending session is picked once; re-picking on every update
+  /// would jump to another session as soon as the user answers the one on screen.
+  String? _autoSelected;
+
+  @override
+  void didUpdateWidget(SessionsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.projectName != widget.projectName) _autoSelected = null;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final all = RepositoryScope.of(context).sessions();
+    final projectName = widget.projectName;
+    final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     final mine = all.where((s) => s.project == projectName).toList();
     final others = all.where((s) => s.project != projectName).toList();
     final selected =
-        all.where((s) => s.id == sessionId).firstOrNull ??
+        all.where((s) => s.id == (widget.sessionId ?? _autoSelected)).firstOrNull ??
         mine.where((s) => s.pendingPermissions > 0).firstOrNull ??
         mine.firstOrNull;
+    if (widget.sessionId == null) _autoSelected = selected?.id;
+    final sessions = SessionsScope.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -30,10 +56,25 @@ class SessionsPage extends StatelessWidget {
         Expanded(
           child: selected == null
               ? const Center(child: Muted('Nenhuma sessão. Rode uma skill com ⌘K.', size: 13))
-              : _SessionPanel(key: ValueKey(selected.id), session: selected),
+              : BlocProvider(
+                  key: ValueKey(selected.id),
+                  create: (_) => SessionCubit(sessions, selected.id),
+                  child: _SessionPanel(session: selected),
+                ),
         ),
       ],
     );
+  }
+}
+
+/// Engine errors (stopped engine, 404, invalid request) surface as a snackbar instead of failing silently.
+Future<void> _act(BuildContext context, Future<void> Function() action) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await action();
+  } on Exception catch (e, st) {
+    log('session action failed', name: 'SessionsPage', error: e, stackTrace: st);
+    messenger.showSnackBar(SnackBar(content: Text('$e')));
   }
 }
 
@@ -77,6 +118,19 @@ class _SessionList extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 12),
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: c.textPrimary,
+                side: BorderSide(color: c.borderStrong),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              ),
+              onPressed: () => showCommandPalette(context, project, newConversation: true),
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Nova conversa', style: TextStyle(fontSize: 12)),
+            ),
+          ),
           header('ESTE PROJETO'),
           for (final s in mine) _SessionTile(project: project, session: s, selected: s.id == selected),
           if (others.isNotEmpty) ...[
@@ -140,7 +194,7 @@ class _SessionTile extends StatelessWidget {
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              '· ${session.project} · ${session.startedAt}',
+                              '· ${session.project} · ${_createdAt(session.createdAt)}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(fontSize: 11, color: c.textMuted),
@@ -173,19 +227,26 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-class _SessionPanel extends StatelessWidget {
-  const _SessionPanel({super.key, required this.session});
+const _live = {SessionStatus.running, SessionStatus.waitingPermission, SessionStatus.idle};
+const _interruptible = {SessionStatus.starting, SessionStatus.running, SessionStatus.waitingPermission};
 
+class _SessionPanel extends StatelessWidget {
+  const _SessionPanel({required this.session});
+
+  /// List entry: shown until the session stream delivers its first detail.
   final SessionSummary session;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final s = session;
-    final live =
-        s.status == SessionStatus.running ||
-        s.status == SessionStatus.waitingPermission ||
-        s.status == SessionStatus.idle;
+    final detail = context.watch<SessionCubit>().state.data;
+    final s = detail?.summary ?? session;
+    final sessions = SessionsScope.of(context);
+    final events = detail?.events ?? const <SessionEvent>[];
+    final partialText = detail?.partialText ?? '';
+    final partialThinking = detail?.partialThinking ?? '';
+    Future<void> answer(String requestId, PermissionDecision decision, {Map<String, String>? answers}) =>
+        _act(context, () => sessions.answer(s.id, requestId, decision, answers: answers));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -199,21 +260,20 @@ class _SessionPanel extends StatelessWidget {
             children: [
               Pill(label: statusLabel(s.status), color: statusColor(c, s.status)),
               const SizedBox(width: 12),
-              Mono(s.command, color: c.textPrimary, size: 13),
+              Flexible(child: Mono(s.command, color: c.textPrimary, size: 13)),
               const SizedBox(width: 12),
-              Pill(label: s.model, color: _modelColor(c, s.model), mono: true, dot: false),
-              const SizedBox(width: 12),
-              Expanded(child: Mono(s.cwd, size: 11, color: c.textMuted)),
+              if (s.model case final model?) Pill(label: model, color: _modelColor(c, model), mono: true, dot: false),
+              const Spacer(),
               Mono('\$${s.cost.toStringAsFixed(2)}', size: 12),
               const SizedBox(width: 16),
-              if (live)
+              if (_interruptible.contains(s.status))
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
                     foregroundColor: c.fail,
                     side: BorderSide(color: c.fail.withValues(alpha: 0.5)),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                   ),
-                  onPressed: () {},
+                  onPressed: () => _act(context, () => sessions.interrupt(s.id)),
                   icon: const Icon(Icons.stop_rounded, size: 16),
                   label: const Text('Interromper', style: TextStyle(fontSize: 12)),
                 ),
@@ -225,17 +285,29 @@ class _SessionPanel extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
             children: [
               if (s.status == SessionStatus.detached) ...[
-                _DetachedBanner(resumable: s.resumable),
+                _DetachedBanner(resumable: s.resumable, onResume: () => _act(context, () => sessions.resume(s.id))),
                 const SizedBox(height: 16),
               ],
-              for (final e in s.events) Padding(padding: const EdgeInsets.only(bottom: 12), child: SessionEventView(e)),
-              if (s.status == SessionStatus.running) const _Typing(),
+              for (final e in events)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: SessionEventView(e, onAnswer: answer),
+                ),
+              if (partialThinking.isNotEmpty)
+                Padding(padding: const EdgeInsets.only(bottom: 12), child: Muted('pensando… $partialThinking')),
+              if (partialText.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: SessionEventView(AssistantText('', partialText), onAnswer: answer),
+                ),
+              if (s.status == SessionStatus.running && partialText.isEmpty) const _Typing(),
             ],
           ),
         ),
         _Composer(
-          enabled: live && s.status != SessionStatus.waitingPermission,
+          enabled: _live.contains(s.status) && s.status != SessionStatus.waitingPermission,
           waiting: s.status == SessionStatus.waitingPermission,
+          onSend: (text) => _act(context, () => sessions.send(s.id, text)),
         ),
       ],
     );
@@ -243,9 +315,10 @@ class _SessionPanel extends StatelessWidget {
 }
 
 class _DetachedBanner extends StatelessWidget {
-  const _DetachedBanner({required this.resumable});
+  const _DetachedBanner({required this.resumable, required this.onResume});
 
   final bool resumable;
+  final VoidCallback onResume;
 
   @override
   Widget build(BuildContext context) {
@@ -275,7 +348,7 @@ class _DetachedBanner extends StatelessWidget {
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               ),
-              onPressed: () {},
+              onPressed: onResume,
               child: const Text('Retomar', style: TextStyle(fontSize: 12)),
             ),
         ],
@@ -300,15 +373,37 @@ class _Typing extends StatelessWidget {
   }
 }
 
-class _Composer extends StatelessWidget {
-  const _Composer({required this.enabled, required this.waiting});
+class _Composer extends StatefulWidget {
+  const _Composer({required this.enabled, required this.waiting, required this.onSend});
 
   final bool enabled;
   final bool waiting;
+  final Future<void> Function(String text) onSend;
+
+  @override
+  State<_Composer> createState() => _ComposerState();
+}
+
+class _ComposerState extends State<_Composer> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final text = _controller.text.trim();
+    if (!widget.enabled || text.isEmpty) return;
+    _controller.clear();
+    widget.onSend(text);
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final enabled = widget.enabled;
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       decoration: BoxDecoration(
@@ -317,37 +412,41 @@ class _Composer extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: TextField(
-              enabled: enabled,
-              minLines: 1,
-              maxLines: 5,
-              style: const TextStyle(fontSize: 13),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: waiting
-                    ? 'Decida a permissão acima para continuar'
-                    : enabled
-                    ? 'Responder à sessão…  (⌘↵ envia)'
-                    : 'Sessão encerrada',
-                hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
-                filled: true,
-                fillColor: c.surface,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: c.border),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: c.border),
-                ),
-                disabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: c.border),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: c.accent),
+            child: CallbackShortcuts(
+              bindings: {const SingleActivator(LogicalKeyboardKey.enter, meta: true): _send},
+              child: TextField(
+                controller: _controller,
+                enabled: enabled,
+                minLines: 1,
+                maxLines: 5,
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: widget.waiting
+                      ? 'Decida a permissão acima para continuar'
+                      : enabled
+                      ? 'Responder à sessão…  (⌘↵ envia)'
+                      : 'Sessão encerrada',
+                  hintStyle: TextStyle(color: c.textMuted, fontSize: 13),
+                  filled: true,
+                  fillColor: c.surface,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.border),
+                  ),
+                  disabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: c.accent),
+                  ),
                 ),
               ),
             ),
@@ -359,7 +458,7 @@ class _Composer extends StatelessWidget {
               disabledBackgroundColor: c.elevated,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            onPressed: enabled ? () {} : null,
+            onPressed: enabled ? _send : null,
             icon: Icon(Icons.arrow_upward, size: 18, color: enabled ? Colors.white : c.textMuted),
           ),
         ],
@@ -371,4 +470,9 @@ class _Composer extends StatelessWidget {
 Color _modelColor(AppColors c, String model) {
   final tier = Tier.values.where((t) => model.contains(t.name)).firstOrNull;
   return tier == null ? c.idle : c.tier(tier);
+}
+
+String _createdAt(String iso) {
+  final at = DateTime.tryParse(iso);
+  return at == null ? '' : formatStartedAt(at, DateTime.now());
 }

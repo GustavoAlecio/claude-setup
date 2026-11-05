@@ -1,15 +1,15 @@
 import 'package:flutter/widgets.dart';
 
 import 'models.dart';
-import 'session_models.dart';
 
 abstract interface class FlowRepository {
   Stream<List<Project>> watchProjects();
   Stream<Project?> watchProject(String name);
   Stream<Run?> watchRun(String project, String runId);
-  List<SessionSummary> sessions();
-  SessionSummary? session(String id);
   Future<void> reload();
+
+  /// Files changed in the project's working tree since [checkpoint]; empty when it cannot be computed.
+  Future<List<FileStat>> numstat(String project, String checkpoint);
 }
 
 class RepositoryScope extends InheritedWidget {

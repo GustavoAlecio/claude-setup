@@ -1,7 +1,7 @@
 ---
 id: 0004
 title: Fixtures geradas pelo persist real com checagem de drift
-status: proposed
+status: accepted
 date: 2026-10-01
 affects: ["app/test/fixtures/**", "tests/run.sh"]
 supersedes: []

@@ -82,6 +82,22 @@ void main() {
       expect(l.branch, 'main');
       expect(parseCycle({'status': 'planning'}, projectName: 'p').tracker, isNull);
     });
+
+    test('parseCycle keeps the planned tasks in plan order without attempts', () {
+      final current = {
+        'status': 'implementing',
+        'tasks': {
+          'items': [
+            {'id': 'T2', 'title': 'Segunda', 'status': 'done'},
+            {'id': 'T1', 'title': 'Primeira'},
+          ],
+        },
+      };
+      final c = parseCycle(current, projectName: 'p', plan: taskMetas(current));
+      expect(c.plan.map((t) => t.id), ['T2', 'T1']);
+      expect(c.plan.map((t) => t.status), [Verdict.pass, Verdict.pending]);
+      expect(c.plan.every((t) => t.attempts.isEmpty), isTrue);
+    });
   });
 
   group('parseResultRun', () {
@@ -314,7 +330,12 @@ void main() {
     final now = DateTime.utc(2026, 3, 11, 15);
 
     test('running run with two attempts, escalation and no tokens', () {
-      final run = parseEventsRun('impl-20260311T140000Z', events, titles: {'T1': 'Servico'}, now: now);
+      final run = parseEventsRun(
+        'impl-20260311T140000Z',
+        events,
+        tasks: const [TaskMeta(id: 'T1', title: 'Servico', complexity: Complexity.m, tier0: Tier.haiku)],
+        now: now,
+      );
       expect(run.status, Verdict.running);
       final t = run.tasks.single;
       expect(t.title, 'Servico');
@@ -369,6 +390,136 @@ void main() {
     });
   });
 
+  group('parseEventsRun with planned tasks', () {
+    final now = DateTime.utc(2026, 3, 11, 15);
+    const metas = [
+      TaskMeta(id: 'T1', title: 'Primeira', complexity: Complexity.s, tier0: Tier.haiku, done: true),
+      TaskMeta(id: 'T2', title: 'Segunda', complexity: Complexity.m, tier0: Tier.sonnet, description: 'critério'),
+      TaskMeta(id: 'T3', title: 'Terceira', complexity: Complexity.l, tier0: Tier.opus, risk: true),
+    ];
+
+    test('tasks without events stay pending in current.json order with their own metadata', () {
+      final run = parseEventsRun(
+        'impl-20260311T140000Z',
+        [
+          {'role': 'dev', 'task': 'T2', 'tier': 'sonnet', 'verdict': 'start', 'attempt': 1},
+        ],
+        tasks: metas,
+        now: now,
+      );
+      expect(run.tasks.map((t) => t.id), ['T1', 'T2', 'T3']);
+      expect(run.tasks.map((t) => t.status), [Verdict.pass, Verdict.running, Verdict.pending]);
+      expect(run.tasks.map((t) => t.complexity), [Complexity.s, Complexity.m, Complexity.l]);
+      expect(run.tasks[2].risk, isTrue);
+      expect(run.tasks[2].tier0, Tier.opus);
+      expect(run.tasks[1].description, 'critério');
+      expect(run.tasks[2].attempts, isEmpty);
+    });
+
+    test('verify tasks absent from current.json are appended after the planned ones', () {
+      final run = parseEventsRun(
+        'verify-20260311T140000Z',
+        [
+          {'role': 'dev', 'task': 'V1', 'tier': 'opus', 'verdict': 'start', 'attempt': 1},
+        ],
+        tasks: metas,
+        now: now,
+      );
+      expect(run.tasks.map((t) => t.id), ['T1', 'T2', 'T3', 'V1']);
+    });
+
+    test('dev start keeps the checkpoint on the attempt', () {
+      final run = parseEventsRun(
+        'impl-20260311T140000Z',
+        [
+          {
+            'ts': '2026-03-11T14:00:00Z',
+            'role': 'dev',
+            'task': 'T2',
+            'tier': 'sonnet',
+            'verdict': 'start',
+            'attempt': 1,
+            'checkpoint': 'abc123',
+          },
+        ],
+        tasks: metas,
+        now: now,
+      );
+      expect(run.tasks[1].attempts.single.checkpoint, 'abc123');
+      expect(run.tasks[1].checkpoint, 'abc123');
+    });
+
+    test('stage follows dev start, G0 and G1 events with the time they began', () {
+      TaskRun stageAfter(List<Map<String, dynamic>> events) =>
+          parseEventsRun('impl-20260311T140000Z', events, tasks: metas, now: now).tasks[1];
+      final dev = {
+        'ts': '2026-03-11T14:00:00Z',
+        'role': 'dev',
+        'task': 'T2',
+        'tier': 'sonnet',
+        'verdict': 'start',
+        'attempt': 1,
+      };
+      final g0 = {'ts': '2026-03-11T14:05:00Z', 'role': 'g0', 'task': 'T2', 'verdict': 'pass', 'attempt': 1};
+      final g1 = {'ts': '2026-03-11T14:08:00Z', 'role': 'g1', 'task': 'T2', 'verdict': 'fail', 'attempt': 1};
+
+      final implementing = stageAfter([dev]).stage!;
+      expect((implementing.label, implementing.since), ('implementando', DateTime.utc(2026, 3, 11, 14)));
+      final reviewing = stageAfter([dev, g0]).stage!;
+      expect((reviewing.label, reviewing.since), ('G1 revisando', DateTime.utc(2026, 3, 11, 14, 5)));
+      expect(stageAfter([dev, g0, g1]).stage!.label, 'G1 reprovou');
+      expect(
+        stageAfter([
+          dev,
+          {...g0, 'verdict': 'fail'},
+        ]).stage!.label,
+        'G0 reprovou',
+      );
+    });
+
+    test('only the running task has a stage', () {
+      final run = parseEventsRun(
+        'impl-20260311T140000Z',
+        [
+          {'ts': '2026-03-11T14:00:00Z', 'role': 'dev', 'task': 'T1', 'verdict': 'start', 'attempt': 1},
+          {'ts': '2026-03-11T14:02:00Z', 'role': 'dev', 'task': 'T2', 'verdict': 'start', 'attempt': 1},
+        ],
+        tasks: metas,
+        now: now,
+      );
+      expect(run.tasks.map((t) => t.stage?.label), [null, 'implementando', null]);
+    });
+  });
+
+  group('taskMetas', () {
+    test('reads plan order, complexity, risk, tier0 and description', () {
+      final metas = taskMetas(
+        _json('''
+{"tasks": {"items": [
+  {"id": "T1", "title": "A", "complexity": "S", "risk": "low", "tier0": "haiku", "status": "done", "description": "d"},
+  {"id": "T2", "title": "B", "complexity": "L", "risk": "high", "tier0": "opus"},
+  {"title": "sem id"}
+]}}'''),
+      );
+      expect(metas.map((m) => m.id), ['T1', 'T2']);
+      expect(metas.map((m) => m.complexity), [Complexity.s, Complexity.l]);
+      expect(metas.map((m) => m.risk), [false, true]);
+      expect(metas.map((m) => m.tier0), [Tier.haiku, Tier.opus]);
+      expect(metas.map((m) => m.done), [true, false]);
+      expect(metas[0].description, 'd');
+      expect(metas[1].description, isNull);
+    });
+
+    test('missing tasks yields an empty list', () => expect(taskMetas(const {}), isEmpty));
+  });
+
+  group('parseNumstat', () {
+    test('parses added, deleted and path, with binary files as null counts', () {
+      final stats = parseNumstat('3\t1\tlib/a.dart\n-\t-\tassets/x.png\n\nbad\n');
+      expect(stats.map((s) => (s.path, s.added, s.deleted)), [('lib/a.dart', 3, 1), ('assets/x.png', null, null)]);
+    });
+  });
+
   group('decodeJsonl', () {
     test('skips invalid and truncated lines, reporting them', () {
       final bad = <String>[];
@@ -409,7 +560,9 @@ void main() {
       expect(classify(root, '$root/alpha/current.tmp'), isNull);
       expect(classify(root, '$root/alpha/runs/impl-20260310T101500Z/result.json.tmp'), isNull);
       expect(classify(root, '$root/.hidden/x'), isNull);
-      expect(classify(root, '$root/.dashboard.json'), isNull);
+      expect(classify(root, '$root/.dashboard.json'), isA<RootScope>());
+      expect(classify(root, '$root/.dashboard/engine.log'), isNull);
+      expect(classify(root, '$root/alpha/.dashboard.json'), isNull);
       expect(classify(root, '$root/alpha/x.lock'), isNull);
     });
 

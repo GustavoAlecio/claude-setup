@@ -2,8 +2,7 @@ import 'dart:convert';
 
 import 'models.dart';
 
-final runIdPattern = RegExp(r'^(impl|verify)-\d{8}T\d{6}Z$');
-final _runTimestamp = RegExp(r'^(?:impl|verify)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$');
+final runIdPattern = RegExp(r'^(?:impl|verify)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$');
 
 sealed class WatchScope {
   const WatchScope();
@@ -32,6 +31,7 @@ WatchScope? classify(String root, String path, {String? destination}) {
   final base = root.endsWith('/') ? root.substring(0, root.length - 1) : root;
   if (target != base && !target.startsWith('$base/')) return null;
   final segments = target.substring(base.length).split('/').where((s) => s.isNotEmpty).toList();
+  if (segments.length == 1 && segments[0] == '.dashboard.json') return const RootScope();
   for (final s in segments) {
     if (s.startsWith('.') || s.endsWith('.tmp') || s.endsWith('.lock')) return null;
   }
@@ -56,7 +56,7 @@ List<Map<String, dynamic>> decodeJsonl(String text, {void Function(String line, 
 }
 
 DateTime? runStart(String runId) {
-  final m = _runTimestamp.firstMatch(runId);
+  final m = runIdPattern.firstMatch(runId);
   if (m == null) return null;
   final n = [for (var i = 1; i <= 6; i++) int.parse(m.group(i)!)];
   return DateTime.utc(n[0], n[1], n[2], n[3], n[4], n[5]);
@@ -96,6 +96,16 @@ Stage stageOf(String? status, bool challenge, Map<String, dynamic> phases) {
   return Stage.kickoff;
 }
 
+List<FileStat> parseNumstat(String out) {
+  final stats = <FileStat>[];
+  for (final line in const LineSplitter().convert(out)) {
+    final parts = line.split('\t');
+    if (parts.length < 3) continue;
+    stats.add(FileStat(parts.sublist(2).join('\t'), int.tryParse(parts[0]), int.tryParse(parts[1])));
+  }
+  return stats;
+}
+
 Map<Stage, int> stageMinutes(Map<String, dynamic> phases) {
   final out = <Stage, int>{};
   for (final s in Stage.values) {
@@ -125,12 +135,53 @@ Map<String, String> taskTitles(Map<String, dynamic> current) {
   return out;
 }
 
+class TaskMeta {
+  const TaskMeta({
+    required this.id,
+    required this.title,
+    required this.complexity,
+    required this.tier0,
+    this.risk = false,
+    this.done = false,
+    this.description,
+  });
+
+  final String id;
+  final String title;
+  final Complexity complexity;
+  final Tier tier0;
+  final bool risk;
+  final bool done;
+  final String? description;
+}
+
+/// Planned tasks from current.json, in plan order.
+List<TaskMeta> taskMetas(Map<String, dynamic> current) {
+  final tasks = current['tasks'];
+  return [
+    for (final i in _maps(tasks is Map ? tasks['items'] : null))
+      if (i['id'] is String)
+        TaskMeta(
+          id: i['id'] as String,
+          title: i['title'] is String ? i['title'] as String : i['id'] as String,
+          complexity: _complexity(i['complexity']),
+          tier0: _tier(i['tier0']) ?? _tier(i['tier']) ?? Tier.sonnet,
+          risk: i['risk'] == 'high',
+          done: i['status'] == 'done',
+          description: i['description'] is String && (i['description'] as String).isNotEmpty
+              ? i['description'] as String
+              : null,
+        ),
+  ];
+}
+
 Cycle parseCycle(
   Map<String, dynamic> current, {
   required String projectName,
   String? branch,
   bool autoMode = false,
   List<Run> runs = const [],
+  List<TaskMeta> plan = const [],
 }) {
   final phasesRaw = current['phases'];
   final phases = phasesRaw is Map<String, dynamic> ? phasesRaw : <String, dynamic>{};
@@ -145,6 +196,18 @@ Cycle parseCycle(
     runs: runs,
     autoMode: autoMode,
     stageMinutes: stageMinutes(phases),
+    plan: [
+      for (final m in plan)
+        TaskRun(
+          id: m.id,
+          title: m.title,
+          complexity: m.complexity,
+          risk: m.risk,
+          tier0: m.tier0,
+          status: m.done ? Verdict.pass : Verdict.pending,
+          description: m.description,
+        ),
+    ],
   );
 }
 
@@ -248,12 +311,7 @@ Run parseResultRun(String runId, Map<String, dynamic> result, Map<String, String
   );
 }
 
-Run parseEventsRun(
-  String runId,
-  List<Map<String, dynamic>> events, {
-  Map<String, String> titles = const {},
-  DateTime? now,
-}) {
+Run parseEventsRun(String runId, List<Map<String, dynamic>> events, {List<TaskMeta> tasks = const [], DateTime? now}) {
   final order = <String>[];
   final attemptsByTask = <String, List<_LiveAttempt>>{};
   String? lastTouched;
@@ -281,15 +339,20 @@ Run parseEventsRun(
     final role = e['role'];
     final attempt = e['attempt'] is int ? e['attempt'] as int : null;
     final tier = _tier(e['tier']);
+    final ts = e['ts'] is String ? DateTime.tryParse(e['ts'] as String) : null;
     switch (role) {
       case 'dev':
         final a = attemptFor(task, attempt, tier);
         if (tier != null) a.tier = tier;
         if (e['verdict'] == 'blocked') a.summary = 'dev declarou blocked';
+        if (e['verdict'] == 'start') a.devStart = ts;
+        final cp = e['checkpoint'];
+        if (cp is String && cp.isNotEmpty) a.checkpoint = cp;
         lastTouched = task;
       case 'g0' || 'g1':
         final a = attempt == null && last(task) != null ? last(task)! : attemptFor(task, attempt, tier);
         a.gates[role as String] = GateResult(role, _verdict(e['verdict']));
+        a.gateTimes[role] = ts;
         lastTouched = task;
       case 'escalate':
         final a = attempt == null ? last(task) : attemptFor(task, attempt, null);
@@ -298,40 +361,47 @@ Run parseEventsRun(
     }
   }
 
-  final tasks = <TaskRun>[
-    for (final id in order)
-      () {
-        final live = attemptsByTask[id]!;
-        final attempts = [
-          for (var i = 0; i < live.length; i++)
-            Attempt(
-              number: live[i].number,
-              ordinal: i + 1,
-              tier: live[i].tier,
-              gates: live[i].gates.values.toList(),
-              summary: live[i].summary,
-              escalatedTo: live[i].escalatedTo,
-            ),
-        ];
-        return TaskRun(
-          id: id,
-          title: _title(id, titles),
-          complexity: Complexity.m,
-          tier0: attempts.first.tier,
-          status: id == lastTouched
-              ? Verdict.running
-              : (attempts.last.verdict == Verdict.pass ? Verdict.pass : Verdict.pending),
-          attempts: attempts,
-        );
-      }(),
-  ];
+  TaskRun build(String id, TaskMeta? meta) {
+    final live = attemptsByTask[id] ?? const <_LiveAttempt>[];
+    final attempts = [
+      for (var i = 0; i < live.length; i++)
+        Attempt(
+          number: live[i].number,
+          ordinal: i + 1,
+          tier: live[i].tier,
+          gates: live[i].gates.values.toList(),
+          summary: live[i].summary,
+          escalatedTo: live[i].escalatedTo,
+          checkpoint: live[i].checkpoint,
+        ),
+    ];
+    final running = id == lastTouched;
+    return TaskRun(
+      id: id,
+      title: meta?.title ?? _title(id, const {}),
+      complexity: meta?.complexity ?? Complexity.m,
+      risk: meta?.risk ?? false,
+      tier0: meta?.tier0 ?? (attempts.isEmpty ? Tier.sonnet : attempts.first.tier),
+      description: meta?.description,
+      status: attempts.isEmpty
+          ? (meta?.done == true ? Verdict.pass : Verdict.pending)
+          : running
+          ? Verdict.running
+          : (attempts.last.verdict == Verdict.pass ? Verdict.pass : Verdict.pending),
+      attempts: attempts,
+      stage: running ? live.last.stage : null,
+    );
+  }
+
+  final metaById = {for (final m in tasks) m.id: m};
+  final ids = [...metaById.keys, ...order.where((id) => !metaById.containsKey(id))];
 
   return Run(
     id: runId,
     kind: runId.startsWith('verify') ? 'verify' : 'implement',
     status: Verdict.running,
     startedAt: _startedAt(runId, now),
-    tasks: tasks,
+    tasks: [for (final id in ids) build(id, metaById[id])],
   );
 }
 
@@ -370,7 +440,29 @@ class _LiveAttempt {
   Tier tier;
   Tier? escalatedTo;
   String? summary;
+  String? checkpoint;
+  DateTime? devStart;
   final Map<String, GateResult> gates = {};
+  final Map<String, DateTime?> gateTimes = {};
+
+  /// Events only mark completions, so each stage is "since" the previous event of the attempt.
+  LiveStage? get stage {
+    final g1 = gates['g1'];
+    final g0 = gates['g0'];
+    if (g1 != null) {
+      final at = gateTimes['g1'];
+      if (at == null) return null;
+      return LiveStage(g1.verdict == Verdict.pass ? 'G1 aprovou' : 'G1 reprovou', at);
+    }
+    if (g0 != null) {
+      final at = gateTimes['g0'];
+      if (at == null) return null;
+      return LiveStage(g0.verdict == Verdict.pass ? 'G1 revisando' : 'G0 reprovou', at);
+    }
+    final at = devStart;
+    if (at == null) return null;
+    return LiveStage(summary == null ? 'implementando' : 'dev bloqueou', at);
+  }
 }
 
 bool _isReviewRole(Object? role) => role is String && (role.startsWith('g1') || role.startsWith('g2'));

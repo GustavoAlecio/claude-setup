@@ -2,9 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:claude_flow/app/app.dart';
+import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/widgets/primitives.dart';
 import 'package:claude_flow/data/file_flow_repository.dart';
+import 'package:claude_flow/data/flow_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
+import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -42,7 +45,7 @@ Future<List<Project>> _loadFixtures(WidgetTester tester) async {
 }
 
 Future<void> _open(WidgetTester tester, List<Project> data, String location) async {
-  await tester.pumpWidget(ClaudeFlowApp(repository: MockFlowRepository(data: data)));
+  await tester.pumpWidget(_app(MockFlowRepository(data: data)));
   await tester.pumpAndSettle();
   await _go(tester, location);
 }
@@ -58,6 +61,21 @@ Finder _currentStage(String stage) => find.descendant(
   of: find.ancestor(of: find.text('em andamento'), matching: find.byType(Column)).first,
   matching: find.text(stage),
 );
+
+class _CountingRepository extends MockFlowRepository {
+  _CountingRepository(List<Project> data) : super(data: data);
+
+  int calls = 0;
+
+  @override
+  Future<List<FileStat>> numstat(String project, String checkpoint) {
+    calls++;
+    return super.numstat(project, checkpoint);
+  }
+}
+
+Widget _app(FlowRepository repository) =>
+    ClaudeFlowApp(repository: repository, sessions: MockSessionsRepository(), engine: const MockEngineController());
 
 void main() {
   setUp(() {
@@ -118,13 +136,54 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('beta: running task detail shows description, current stage with elapsed time and touched files', (
+    tester,
+  ) async {
+    final data = await _loadFixtures(tester);
+    await tester.pumpWidget(
+      _app(
+        MockFlowRepository(
+          data: data,
+          numstats: const [FileStat('lib/beta/service.dart', 12, 3), FileStat('assets/logo.png', null, null)],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _go(tester, '/p/beta/runs/impl-20260311T140000Z/T1');
+
+    expect(find.text('Descrição'), findsOneWidget);
+    expect(find.text('Implementar o servico beta; criterio: testes do servico passam.'), findsOneWidget);
+    expect(find.text('implementando'), findsOneWidget);
+    expect(find.textContaining('há '), findsOneWidget);
+    expect(find.text('Arquivos tocados até agora'), findsOneWidget);
+    expect(find.text('lib/beta/service.dart'), findsOneWidget);
+    expect(find.text('+12'), findsOneWidget);
+    expect(find.text('−3'), findsOneWidget);
+    expect(find.text('+?'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('beta: running task polls the touched files again while the screen is open', (tester) async {
+    final data = await _loadFixtures(tester);
+    final repo = _CountingRepository(data);
+    await tester.pumpWidget(_app(repo));
+    await tester.pumpAndSettle();
+    await _go(tester, '/p/beta/runs/impl-20260311T140000Z/T1');
+    expect(repo.calls, 1);
+
+    await tester.pump(const Duration(seconds: 3));
+    expect(repo.calls, 2);
+    await tester.pump(const Duration(seconds: 3));
+    expect(repo.calls, 3);
+  });
+
   testWidgets('gamma: verify run labels attempts by round and shows cycle gate verdicts', (tester) async {
     final data = await _loadFixtures(tester);
     await _open(tester, data, '/p/gamma/runs');
 
-    expect(find.text('smart-verify'), findsOneWidget);
+    expect(find.text('smart-verify'), findsNWidgets(2));
     for (final gate in ['g1:flutter-architecture', 'g1:flutter-correctness', 'g1:dart-correctness', 'g2']) {
-      final chip = find.ancestor(of: find.text(gate), matching: find.byType(Row)).first;
+      final chip = find.ancestor(of: find.text(gate).last, matching: find.byType(Row)).first;
       expect(
         find.descendant(of: chip, matching: find.text('pass')),
         findsOneWidget,
@@ -193,7 +252,7 @@ void main() {
       }),
     );
 
-    await tester.pumpWidget(ClaudeFlowApp(repository: repo));
+    await tester.pumpWidget(_app(repo));
     await tester.pump();
     await _go(tester, '/p/alpha/flow');
     expect(_currentStage('implement'), findsOneWidget);

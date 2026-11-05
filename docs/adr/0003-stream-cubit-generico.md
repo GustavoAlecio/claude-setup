@@ -1,7 +1,7 @@
 ---
 id: 0003
 title: Estado de UI com StreamCubit genérico e router que não lê o repositório
-status: proposed
+status: accepted
 date: 2026-10-01
 affects: ["app/lib/core/bloc/**", "app/lib/app/**", "app/lib/features/**"]
 supersedes: []

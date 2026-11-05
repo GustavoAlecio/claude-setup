@@ -1,12 +1,11 @@
 import 'flow_repository.dart';
-import 'mock_sessions.dart';
 import 'models.dart';
-import 'session_models.dart';
 
 class MockFlowRepository implements FlowRepository {
-  const MockFlowRepository({this.data = _projects});
+  const MockFlowRepository({this.data = _projects, this.numstats = const []});
 
   final List<Project> data;
+  final List<FileStat> numstats;
 
   @override
   Stream<List<Project>> watchProjects() => Stream.value(data);
@@ -19,13 +18,10 @@ class MockFlowRepository implements FlowRepository {
       Stream.value(_project(project)?.cycle?.runs.where((r) => r.id == runId).firstOrNull);
 
   @override
-  List<SessionSummary> sessions() => mockSessions;
-
-  @override
-  SessionSummary? session(String id) => mockSessions.where((s) => s.id == id).firstOrNull;
-
-  @override
   Future<void> reload() async {}
+
+  @override
+  Future<List<FileStat>> numstat(String project, String checkpoint) async => numstats;
 
   Project? _project(String name) => data.where((p) => p.name == name).firstOrNull;
 }
