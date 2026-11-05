@@ -141,6 +141,7 @@ const _adrBodies = {
 };
 
 const _projectData = ProjectInventory(
+  adrSubmodule: GitSubmodule(path: 'docs', url: 'git@github.com:acme/org-docs.git'),
   rules: [
     RuleEntry(
       name: 'flutter-app',

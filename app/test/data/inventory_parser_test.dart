@@ -213,10 +213,57 @@ void main() {
     });
 
     test('parseAdr sem frontmatter usa os dígitos do nome e status ?', () {
-      final a = parseAdr('# só texto', path: '/d/0012-sem.md');
+      final a = parseAdr('texto sem título', path: '/d/0012-sem.md');
       expect((a.id, a.status), ('0012', '?'));
       expect(a.error, contains('0012-sem.md'));
       expect(parseAdr('x', path: '/d/INDEX.md').id, '');
+    });
+
+    test('parseAdr em formato livre (cabeçalho no formato do r10, conteúdo sintético)', () {
+      const raw =
+          '# ADR 0001 — Contrato sintético\n\n**Status:** aceito · **Data:** 2026-07-06\n\n## Contexto\nTexto.\n';
+      final a = parseAdr(raw, path: '/d/0001-contrato.md');
+      expect((a.id, a.title, a.status, a.date), ('0001', 'Contrato sintético', 'accepted', '2026-07-06'));
+      expect(a.warning, contains('formato sem frontmatter'));
+      expect(a.error, isNull);
+      expect(adrBody(raw), '## Contexto\nTexto.\n');
+    });
+
+    test('parseAdr em formato livre: status por prefixo, separadores e fora do mapa', () {
+      AdrEntry parse(String status) => parseAdr('# T\n**Status:** $status\n', path: '/d/0002-t.md');
+      expect(parse('Proposta | rascunho').status, 'proposed');
+      expect(parse('Substituída por 0009').status, 'superseded');
+      expect(parse('Depreciado').status, 'deprecated');
+      expect(parse('ACCEPTED').status, 'accepted');
+      expect(parse('Aceito').warning, isNot(contains('status')));
+      final unknown = parse('em revisão');
+      expect(unknown.status, '?');
+      expect(unknown.warning, contains('status ausente ou desconhecido'));
+      final none = parseAdr('# ADR-7: Sem status\n', path: '/d/0003-t.md');
+      expect((none.title, none.status, none.date), ('Sem status', '?', null));
+    });
+
+    test('parseAdr em formato livre: erro só sem título; id fora de 4 dígitos vira warning', () {
+      expect(parseAdr('**Status:** aceito\n', path: '/d/0004-t.md').error, contains('sem título'));
+      final a = parseAdr('# T\n**Status:** aceito\n', path: '/d/x-t.md');
+      expect(a.id, '');
+      expect(a.error, isNull);
+      expect(a.warning, contains('id'));
+    });
+
+    test('parseGitmodules e adrSubmoduleFor', () {
+      const raw =
+          '[submodule "docs"]\n\tpath = docs\n\turl = git@github.com:acme/org-docs.git\n'
+          '[submodule "sem-url"]\n\tpath = x\n'
+          '[submodule "lib"]\n\tpath = vendor/lib\n\turl = ../lib\n';
+      final modules = parseGitmodules(raw);
+      expect(modules.map((m) => m.path), ['docs', 'vendor/lib']);
+      expect(adrSubmoduleFor('docs/adr', modules)?.url, 'git@github.com:acme/org-docs.git');
+      expect(adrSubmoduleFor('docs', modules)?.path, 'docs');
+      expect(adrSubmoduleFor('docs2/adr', modules), isNull);
+      expect(adrSubmoduleFor('doc', modules), isNull);
+      expect(parseGitmodules('lixo'), isEmpty);
+      expect(adrSubmoduleLabel(modules.first), 'ADRs da org — submódulo docs (git@github.com:acme/org-docs)');
     });
 
     test('parseAdr com id fora de 4 dígitos cai no nome do arquivo', () {
@@ -355,5 +402,11 @@ void main() {
       expect(firstSentence(d), 'Pega uma issue do Linear pela key (ex. LC-101), entende a regra.');
       expect(firstSentence('Usa a key, ex. LC-101, e segue'), 'Usa a key, ex. LC-101, e segue');
     });
+  });
+
+  test('withError descarta o warning do formato livre', () {
+    final adr = parseAdr('', path: 'docs/adr/0001-x.md').withError('ilegível');
+    expect(adr.error, 'ilegível');
+    expect(adr.warning, isNull);
   });
 }

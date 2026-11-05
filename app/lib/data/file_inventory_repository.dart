@@ -6,6 +6,9 @@ import 'inventory_parser.dart';
 import 'inventory_repository.dart';
 import 'models.dart';
 import 'orgs.dart';
+import 'read_capped.dart';
+
+const _gitmodulesLimit = 256 * 1024;
 
 class FileInventoryRepository implements InventoryRepository {
   FileInventoryRepository(String claudeHome) : claudeHome = normalizePath(claudeHome);
@@ -39,7 +42,9 @@ class FileInventoryRepository implements InventoryRepository {
     final stateDir = '$claudeHome/projects/${project.name}';
     final lessons = await _read('$stateDir/lessons.md');
     final routing = await _read('$stateDir/routing.json');
+    final modules = path == null ? null : await readCapped('${normalizePath(path)}/.gitmodules', _gitmodulesLimit);
     return ProjectInventory(
+      adrSubmodule: modules?.text == null ? null : adrSubmoduleFor(adrDir, parseGitmodules(modules!.text!)),
       rules: path == null ? const [] : await _rules('${normalizePath(path)}/$rulesDir'),
       adrs: path == null ? const [] : sortAdrs(await _adrs('${normalizePath(path)}/$adrDir')),
       lessons: lessons.text == null ? const [] : parseLessons(lessons.text!),

@@ -47,6 +47,7 @@ class AdrsPage extends StatefulWidget {
 
 class _AdrsPageState extends State<AdrsPage> with RefreshLoop<AdrsPage> {
   List<AdrEntry>? _adrs;
+  GitSubmodule? _submodule;
   ({AdrEntry entry, String body})? _open;
   List<md.InlineSyntax> _syntaxes = const [];
   AdrFilter _filter = AdrFilter.all;
@@ -82,6 +83,7 @@ class _AdrsPageState extends State<AdrsPage> with RefreshLoop<AdrsPage> {
     final adrs = inventory.adrs;
     setState(() {
       _adrs = adrs;
+      _submodule = inventory.adrSubmodule;
       // A new list instance makes MarkdownView re-parse, so wikilinks resolve against the fresh listing.
       _syntaxes = [WikiLinkSyntax((target) => resolveAdrTarget(target, adrs))];
     });
@@ -143,7 +145,8 @@ class _AdrsPageState extends State<AdrsPage> with RefreshLoop<AdrsPage> {
     ];
     final open = _open;
     final selected = open != null && open.entry.id == widget.adr ? open : null;
-    return Row(
+    final submodule = _submodule;
+    final row = Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _AdrList(
@@ -170,6 +173,34 @@ class _AdrsPageState extends State<AdrsPage> with RefreshLoop<AdrsPage> {
                 ),
         ),
       ],
+    );
+    if (submodule == null) return row;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SubmoduleBanner(submodule),
+        Expanded(child: row),
+      ],
+    );
+  }
+}
+
+class _SubmoduleBanner extends StatelessWidget {
+  const _SubmoduleBanner(this.submodule);
+
+  final GitSubmodule submodule;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      key: const ValueKey('adrs-submodule-banner'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.elevated,
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Muted(adrSubmoduleLabel(submodule), size: 12),
     );
   }
 }

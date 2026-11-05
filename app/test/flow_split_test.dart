@@ -15,6 +15,7 @@ import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/session_reducer.dart';
 import 'package:claude_flow/data/sse.dart';
 import 'package:claude_flow/features/flow/flow_page.dart';
+import 'package:claude_flow/features/flow/last_cycle_line.dart';
 import 'package:claude_flow/features/sessions/session_labels.dart';
 import 'package:claude_flow/features/sessions/session_view.dart';
 import 'package:flutter/material.dart';
@@ -213,7 +214,7 @@ void main() {
     expect(_location(tester), '/p/$_project/flow?stage=plan');
     expect(_feed, findsNothing);
     expect(_inSide(find.text('nenhuma sessão ativa nesta etapa')), findsOneWidget);
-    expect(_inSide(find.text('Kickoff')), findsOneWidget);
+    expect(_inSide(find.text('Kickoff')), findsNothing);
     expect(_highlighted(tester, Stage.plan), isTrue);
     expect(_highlighted(tester, Stage.specify), isFalse);
 
@@ -284,11 +285,41 @@ void main() {
     expect(_inFeed(_md('Retomada fora do pipeline.')), findsOneWidget);
   });
 
-  testWidgets('sem sessão nenhuma, placeholder com Kickoff', (tester) async {
+  testWidgets('com ciclo ativo, o placeholder não oferece Kickoff', (tester) async {
     await _open(tester, _withCycle(_report([])), const [], const {});
 
     expect(_inSide(find.text('nenhuma sessão ativa nesta etapa')), findsOneWidget);
-    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Kickoff')).onPressed, isNotNull);
+    expect(_inSide(find.byType(FilledButton)), findsNothing);
+  });
+
+  testWidgets('sem ciclo, o placeholder continua com Kickoff', (tester) async {
+    await _open(tester, const Project(name: _project, path: '/synthetic/$_project'), [
+      _session('s-rev', 'revise o PR', pending: 1),
+    ], const {});
+
+    expect(_inSide(find.text('nenhuma sessão ativa nesta etapa')), findsOneWidget);
+    expect(_inSide(find.widgetWithText(FilledButton, 'Kickoff')), findsOneWidget);
+  });
+
+  testWidgets('sem ciclo e com kickoff vivo, a coluna principal mostra o kickoff em andamento', (tester) async {
+    await _open(tester, const Project(name: _project, path: '/synthetic/$_project'), [
+      _session('s-kick', '/kickoff 7579'),
+    ], const {});
+
+    final running = find.byKey(const ValueKey('flow-kickoff-running'));
+    expect(find.descendant(of: running, matching: find.text('Kickoff em andamento')), findsOneWidget);
+    expect(find.descendant(of: running, matching: find.text('sessão s-kick')), findsOneWidget);
+    expect(find.text('Novo kickoff'), findsNothing);
+    expect(find.byType(LastCycleLine), findsNothing);
+  });
+
+  testWidgets('sem ciclo, sessão viva de /complete não vira kickoff em andamento', (tester) async {
+    await _open(tester, const Project(name: _project, path: '/synthetic/$_project'), [
+      _session('s-done', '/complete'),
+    ], const {});
+
+    expect(find.byKey(const ValueKey('flow-kickoff-running')), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Novo kickoff'), findsOneWidget);
   });
 
   testWidgets('sem ciclo, o painel aparecer não remonta o empty state nem recarrega o histórico', (tester) async {
@@ -316,10 +347,11 @@ void main() {
     final loads = metrics.loads;
     expect(loads, greaterThan(0));
 
-    controller.add([_session('s-kick', '/kickoff', pending: 1)]);
+    controller.add([_session('s-rev', 'revise o PR', pending: 1)]);
     await tester.pumpAndSettle();
 
     expect(_side, findsOneWidget);
+    expect(find.byType(LastCycleLine), findsOneWidget);
     expect(metrics.loads, loads);
   });
 
@@ -349,6 +381,20 @@ void main() {
     expect(_inFeed(_md('Triando o card.')), findsOneWidget);
   });
 
+  testWidgets('tabela markdown no turno do assistente vira Table no feed', (tester) async {
+    await _open(
+      tester,
+      const Project(name: _project, path: '/synthetic/$_project'),
+      [_session('s-kick', '/kickoff')],
+      {
+        's-kick': [_text('Comparação:\n\n| | A | B |\n|---|---|---|\n| Pin | `ref` | commit |')],
+      },
+    );
+
+    expect(_inFeed(find.byType(Table)), findsOneWidget);
+    expect(_inFeed(_md('|---|')), findsNothing);
+  });
+
   testWidgets('responder a pergunta no painel chama answer', (tester) async {
     final sessions = await _open(tester, _withCycle(_twoStages), list, logs);
 
@@ -375,7 +421,15 @@ void main() {
   });
 
   testWidgets('o card Aguardando você fica no topo do painel', (tester) async {
-    await _open(tester, _withCycle(_twoStages), list, logs);
+    await _open(
+      tester,
+      _withCycle(_twoStages),
+      [...list, _session('s-rev', 'revise o PR', pending: 1)],
+      {
+        ...logs,
+        's-rev': [_question],
+      },
+    );
 
     final card = _inSide(find.byKey(const ValueKey('flow-awaiting')));
     expect(card, findsOneWidget);
@@ -416,6 +470,33 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  group('link "abrir sessão" do banner', () {
+    final banner = find.byKey(const ValueKey('stage-banner'));
+    Finder link() => find.descendant(of: banner, matching: find.text('abrir sessão'));
+
+    testWidgets('split com a mesma sessão no painel: sem link, banner fica', (tester) async {
+      await _open(tester, _withCycle(_twoStages), list, logs);
+
+      expect(banner, findsOneWidget);
+      expect(link(), findsNothing);
+    });
+
+    testWidgets('split com ?stage de outra sessão: com link', (tester) async {
+      await _open(tester, _withCycle(_twoStages), list, logs);
+
+      await _tapStage(tester, Stage.specify);
+
+      expect(link(), findsOneWidget);
+    });
+
+    testWidgets('gaveta: com link', (tester) async {
+      await _open(tester, _withCycle(_twoStages), list, logs, size: const Size(1300, 900));
+
+      expect(_side, findsNothing);
+      expect(link(), findsOneWidget);
+    });
   });
 
   testWidgets('sessão reanexada sem mensagem nova aparece como interrompida no banner e no cabeçalho', (tester) async {

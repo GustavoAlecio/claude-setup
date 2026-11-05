@@ -14,7 +14,8 @@ const kFlowSplitWidth = 1200.0;
 
 const kFlowSidePanelWidth = 480.0;
 
-/// Right side of the Fluxo: "Aguardando você" on top, then the stage session (or a placeholder with Kickoff).
+/// Right side of the Fluxo: "Aguardando você" on top, then the stage session (or a placeholder, with Kickoff only
+/// without a cycle).
 class FlowSidePanel extends StatelessWidget {
   const FlowSidePanel({
     super.key,
@@ -41,7 +42,7 @@ class FlowSidePanel extends StatelessWidget {
             constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.45),
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: AwaitingPanel(projectName: projectName, report: report),
+              child: AwaitingPanel(projectName: projectName, report: report, shownSessionId: session?.id),
             ),
           ),
           Expanded(
@@ -67,13 +68,15 @@ class _NoSession extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Muted('nenhuma sessão ativa nesta etapa', size: 13),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: context.colors.accent, foregroundColor: Colors.white),
-            onPressed: project == null ? null : () => showKickoffForm(context, project),
-            icon: const Icon(Icons.rocket_launch_outlined, size: 15),
-            label: const Text('Kickoff'),
-          ),
+          if (project?.cycle == null) ...[
+            const SizedBox(height: 14),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: context.colors.accent, foregroundColor: Colors.white),
+              onPressed: project == null ? null : () => showKickoffForm(context, project),
+              icon: const Icon(Icons.rocket_launch_outlined, size: 15),
+              label: const Text('Kickoff'),
+            ),
+          ],
         ],
       ),
     );

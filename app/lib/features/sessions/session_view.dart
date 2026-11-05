@@ -106,13 +106,6 @@ class _SessionBody extends StatelessWidget {
             version: (detail?.lastSeq, events.length, partialText.length, partialThinking.length, s.status),
             children: [
               if (s.isOrgSession) ...[_Directories(session: s), const SizedBox(height: 16)],
-              if (s.status == SessionStatus.detached) ...[
-                _DetachedBanner(
-                  resumable: s.resumable,
-                  onResume: () => sessionAction(context, () => sessions.resume(s.id)),
-                ),
-                const SizedBox(height: 16),
-              ],
               for (final e in events)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
@@ -129,6 +122,15 @@ class _SessionBody extends StatelessWidget {
             ],
           ),
         ),
+        // Above the composer, not atop the feed: the feed opens scrolled to the end and would hide it.
+        if (s.status == SessionStatus.detached)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: _DetachedBanner(
+              resumable: s.resumable,
+              onResume: () => sessionAction(context, () => sessions.resume(s.id)),
+            ),
+          ),
         _Composer(
           enabled: isLive(s.status) && s.status != SessionStatus.waitingPermission,
           waiting: s.status == SessionStatus.waitingPermission,

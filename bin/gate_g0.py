@@ -21,9 +21,9 @@ BLOCKING = {"critical", "major"}
 TAIL = 4000
 
 
-def sh(cmd, cwd, timeout=900):
+def sh(cmd, cwd, timeout=900, env=None):
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", f"timeout after {timeout}s: {' '.join(cmd)}"
@@ -45,14 +45,34 @@ def pkg_root(path: Path, repo: Path, markers):
         d = d.parent
 
 
+def pkgs(files):
+    # Go tooling works per package, not per file: `a/b/x_test.go` -> `./a/b`.
+    dirs = sorted({str(Path(f).parent) for f in files})
+    return ["./" + d if d != "." else "." for d in dirs]
+
+
 def expand(cmd, files, prefix):
     out = []
     for c in cmd:
         if c == "{files}":
             out.extend(files)
+        elif c == "{pkgs}":
+            out.extend(pkgs(files))
         else:
             out.append(c)
     return prefix + out if prefix and out[0] in ("dart", "flutter") else out
+
+
+def stack_env(stack):
+    env = dict(os.environ)
+    f = STACKS / f"{stack}.env"
+    if f.exists():
+        for line in f.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                env.setdefault(k.strip(), v.strip())
+    return env
 
 
 def group(paths, repo, markers):
@@ -86,6 +106,33 @@ def parse_dart_machine(stdout, root, repo, sev_map):
     return found
 
 
+def parse_golangci_json(stdout, root, repo, sev_map):
+    found = []
+    line = next((l for l in stdout.splitlines() if l.startswith("{")), "")
+    try:
+        issues = json.loads(line).get("Issues") or []
+    except ValueError:
+        return found
+    for i in issues:
+        pos = i.get("Pos") or {}
+        try:
+            rel = str((root / pos.get("Filename", "")).resolve().relative_to(repo))
+        except ValueError:
+            rel = pos.get("Filename", "")
+        found.append({
+            "id": f"G0-ANALYZE-{i.get('FromLinter', 'lint')}",
+            "severity": sev_map.get(i.get("Severity", ""), sev_map.get("default", "major")),
+            "file": rel,
+            "line": int(pos.get("Line") or 0),
+            "rule_ref": i.get("FromLinter", "lint"),
+            "message": i.get("Text", "").strip(),
+        })
+    return found
+
+
+PARSERS = {"dart_machine": parse_dart_machine, "golangci_json": parse_golangci_json}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
@@ -101,7 +148,9 @@ def main():
     repo = Path(a.repo).resolve()
     prof = json.loads((STACKS / f"{a.stack}.json").read_text())
     markers = prof["detect"]
-    prefix = prof["sdk_prefix"] if shutil.which(prof["sdk_prefix"][0]) and any((repo / m).exists() for m in prof.get("sdk_prefix_when", [])) else []
+    sp = prof.get("sdk_prefix") or []
+    prefix = sp if sp and shutil.which(sp[0]) and any((repo / m).exists() for m in prof.get("sdk_prefix_when", [])) else []
+    env = stack_env(a.stack)
 
     findings, evidence = [], []
     changed = [p for p in checkpoint("changed", str(repo), a.checkpoint).splitlines() if p]
@@ -131,7 +180,10 @@ def main():
         an = prof["analyze"]
         for root, files in group(src, repo, markers).items():
             rc, out, err = sh(expand(an["cmd"], files, prefix), root)
-            parsed = parse_dart_machine(out + "\n" + err, root, repo, an["severity_map"])
+            parsed = PARSERS[an.get("parser", "dart_machine")](out + "\n" + err, root, repo, an["severity_map"])
+            if an.get("only_changed"):
+                # Package-level linters report on untouched files too; pre-existing debt is not this task's.
+                parsed = [f for f in parsed if f["file"] in src]
             if rc != 0 and not parsed:
                 findings.append({"id": "G0-ANALYZE-FAILED", "severity": "critical", "file": str(root.relative_to(repo)) or ".",
                                  "line": 0, "rule_ref": "analyze", "message": (out + err)[-TAIL:]})
@@ -147,20 +199,40 @@ def main():
     if not tests:
         evidence.append("no task tests mapped")
     tc = prof["test"]
-    for root, files in group(present, repo, markers).items():
-        rc, out, err = sh(expand(tc["cmd"], files, prefix), root)
-        tries = 0
-        while rc != 0 and tries < tc.get("flaky_retries", 0):
-            tries += 1
-            rc, out, err = sh(expand(tc["cmd"], files, prefix), root)
-            if rc == 0:
-                evidence.append(f"FLAKY: tests in {root.relative_to(repo) or '.'} passed on retry {tries}")
-        if rc != 0:
-            for f in files:
-                findings.append({"id": "G0-TEST-FAIL", "severity": "major", "file": str((root / f).relative_to(repo)),
-                                 "line": 0, "rule_ref": "test_failure", "message": (out + err)[-TAIL:]})
-        else:
-            evidence.append(f"tests pass: {', '.join(files)}")
+    tagged = tc.get("tagged")
+    runs = []
+    if tagged:
+        rx = re.compile(tagged["regex"], re.M)
+        is_tagged = lambda t: bool(rx.search((repo / t).read_text(errors="ignore")))
+        plain = [t for t in present if not is_tagged(t)]
+        tag_files = [t for t in present if is_tagged(t)]
+        runs.append((plain, tc["cmd"]))
+        if tag_files:
+            lack = [k for k in tagged.get("env_required", []) if not env.get(k)]
+            if lack:
+                for t in tag_files:
+                    findings.append({"id": "G0-TEST-ENV", "severity": "major", "file": t, "line": 0, "rule_ref": "test_env",
+                                     "message": f"tagged test needs {', '.join(lack)} (env or ~/.claude/stacks/{a.stack}.env)"})
+            else:
+                i = tc["cmd"].index("{pkgs}") if "{pkgs}" in tc["cmd"] else len(tc["cmd"])
+                runs.append((tag_files, tc["cmd"][:i] + tagged["args"] + tc["cmd"][i:]))
+    else:
+        runs.append((present, tc["cmd"]))
+    for run_files, run_cmd in runs:
+        for root, files in group(run_files, repo, markers).items():
+            rc, out, err = sh(expand(run_cmd, files, prefix), root, env=env)
+            tries = 0
+            while rc != 0 and tries < tc.get("flaky_retries", 0):
+                tries += 1
+                rc, out, err = sh(expand(run_cmd, files, prefix), root, env=env)
+                if rc == 0:
+                    evidence.append(f"FLAKY: tests in {root.relative_to(repo) or '.'} passed on retry {tries}")
+            if rc != 0:
+                for f in files:
+                    findings.append({"id": "G0-TEST-FAIL", "severity": "major", "file": str((root / f).relative_to(repo)),
+                                     "line": 0, "rule_ref": "test_failure", "message": (out + err)[-TAIL:]})
+            else:
+                evidence.append(f"tests pass: {', '.join(files)}")
 
     verdict = "fail" if any(f["severity"] in BLOCKING for f in findings) else "pass"
     snapshot = checkpoint("create", str(repo)).strip()

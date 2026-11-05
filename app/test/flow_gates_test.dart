@@ -35,8 +35,11 @@ class _Sessions extends MockSessionsRepository {
       answerCalls.add((id, requestId, decision, answers));
 }
 
+/// Not a pipeline skill by default: such a session never becomes the side panel's session, so its question stays in
+/// the card.
 SessionSummary _session(
   String id, {
+  String command = 'revise o PR',
   String project = _project,
   SessionStatus status = SessionStatus.waitingPermission,
   int pending = 1,
@@ -45,7 +48,7 @@ SessionSummary _session(
 }) => SessionSummary(
   id: id,
   project: project,
-  command: '/challenge-spec',
+  command: command,
   title: 'sessão $id',
   status: status,
   createdAt: createdAt,
@@ -94,8 +97,9 @@ Future<_Sessions> _open(
   List<SessionSummary> list, {
   Map<String, List<SessionEvent>> details = const {},
   bool settle = true,
+  Size size = const Size(1600, 3200),
 }) async {
-  tester.view.physicalSize = const Size(1600, 3200);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   final sessions = _Sessions(list, details);
@@ -134,7 +138,7 @@ void main() {
       final sessions = await _open(
         tester,
         _withCycle(),
-        [_session('s1')],
+        [_session('s1'), _session('s-stage', command: '/challenge-spec', status: SessionStatus.idle, pending: 0)],
         details: {
           's1': [_question('q-1')],
         },
@@ -279,11 +283,19 @@ void main() {
       expect(sessions.answerCalls, isEmpty);
     });
 
-    testWidgets('etapa running com sessão detached mostra sessão encerrada', (tester) async {
+    testWidgets('etapa running com sessão detached mostra sessão encerrada quando o painel exibe outra', (
+      tester,
+    ) async {
       final report = _report([
+        {'stage': 'specify', 'status': 'done', 'session_id': 's-spec'},
         {'stage': 'challenge', 'status': 'running', 'session_id': 's-dead'},
       ]);
-      await _open(tester, _withCycle(report: report), [_session('s-dead', status: SessionStatus.detached, pending: 0)]);
+      await _open(tester, _withCycle(report: report), [
+        _session('s-spec', status: SessionStatus.done, pending: 0),
+        _session('s-dead', status: SessionStatus.detached, pending: 0),
+      ]);
+      _router(tester).go('/p/$_project/flow?stage=specify');
+      await tester.pumpAndSettle();
 
       expect(_inCard(find.text('challenge-spec: sessão encerrada — retome em Sessões')), findsOneWidget);
 
@@ -301,6 +313,76 @@ void main() {
       ], settle: false);
 
       expect(_card, findsNothing);
+    });
+
+    testWidgets('só a sessão exibida no painel pendente: sem card, a pergunta fica no painel', (tester) async {
+      await _open(
+        tester,
+        _withCycle(),
+        [_session('s-stage', command: '/challenge-spec')],
+        details: {
+          's-stage': [_question('q-1')],
+        },
+      );
+
+      expect(_card, findsNothing);
+      expect(
+        find.descendant(of: find.byKey(const ValueKey('session-feed')), matching: find.text(_gate)),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('duas sessões pendentes: o card lista só a que não está no painel', (tester) async {
+      await _open(
+        tester,
+        _withCycle(),
+        [_session('s-stage', command: '/challenge-spec'), _session('s-rev')],
+        details: {
+          's-stage': [_question('q-stage', question: 'Pergunta da etapa?')],
+          's-rev': [_question('q-rev', question: 'Pergunta do review?')],
+        },
+      );
+
+      expect(_inCard(find.byKey(const ValueKey('awaiting-s-rev'))), findsOneWidget);
+      expect(_inCard(find.byKey(const ValueKey('awaiting-s-stage'))), findsNothing);
+      expect(_inCard(find.text('Pergunta do review?')), findsOneWidget);
+      expect(_inCard(find.text('Pergunta da etapa?')), findsNothing);
+    });
+
+    testWidgets('na gaveta o card também filtra e o contador do botão não muda', (tester) async {
+      await _open(
+        tester,
+        _withCycle(),
+        [_session('s-stage', command: '/challenge-spec'), _session('s-rev')],
+        details: {
+          's-stage': [_question('q-stage', question: 'Pergunta da etapa?')],
+          's-rev': [_question('q-rev', question: 'Pergunta do review?')],
+        },
+        size: const Size(1300, 1400),
+      );
+
+      final toggle = find.byKey(const ValueKey('flow-drawer-toggle'));
+      expect(find.descendant(of: toggle, matching: find.text('Sessão da etapa · 2 aguardando')), findsOneWidget);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      expect(_inCard(find.text('Pergunta do review?')), findsOneWidget);
+      expect(_inCard(find.text('Pergunta da etapa?')), findsNothing);
+    });
+
+    testWidgets('sessão encerrada exibida no painel sai do card: o aviso de retomar está logo abaixo', (tester) async {
+      final report = _report([
+        {'stage': 'challenge', 'status': 'running', 'session_id': 's-dead'},
+      ]);
+      await _open(tester, _withCycle(report: report), [_session('s-dead', status: SessionStatus.detached, pending: 0)]);
+
+      expect(find.descendant(of: _side, matching: find.byKey(const ValueKey('session-feed'))), findsOneWidget);
+      expect(find.byKey(const ValueKey('flow-awaiting')), findsNothing);
+      expect(
+        find.descendant(of: _side, matching: find.textContaining('O processo desta sessão terminou')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('várias pendências viram lista, a mais antiga primeiro', (tester) async {

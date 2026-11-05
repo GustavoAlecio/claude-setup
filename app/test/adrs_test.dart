@@ -74,12 +74,13 @@ const _bodies = {
 };
 
 class _AdrInventory extends MockInventoryRepository {
-  _AdrInventory([this.adrs = _adrs]);
+  _AdrInventory([this.adrs = _adrs, this.submodule]);
 
   final List<AdrEntry> adrs;
+  final GitSubmodule? submodule;
 
   @override
-  Future<ProjectInventory> loadProject(Project project) async => ProjectInventory(adrs: adrs);
+  Future<ProjectInventory> loadProject(Project project) async => ProjectInventory(adrs: adrs, adrSubmodule: submodule);
 
   @override
   Future<({AdrEntry entry, String body})?> loadAdr(Project project, String id) async {
@@ -137,6 +138,18 @@ void _tapLink(WidgetTester tester, String text) {
 }
 
 void main() {
+  testWidgets('submodule banner shows the path and the url without .git; absent without a submodule', (tester) async {
+    await _open(
+      tester,
+      '/p/demo-app/adrs',
+      inventory: _AdrInventory(_adrs, const GitSubmodule(path: 'docs', url: 'git@github.com:acme/org-docs.git')),
+    );
+    expect(find.text('ADRs da org — submódulo docs (git@github.com:acme/org-docs)'), findsOneWidget);
+
+    await _open(tester, '/p/demo-app/adrs');
+    expect(find.byKey(const ValueKey('adrs-submodule-banner')), findsNothing);
+  });
+
   testWidgets('without ?adr= selects the highest accepted id and rewrites the URL', (tester) async {
     final router = await _open(tester, '/p/demo-app/adrs');
 

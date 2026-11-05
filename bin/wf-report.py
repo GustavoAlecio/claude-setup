@@ -2,7 +2,7 @@
 """
 Stage report for the smart pipeline: $WF_DIR/report.json, written only by this script.
 
-  wf-report.py stage-start <stage> --workflow-dir W [--session ID]
+  wf-report.py stage-start <stage> --workflow-dir W [--session ID]   (default: $CLAUDE_FLOW_SESSION_ID)
   wf-report.py stage-end   <stage> --workflow-dir W --summary-file MD [--status done|blocked] [--artifact REL]...
   wf-report.py decision    <stage> --workflow-dir W --by WHO --text-file MD [--alternative-file MD] [--mistake]
   wf-report.py findings    <stage> --workflow-dir W --source X --file JSON
@@ -97,6 +97,16 @@ def archive(wf: Path, old: dict):
         os.replace(wf / "report.json", archive_path(wf, old))
 
 
+def env_session():
+    return os.environ.get("CLAUDE_FLOW_SESSION_ID") or None
+
+
+def cycle_compatible(old, current: dict) -> bool:
+    if not isinstance(old, dict):
+        return False
+    return all(old.get(k) is None or old.get(k) == current[k] for k in ("feature", "started_at"))
+
+
 def find_stage(report: dict, stage: str):
     return next((s for s in report["stages"] if isinstance(s, dict) and s.get("stage") == stage), None)
 
@@ -118,6 +128,8 @@ def ensure_stage(report: dict, stage: str) -> dict:
         "artifacts": [],
         "run_ids": [],
     }
+    if env_session():
+        s["session_id"] = env_session()
     report["stages"].append(s)
     order = {name: i for i, name in enumerate(STAGES)}
     report["stages"].sort(key=lambda x: order.get(x.get("stage"), len(STAGES)) if isinstance(x, dict) else len(STAGES))
@@ -160,8 +172,9 @@ def cmd_stage_start(a, report):
         s["attempt"] = int(s.get("attempt") or 1) + 1
         s["started_at"] = now()
         s.pop("ended_at", None)
-    if a.session:
-        s["session_id"] = a.session
+    session = a.session or env_session()
+    if session:
+        s["session_id"] = session
 
 
 def cmd_stage_end(a, report, summary):
@@ -423,6 +436,8 @@ def main():
     out = []
 
     def modify(report):
+        if isinstance(report, dict) and report.get("version") == 1 and cycle_compatible(report.get("cycle"), cycle):
+            report["cycle"] = dict(cycle)
         if not isinstance(report, dict) or report.get("version") != 1 or report.get("cycle") != cycle or a.cmd == "reset":
             if not (a.cmd == "reset" and isinstance(report, dict) and report.get("cycle") == cycle and not report.get("stages")):
                 archive(wf, report if isinstance(report, dict) else {})
