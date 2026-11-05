@@ -8,6 +8,7 @@ import '../data/config_mutations.dart';
 import '../data/flow_repository.dart';
 import '../data/models.dart';
 import '../data/orgs.dart';
+import '../engine/engine_config.dart';
 
 /// The only `lastOrg` writer of the UI (switcher and shell sync): `false` when the write failed, which
 /// is logged and shown on [messenger].
@@ -22,8 +23,8 @@ Future<bool> saveLastOrg(FlowRepository repository, String org, {ScaffoldMesseng
   }
 }
 
-/// Persists `lastOrg`; from a project route of another org (or the landing) it also opens the org's
-/// first visible project, or the landing when it has none. Other routes (`/settings`) stay put.
+/// Persists `lastOrg`; from a shell route of another org (or the landing) it also opens the org: its first
+/// visible project, else its activities when it has roots, else the landing. Other routes (`/settings`) stay put.
 ///
 /// The landing is opened with `?org=` so it waits for the config to reflect the write: until then
 /// `lastOrg` is the old org and it would reopen that org's project. If the write fails while that
@@ -32,6 +33,7 @@ void switchOrg({
   required FlowRepository repository,
   required GoRouter router,
   required List<Project> projects,
+  required DashboardConfig? config,
   required String org,
   ScaffoldMessengerState? messenger,
 }) {
@@ -42,10 +44,8 @@ void switchOrg({
       if (uri.path == '/' && uri.queryParameters['org'] == org) router.go('/');
     }),
   );
-  final segments = router.routerDelegate.currentConfiguration.uri.pathSegments;
-  final inProject = segments.length >= 2 && segments.first == 'p';
-  final routeOrg = inProject ? projects.where((p) => p.name == segments[1]).firstOrNull?.org : null;
-  if (inProject ? routeOrg == org : segments.isNotEmpty) return;
-  final first = projectsInOrg(projects, org).firstOrNull;
-  router.go(first == null ? Uri(path: '/', queryParameters: {'org': org}).toString() : '/p/${first.name}/flow');
+  final uri = router.routerDelegate.currentConfiguration.uri;
+  final inShell = isShellLocation(uri.toString());
+  if (inShell ? routeOrg(uri.toString(), projects) == org : uri.pathSegments.isNotEmpty) return;
+  router.go(orgHome(org, projects, config) ?? Uri(path: '/', queryParameters: {'org': org}).toString());
 }

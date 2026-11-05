@@ -43,6 +43,9 @@ class _FakeEngine {
   List<Map<String, Object?>> snapshot = [];
   final known = <String, Map<String, Object?>>{};
 
+  /// Response of `POST /api/sessions`; `null` answers with the engine's missing-cwd 400.
+  Map<String, Object?>? created;
+
   /// Called per `/api/sessions/:id/stream` connection; returning leaves the response open.
   Future<void> Function(HttpResponse res, _Req req, int connection) sessionStream = (_, _, _) async {};
   int _connections = 0;
@@ -107,6 +110,7 @@ class _FakeEngine {
       return summary == null ? _json(res, 404, {'error': 'sessao nao encontrada'}) : _json(res, 200, summary);
     }
     if (request.method == 'POST' && req.path == '/api/sessions') {
+      if (created case final summary?) return _json(res, 200, summary);
       return _json(res, 400, {
         'error': 'sem diretório para demo: defina cwds.demo em ~/.claude/workflow/.dashboard.json',
       });
@@ -428,6 +432,62 @@ void main() {
       {'project': 'demo', 'command': 'a', 'cwd': '/repos/demo'},
       {'project': 'demo', 'command': 'b'},
     ]);
+  });
+
+  group('org sessions', () {
+    final orgSummary = {
+      ..._summary('o1', project: ''),
+      'cwd': '/dev/otg',
+      'org': 'OTG',
+      'additionalDirectories': ['/vol/otg', '/vol/otg2'],
+    };
+
+    test('parseSummary reads org, cwd and additionalDirectories; project sessions default to none', () {
+      final org = parseSummary(orgSummary);
+      expect((org.project, org.org, org.cwd, org.isOrgSession), ('', 'OTG', '/dev/otg', true));
+      expect(org.additionalDirectories, ['/vol/otg', '/vol/otg2']);
+      final project = parseSummary(_summary('p1'));
+      expect((project.org, project.cwd, project.isOrgSession), (null, '/tmp', false));
+      expect(project.additionalDirectories, isEmpty);
+      final engineProject = parseSummary({..._summary('p2'), 'org': null, 'additionalDirectories': []});
+      expect(engineProject.org, isNull);
+      expect(engineProject.additionalDirectories, isEmpty);
+    });
+
+    test('copyWith keeps org, cwd and additionalDirectories', () {
+      final next = parseSummary(
+        orgSummary,
+      ).copyWith(status: SessionStatus.done, cost: 1, pendingPermissions: 2, model: 'opus');
+      expect((next.org, next.cwd, next.status), ('OTG', '/dev/otg', SessionStatus.done));
+      expect(next.additionalDirectories, ['/vol/otg', '/vol/otg2']);
+    });
+
+    test('createInOrg posts {org, command, cwd, additionalDirectories} and lists the new session', () async {
+      engine.created = orgSummary;
+      await repo.watchSessions().first.timeout(_timeout);
+      final listed = repo.watchSessions().firstWhere((l) => l.isNotEmpty).timeout(_timeout);
+      final summary = await repo.createInOrg('OTG', 'analise', cwd: '/dev/otg', additionalDirectories: ['/vol/otg']);
+      await repo.createInOrg('OTG', 'só uma raiz', cwd: '/dev/otg');
+      expect(engine.posts('/api/sessions').map((r) => r.body), [
+        {
+          'org': 'OTG',
+          'command': 'analise',
+          'cwd': '/dev/otg',
+          'additionalDirectories': ['/vol/otg'],
+        },
+        {'org': 'OTG', 'command': 'só uma raiz', 'cwd': '/dev/otg', 'additionalDirectories': <String>[]},
+      ]);
+      expect(summary.org, 'OTG');
+      expect((await listed).single.id, 'o1');
+    });
+
+    test('createInOrg surfaces the engine 400 text', () async {
+      await repo.watchSessions().first.timeout(_timeout);
+      await expectLater(
+        repo.createInOrg('OTG', 'a', cwd: '/dev/otg'),
+        throwsA(isA<Exception>().having((e) => '$e', 'message', startsWith('sem diretório'))),
+      );
+    });
   });
 
   test('default backoff is 0.5/1/2/4 s capped at 10 s', () {

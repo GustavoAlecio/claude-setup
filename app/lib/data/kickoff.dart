@@ -4,6 +4,21 @@ enum KickoffType { auto, feature, bug }
 
 const kKickoffMaxChars = 20000;
 
+/// Smart Flow skills, which run per project; the org palette leaves them out.
+const kPipelineSkills = {
+  'kickoff',
+  'specify',
+  'challenge-spec',
+  'plan',
+  'tasks',
+  'implement',
+  'verify',
+  'complete',
+  'fix',
+  'auto',
+  'status',
+};
+
 final _numericId = RegExp(r'^\d+$');
 final _keyedId = RegExp(r'^[A-Z][A-Z0-9]*-\d+$');
 

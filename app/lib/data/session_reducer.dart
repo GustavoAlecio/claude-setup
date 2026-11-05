@@ -32,14 +32,21 @@ SessionSummary parseSummary(Map<String, dynamic> json) => SessionSummary(
   pendingPermissions: (json['pendingPermissions'] as num?)?.toInt() ?? 0,
   resumable: json['resumable'] == true,
   model: json['model'] as String?,
+  cwd: json['cwd'] as String?,
+  org: json['org'] as String?,
+  additionalDirectories: [if (json['additionalDirectories'] case final List<dynamic> dirs) ...dirs.whereType<String>()],
 );
 
 /// Badge "aguardando você": only sessions whose process can still act on the answer.
+int pendingOf(SessionSummary session) => _awaitingUser.contains(session.status) ? session.pendingPermissions : 0;
+
+/// Project badges only: org sessions belong to no project.
 Map<String, int> pendingByProject(List<SessionSummary> sessions) {
   final out = <String, int>{};
   for (final s in sessions) {
-    if (!_awaitingUser.contains(s.status) || s.pendingPermissions == 0) continue;
-    out[s.project] = (out[s.project] ?? 0) + s.pendingPermissions;
+    final n = pendingOf(s);
+    if (n == 0 || s.isOrgSession) continue;
+    out[s.project] = (out[s.project] ?? 0) + n;
   }
   return out;
 }

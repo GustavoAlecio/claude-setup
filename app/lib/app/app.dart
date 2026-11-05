@@ -10,8 +10,11 @@ import '../core/theme/app_theme.dart';
 import '../data/flow_repository.dart';
 import '../data/inventory_repository.dart';
 import '../data/mock_inventory_repository.dart';
+import '../data/orgs.dart';
+import '../data/session_models.dart';
 import '../data/sessions_repository.dart';
 import '../engine/engine_supervisor.dart';
+import '../features/launcher/command_palette.dart';
 import '../core/claude_home.dart';
 import 'config_cubit.dart';
 import 'org_switch.dart';
@@ -119,20 +122,39 @@ class _GlobalShortcuts extends StatelessWidget {
   final Widget child;
 
   void _switch(BuildContext context, int index) {
-    final orgs = context.read<ConfigCubit>().state.data?.orgs ?? const [];
+    final config = context.read<ConfigCubit>().state.data;
+    final orgs = config?.orgs ?? const [];
     if (index >= orgs.length) return;
     switchOrg(
       repository: RepositoryScope.of(context),
       router: router,
       projects: context.read<ProjectsCubit>().state.data ?? const [],
+      config: config,
       org: orgs[index].name,
       messenger: ScaffoldMessenger.maybeOf(context),
     );
   }
 
+  /// Org of the current location, for the palette: the route's inside the shell, `lastOrg` on the landing.
+  /// Settings, About and the org chooser resolve to none.
+  void _newActivity(BuildContext context) {
+    final navigator = router.routerDelegate.navigatorKey;
+    final dialogContext = navigator.currentContext;
+    if (dialogContext == null || navigator.currentState?.canPop() == true) return;
+    final config = context.read<ConfigCubit>().state.data;
+    final projects = context.read<ProjectsCubit>().state.data;
+    if (config == null || projects == null) return;
+    final sessions = context.read<SessionsCubit>().state.data ?? const <SessionSummary>[];
+    final location = router.routerDelegate.currentConfiguration.uri.toString();
+    final org = paletteOrg(location, config, projects, sessions: sessions);
+    final target = org == null ? null : OrgTarget.of(orgConfigOf(config, org));
+    if (target != null) showCommandPalette(dialogContext, target);
+  }
+
   @override
   Widget build(BuildContext context) => CallbackShortcuts(
     bindings: {
+      const SingleActivator(LogicalKeyboardKey.keyK, meta: true, shift: true): () => _newActivity(context),
       for (final (i, key) in _digits.indexed) SingleActivator(key, meta: true): () => _switch(context, i),
       const SingleActivator(LogicalKeyboardKey.comma, meta: true): () => router.go('/settings'),
       const SingleActivator(LogicalKeyboardKey.keyI, meta: true): () => router.go('/about'),

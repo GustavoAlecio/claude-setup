@@ -31,6 +31,20 @@ async function paletteSkills() {
   return config.paletteSkills.filter((name) => byName.has(name)).map((name) => byName.get(name));
 }
 
+/** `org` e rotulo opaco: nada aqui le config para ele. Devolve os adicionais validados. */
+function validateOrgDirs(org, cwd, additionalDirectories) {
+  if (typeof org !== "string" || !org.trim()) throw new HttpError(400, "org invalida");
+  if (typeof cwd !== "string" || !cwd) throw new HttpError(400, "cwd ausente");
+  const extra = additionalDirectories ?? [];
+  if (!Array.isArray(extra) || extra.some((d) => typeof d !== "string")) {
+    throw new HttpError(400, "additionalDirectories invalido");
+  }
+  for (const dir of [cwd, ...extra]) {
+    if (!path.isAbsolute(dir) || !existsSync(dir)) throw new HttpError(400, `diretorio invalido: ${dir}`);
+  }
+  return extra;
+}
+
 export function createEngine({ query, sessionsDir, log = () => {} }) {
   const store = createStore(sessionsDir, { log });
   const sessions = createSessions({ query, store });
@@ -66,8 +80,22 @@ export function createEngine({ query, sessionsDir, log = () => {} }) {
   app.post(
     "/api/sessions",
     route(async (req) => {
-      const { project, command, model, cwd: explicitCwd } = req.body ?? {};
+      const { project, command, model, cwd: explicitCwd, org, additionalDirectories } = req.body ?? {};
       if (typeof command !== "string" || !command.trim()) throw new HttpError(400, "comando vazio");
+
+      if (org !== undefined) {
+        const dirs = validateOrgDirs(org, explicitCwd, additionalDirectories);
+        const session = sessions.create({
+          project: "",
+          org,
+          cwd: explicitCwd,
+          additionalDirectories: dirs,
+          command: command.trim(),
+          model,
+        });
+        log("sessao criada", session.id, `org ${org}`);
+        return session.summary();
+      }
 
       if (explicitCwd) {
         if (!existsSync(explicitCwd)) throw new HttpError(400, `diretorio invalido: ${explicitCwd}`);

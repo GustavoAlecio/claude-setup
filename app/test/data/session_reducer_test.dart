@@ -354,6 +354,21 @@ void main() {
       expect(pendingByProject(list), {'p1': 3, 'p2': 1});
     });
 
+    test('pendingByProject leaves org sessions out', () {
+      const activity = SessionSummary(
+        id: 'o',
+        project: '',
+        command: '/x',
+        title: 'o',
+        status: SessionStatus.waitingPermission,
+        createdAt: '',
+        pendingPermissions: 2,
+        org: 'OTG',
+        cwd: '/dev/otg',
+      );
+      expect(pendingByProject([activity, s('a', 'p1', SessionStatus.idle, 1)]), {'p1': 1});
+    });
+
     test('snapshot replaces, summary upserts, removed drops', () {
       Map<String, Object?> json(String id, String status) => {
         'id': id,

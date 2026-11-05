@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/claude_home.dart';
+import '../data/orgs.dart';
 import '../features/about/about_page.dart';
 import '../features/flow/flow_page.dart';
 import '../features/landing/landing_page.dart';
@@ -11,29 +12,48 @@ import '../features/runs/task_detail_page.dart';
 import '../features/sessions/sessions_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/shell/shell_page.dart';
+import '../features/shell/shell_scope.dart';
 
 GoRouter buildRouter(EffectivePaths paths) {
   const route = String.fromEnvironment('INITIAL_ROUTE');
-  var lastProjectRoute = route.startsWith('/p/') ? route : '/';
+  var lastShellRoute = isShellLocation(route) ? route : '/';
   final router = GoRouter(
     initialLocation: route.isEmpty ? '/' : route,
     routes: [
       GoRoute(path: '/', pageBuilder: (_, state) => _instant(state, const LandingPage())),
       GoRoute(
         path: '/settings',
-        pageBuilder: (_, state) => _instant(state, SettingsPage(backTo: () => lastProjectRoute)),
+        pageBuilder: (_, state) => _instant(state, SettingsPage(backTo: () => lastShellRoute)),
       ),
       GoRoute(
         path: '/about',
-        pageBuilder: (_, state) => _instant(state, AboutPage(backTo: () => lastProjectRoute, paths: paths)),
+        pageBuilder: (_, state) => _instant(state, AboutPage(backTo: () => lastShellRoute, paths: paths)),
       ),
       ShellRoute(
-        builder: (context, state, child) => ShellPage(
-          projectName: state.pathParameters['project']!,
-          tab: AppTab.parse(state.pathParameters['tab'] ?? state.uri.pathSegments[2]),
-          child: child,
-        ),
+        builder: (context, state, child) => switch (state.uri.pathSegments.first) {
+          'o' => ShellPage(scope: ShellOrgScope(state.pathParameters['org']!), tab: AppTab.sessions, child: child),
+          _ => ShellPage(
+            scope: ShellProjectScope(state.pathParameters['project']!),
+            tab: AppTab.parse(state.pathParameters['tab'] ?? state.uri.pathSegments[2]),
+            child: child,
+          ),
+        },
         routes: [
+          GoRoute(
+            path: '/o/:org/sessions',
+            pageBuilder: (_, state) =>
+                _instant(state, SessionsPage(scope: ShellOrgScope(state.pathParameters['org']!))),
+          ),
+          GoRoute(
+            path: '/o/:org/sessions/:session',
+            pageBuilder: (_, state) => _instant(
+              state,
+              SessionsPage(
+                scope: ShellOrgScope(state.pathParameters['org']!),
+                sessionId: state.pathParameters['session'],
+              ),
+            ),
+          ),
           GoRoute(
             path: '/p/:project/runs/:run/:task',
             pageBuilder: (_, state) => _instant(
@@ -49,7 +69,10 @@ GoRouter buildRouter(EffectivePaths paths) {
             path: '/p/:project/sessions/:session',
             pageBuilder: (_, state) => _instant(
               state,
-              SessionsPage(projectName: state.pathParameters['project']!, sessionId: state.pathParameters['session']),
+              SessionsPage(
+                scope: ShellProjectScope(state.pathParameters['project']!),
+                sessionId: state.pathParameters['session'],
+              ),
             ),
           ),
           GoRoute(
@@ -59,7 +82,7 @@ GoRouter buildRouter(EffectivePaths paths) {
               return _instant(state, switch (AppTab.parse(state.pathParameters['tab'])) {
                 AppTab.flow => FlowPage(projectName: project),
                 AppTab.runs => RunsPage(projectName: project),
-                AppTab.sessions => SessionsPage(projectName: project),
+                AppTab.sessions => SessionsPage(scope: ShellProjectScope(project)),
                 final tab => PlannedPage(tab: tab),
               });
             },
@@ -68,10 +91,10 @@ GoRouter buildRouter(EffectivePaths paths) {
       ),
     ],
   );
-  // `/settings` and `/about` sit outside the shell and `go` keeps no history, so "Voltar" needs the last project route.
+  // `/settings` and `/about` sit outside the shell and `go` keeps no history, so "Voltar" needs the last shell route.
   router.routerDelegate.addListener(() {
     final uri = router.routerDelegate.currentConfiguration.uri;
-    if (uri.path.startsWith('/p/')) lastProjectRoute = uri.toString();
+    if (isShellLocation(uri.path)) lastShellRoute = uri.toString();
   });
   return router;
 }

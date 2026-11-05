@@ -16,12 +16,14 @@ import '../../data/config_mutations.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
+import '../../data/session_models.dart';
 import '../../data/session_reducer.dart';
 import '../../data/sessions_repository.dart';
 import '../../engine/engine_config.dart';
 import '../../engine/engine_supervisor.dart';
 import '../launcher/command_palette.dart';
 import '../launcher/kickoff_form.dart';
+import 'shell_scope.dart';
 
 enum AppTab {
   flow('Fluxo'),
@@ -41,9 +43,9 @@ enum AppTab {
 }
 
 class ShellPage extends StatefulWidget {
-  const ShellPage({super.key, required this.projectName, required this.tab, required this.child});
+  const ShellPage({super.key, required this.scope, required this.tab, required this.child});
 
-  final String projectName;
+  final ShellScope scope;
   final AppTab tab;
   final Widget child;
 
@@ -59,16 +61,15 @@ class _ShellPageState extends State<ShellPage> {
   /// re-emits, so a persistently failing write does not repeat on every rebuild.
   (String, DashboardConfig)? _failed;
 
-  /// The route decides the org; `lastOrg` only follows, and only once the route project is known, so a
-  /// loading snapshot or an unknown project never writes "Sem org".
-  void _syncLastOrg(AsyncSnapshot<List<Project>> projects, DashboardConfig? config, Project? project) {
-    if (!projects.hasData || config == null || project == null) return;
-    if (project.org == config.lastOrg) {
+  /// The route decides the org; `lastOrg` only follows. [org] is `null` until the route org is known (a
+  /// loaded route project, or an `/o/` org present in the config), so loading or unknown routes never write.
+  void _syncLastOrg(String? org, DashboardConfig? config) {
+    if (config == null || org == null) return;
+    if (org == config.lastOrg) {
       _syncing = null;
       _failed = null;
       return;
     }
-    final org = project.org;
     if (_syncing == org) return;
     if (_failed case (final failedOrg, final failedConfig) when failedOrg == org && identical(failedConfig, config)) {
       return;
@@ -83,19 +84,48 @@ class _ShellPageState extends State<ShellPage> {
     });
   }
 
+  List<Widget> _projectHeader(Project project, Project? routeProject, Map<String, int> pending) => [
+    _TopBar(project: project, paletteProject: routeProject, pending: project.hidden ? 0 : pending[project.name] ?? 0),
+    _Tabs(scope: widget.scope, active: widget.tab),
+    if (project.hidden) _HiddenBanner(project: project.name),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final snapshot = context.watch<ProjectsCubit>().state;
     final config = context.watch<ConfigCubit>().state.data;
     final projects = snapshot.data ?? const <Project>[];
-    final routeProject = projects.where((p) => p.name == widget.projectName).firstOrNull;
-    _syncLastOrg(snapshot, config, routeProject);
-    final project = routeProject ?? Project(name: widget.projectName);
-    final org = currentOrg(widget.projectName, projects, config);
-    final pending = pendingByProject(context.watch<SessionsCubit>().state.data ?? const []);
+    final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
+    final scope = widget.scope;
+    final routeProject = switch (scope) {
+      ShellProjectScope(:final name) => projects.where((p) => p.name == name).firstOrNull,
+      ShellOrgScope() => null,
+    };
+    final org = switch (scope) {
+      ShellProjectScope(:final name) => currentOrg(name, projects, config),
+      ShellOrgScope(:final org) => org,
+    };
+    final orgConfig = orgConfigOf(config, org);
+    _syncLastOrg(switch (scope) {
+      ShellProjectScope() => snapshot.hasData ? routeProject?.org : null,
+      ShellOrgScope() => orgConfig?.name,
+    }, config);
+    final activities = orgActivities(sessions, projects, config, org);
+    final activitiesPending = activities.fold(0, (sum, s) => sum + pendingOf(s));
+    final pending = pendingByProject(sessions);
+    final location = switch (scope) {
+      ShellProjectScope(:final name) => Uri(pathSegments: ['', 'p', name]).toString(),
+      ShellOrgScope(:final org) => Uri(pathSegments: ['', 'o', org]).toString(),
+    };
+    final targetOrg = config == null ? null : paletteOrg(location, config, projects, sessions: sessions);
+    final orgTarget = targetOrg == null ? null : OrgTarget.of(orgConfigOf(config, targetOrg));
+    final VoidCallback? newActivity = orgTarget == null ? null : () => showCommandPalette(context, orgTarget);
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): () => showCommandPalette(context, routeProject),
+        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): switch (scope) {
+          ShellProjectScope() => () => showCommandPalette(context, ProjectTarget(routeProject)),
+          ShellOrgScope() => () => newActivity?.call(),
+        },
       },
       child: Focus(
         autofocus: true,
@@ -105,23 +135,38 @@ class _ShellPageState extends State<ShellPage> {
             children: [
               _Sidebar(
                 org: org,
-                orgs: switchableOrgs(config, projects, pending),
+                orgConfig: orgConfig,
+                orgs: switchableOrgs(config, projects, sessions),
                 projects: projects,
+                sessions: sessions,
+                activityCount: activities.length,
+                activityPending: activitiesPending,
+                onNewActivity: newActivity,
+                config: config,
                 pending: pending,
-                active: project.name,
+                scope: scope,
                 tab: widget.tab,
               ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _TopBar(
-                      project: project,
-                      paletteProject: routeProject,
-                      pending: project.hidden ? 0 : pending[project.name] ?? 0,
-                    ),
-                    _Tabs(project: project.name, active: widget.tab),
-                    if (project.hidden) _HiddenBanner(project: project.name),
+                    ...switch (scope) {
+                      ShellProjectScope(:final name) => _projectHeader(
+                        routeProject ?? Project(name: name),
+                        routeProject,
+                        pending,
+                      ),
+                      ShellOrgScope(:final org) => [
+                        _OrgTopBar(
+                          org: org,
+                          pending: activitiesPending,
+                          known: orgConfig != null,
+                          onNewActivity: newActivity,
+                        ),
+                        _Tabs(scope: scope, active: AppTab.sessions),
+                      ],
+                    },
                     Expanded(child: widget.child),
                   ],
                 ),
@@ -137,18 +182,38 @@ class _ShellPageState extends State<ShellPage> {
 class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.org,
+    required this.orgConfig,
     required this.orgs,
     required this.projects,
+    required this.sessions,
+    required this.activityCount,
+    required this.activityPending,
+    required this.onNewActivity,
+    required this.config,
     required this.pending,
-    required this.active,
+    required this.scope,
     required this.tab,
   });
 
   final String org;
+
+  /// `null` for [kNoOrg] and for an `/o/` org missing from the config.
+  final OrgConfig? orgConfig;
   final List<String> orgs;
   final List<Project> projects;
+  final List<SessionSummary> sessions;
+
+  /// The org's own sessions, per [orgActivities], and how many of them wait for the user.
+  final int activityCount;
+  final int activityPending;
+
+  /// `null` when the org has no roots (or is Sem org).
+  final VoidCallback? onNewActivity;
+  final DashboardConfig? config;
+
+  /// Per project, for the tiles.
   final Map<String, int> pending;
-  final String active;
+  final ShellScope scope;
   final AppTab tab;
 
   @override
@@ -165,8 +230,25 @@ class _Sidebar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _OrgHeader(org: org, orgs: orgs, projects: projects, pending: pending),
+          _OrgHeader(
+            org: org,
+            orgs: orgs,
+            projects: projects,
+            sessions: sessions,
+            config: config,
+            onNewActivity: onNewActivity,
+          ),
           const SizedBox(height: 12),
+          if (org != kNoOrg || activityCount > 0) ...[
+            _OrgActivityTile(
+              org: org,
+              count: activityCount,
+              pending: activityPending,
+              enabled: orgConfig?.roots.isNotEmpty ?? activityCount > 0,
+              selected: scope is ShellOrgScope,
+            ),
+            const SizedBox(height: 12),
+          ],
           const Padding(padding: EdgeInsets.fromLTRB(8, 0, 8, 8), child: Muted('PROJETOS', size: 10)),
           Expanded(
             child: visible.isEmpty
@@ -178,7 +260,12 @@ class _Sidebar extends StatelessWidget {
                     padding: EdgeInsets.zero,
                     children: [
                       for (final p in visible)
-                        _ProjectTile(project: p, pending: pending[p.name] ?? 0, selected: p.name == active, tab: tab),
+                        _ProjectTile(
+                          project: p,
+                          pending: pending[p.name] ?? 0,
+                          selected: scope == ShellProjectScope(p.name),
+                          tab: tab,
+                        ),
                     ],
                   ),
           ),
@@ -193,17 +280,31 @@ class _Sidebar extends StatelessWidget {
 }
 
 class _OrgHeader extends StatelessWidget {
-  const _OrgHeader({required this.org, required this.orgs, required this.projects, required this.pending});
+  const _OrgHeader({
+    required this.org,
+    required this.orgs,
+    required this.projects,
+    required this.sessions,
+    required this.config,
+    required this.onNewActivity,
+  });
 
   final String org;
   final List<String> orgs;
   final List<Project> projects;
-  final Map<String, int> pending;
+  final List<SessionSummary> sessions;
+  final DashboardConfig? config;
+  final VoidCallback? onNewActivity;
 
+  static const _newActivity = '\u0000new-activity';
   static const _settings = '\u0000settings';
   static const _about = '\u0000about';
 
   void _onSelected(BuildContext context, String value) {
+    if (value == _newActivity) {
+      onNewActivity?.call();
+      return;
+    }
     if (value == _settings) {
       context.go('/settings');
       return;
@@ -216,6 +317,7 @@ class _OrgHeader extends StatelessWidget {
       repository: RepositoryScope.of(context),
       router: GoRouter.of(context),
       projects: projects,
+      config: config,
       org: value,
       messenger: ScaffoldMessenger.maybeOf(context),
     );
@@ -224,7 +326,7 @@ class _OrgHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final total = pendingInOrg(pending, projects, org);
+    final total = pendingInOrg(sessions, projects, config, org);
     return PopupMenuButton<String>(
       tooltip: 'Trocar org',
       position: PopupMenuPosition.under,
@@ -240,7 +342,7 @@ class _OrgHeader extends StatelessWidget {
                 SizedBox(width: 16, child: name == org ? Icon(Icons.check, size: 14, color: c.accent) : null),
                 const SizedBox(width: 8),
                 Expanded(child: Text(name, style: const TextStyle(fontSize: 13))),
-                if (pendingInOrg(pending, projects, name) case final n when n > 0) ...[
+                if (pendingInOrg(sessions, projects, config, name) case final n when n > 0) ...[
                   _CountBadge(n),
                   const SizedBox(width: 8),
                 ],
@@ -249,6 +351,19 @@ class _OrgHeader extends StatelessWidget {
             ),
           ),
         const PopupMenuDivider(),
+        if (org != kNoOrg)
+          PopupMenuItem(
+            value: _newActivity,
+            enabled: onNewActivity != null,
+            height: 36,
+            child: Row(
+              children: [
+                const SizedBox(width: 24),
+                const Expanded(child: Text('Nova atividade na org', style: TextStyle(fontSize: 13))),
+                Mono('⌘⇧K', color: c.textMuted, size: 11),
+              ],
+            ),
+          ),
         PopupMenuItem(
           value: _settings,
           height: 36,
@@ -417,6 +532,60 @@ class _ProjectTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _OrgActivityTile extends StatelessWidget {
+  const _OrgActivityTile({
+    required this.org,
+    required this.count,
+    required this.pending,
+    required this.enabled,
+    required this.selected,
+  });
+
+  final String org;
+  final int count;
+  final int pending;
+
+  /// An org without roots has nowhere to run an activity; Sem org only lists the orphans it still holds.
+  final bool enabled;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final tile = Material(
+      key: const ValueKey('org-activity'),
+      color: selected ? c.hover : Colors.transparent,
+      borderRadius: BorderRadius.circular(6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        hoverColor: c.hover,
+        onTap: enabled ? () => context.go(orgSessionsLocation(org)) : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          child: Row(
+            children: [
+              Icon(Icons.hub_outlined, size: 14, color: enabled ? c.textSecondary : c.textMuted),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Atividades da org',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: enabled ? null : c.textMuted),
+                ),
+              ),
+              Mono('$count', color: c.textMuted, size: 11),
+              if (pending > 0) ...[
+                const SizedBox(width: 6),
+                Tooltip(message: '$pending aguardando você', child: _CountBadge(pending)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+    return enabled ? tile : Tooltip(message: 'org sem pastas', child: tile);
   }
 }
 
@@ -607,11 +776,7 @@ class _TopBar extends StatelessWidget {
           ],
           const Spacer(),
           if (pending > 0) ...[
-            InkWell(
-              borderRadius: BorderRadius.circular(999),
-              onTap: () => context.go('/p/${project.name}/sessions'),
-              child: Pill(label: '$pending aguardando você', color: c.warn),
-            ),
+            _PendingPill(pending: pending, location: '/p/${project.name}/sessions'),
             const SizedBox(width: 12),
           ],
           OutlinedButton.icon(
@@ -635,7 +800,7 @@ class _TopBar extends StatelessWidget {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
               textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
             ),
-            onPressed: () => showCommandPalette(context, paletteProject),
+            onPressed: () => showCommandPalette(context, ProjectTarget(paletteProject)),
             icon: const Icon(Icons.play_arrow_rounded, size: 16),
             label: const Text('Executar skill  ⌘K'),
           ),
@@ -645,15 +810,92 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _Tabs extends StatelessWidget {
-  const _Tabs({required this.project, required this.active});
+class _PendingPill extends StatelessWidget {
+  const _PendingPill({required this.pending, required this.location});
 
-  final String project;
+  final int pending;
+  final String location;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(999),
+    onTap: () => context.go(location),
+    child: Pill(label: '$pending aguardando você', color: context.colors.warn),
+  );
+}
+
+class _OrgTopBar extends StatelessWidget {
+  const _OrgTopBar({required this.org, required this.pending, required this.known, required this.onNewActivity});
+
+  final String org;
+  final int pending;
+
+  /// An org missing from the config only lists what resolves to its name: no "Nova atividade".
+  final bool known;
+
+  /// `null` when the org has no roots.
+  final VoidCallback? onNewActivity;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(
+              'Atividades em $org',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          const Spacer(),
+          if (pending > 0) ...[
+            _PendingPill(pending: pending, location: orgSessionsLocation(org)),
+            const SizedBox(width: 12),
+          ],
+          if (known)
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: c.accent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+              onPressed: onNewActivity,
+              icon: const Icon(Icons.play_arrow_rounded, size: 16),
+              label: const Text('Nova atividade  ⌘K'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Tabs extends StatelessWidget {
+  const _Tabs({required this.scope, required this.active});
+
+  final ShellScope scope;
   final AppTab active;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final tabs = switch (scope) {
+      ShellProjectScope() => AppTab.values,
+      ShellOrgScope() => const [AppTab.sessions],
+    };
+    String location(AppTab t) => switch (scope) {
+      ShellProjectScope(:final name) => '/p/$name/${t.name}',
+      ShellOrgScope(:final org) => orgSessionsLocation(org),
+    };
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -662,9 +904,9 @@ class _Tabs extends StatelessWidget {
       ),
       child: Row(
         children: [
-          for (final t in AppTab.values)
+          for (final t in tabs)
             InkWell(
-              onTap: () => context.go('/p/$project/${t.name}'),
+              onTap: () => context.go(location(t)),
               hoverColor: Colors.transparent,
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10),

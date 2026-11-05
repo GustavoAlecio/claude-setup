@@ -19,7 +19,7 @@ import 'about_project.dart';
 class AboutPage extends StatefulWidget {
   const AboutPage({super.key, required this.backTo, required this.paths});
 
-  /// Location of "Voltar": the last project route visited, or the landing.
+  /// Location of "Voltar": the last shell route visited (`/p/` or `/o/`), or the landing.
   final String Function() backTo;
   final EffectivePaths paths;
 

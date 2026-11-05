@@ -43,13 +43,15 @@ function createInputStream() {
 }
 
 class Session {
-  constructor({ project, cwd, command, model, restored }, { query, store, changed }) {
+  constructor({ project, org = null, cwd, additionalDirectories = [], command, model, restored }, { query, store, changed }) {
     this.queryFn = query;
     this.store = store;
     this.changed = () => changed(this);
     this.id = restored?.id ?? randomUUID();
     this.project = project;
+    this.org = org;
     this.cwd = cwd;
+    this.additionalDirectories = additionalDirectories;
     this.command = command;
     this.title = titleFor(command);
     this.requestedModel = model ?? null;
@@ -72,7 +74,9 @@ class Session {
     return {
       id: this.id,
       project: this.project,
+      org: this.org,
       cwd: this.cwd,
+      additionalDirectories: this.additionalDirectories,
       command: this.command,
       createdAt: this.createdAt,
       sdkSessionId: this.sdkSessionId,
@@ -111,7 +115,9 @@ class Session {
     return {
       id: this.id,
       project: this.project,
+      org: this.org,
       cwd: this.cwd,
+      additionalDirectories: this.additionalDirectories,
       command: this.command,
       title: this.title,
       status: this.status,
@@ -239,6 +245,7 @@ class Session {
       prompt: this.input,
       options: {
         cwd: this.cwd,
+        ...(this.additionalDirectories.length ? { additionalDirectories: this.additionalDirectories } : {}),
         canUseTool: this.canUseTool,
         abortController: this.abort,
         includePartialMessages: true,
@@ -379,7 +386,14 @@ export function createSessions({ query, store }) {
       for (const snapshot of snapshots) {
         if (sessions.has(snapshot.id)) continue;
         const session = new Session(
-          { project: snapshot.project, cwd: snapshot.cwd, command: snapshot.command, restored: snapshot },
+          {
+            project: snapshot.project,
+            org: snapshot.org ?? null,
+            cwd: snapshot.cwd,
+            additionalDirectories: snapshot.additionalDirectories ?? [],
+            command: snapshot.command,
+            restored: snapshot,
+          },
           deps
         );
         sessions.set(session.id, session);

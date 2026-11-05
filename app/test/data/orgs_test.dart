@@ -4,6 +4,7 @@ import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/orgs.dart';
 import 'package:claude_flow/data/project_name.dart';
+import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,6 +14,24 @@ const _orgs = [
 ];
 
 String _identity(String p) => p;
+
+SessionSummary _session(String project, int pending, {String? org, String? cwd, List<String> extra = const []}) =>
+    SessionSummary(
+      id: '$project-$org-$pending',
+      project: project,
+      command: '/x',
+      title: '/x',
+      status: SessionStatus.waitingPermission,
+      createdAt: '',
+      pendingPermissions: pending,
+      org: org,
+      cwd: cwd,
+      additionalDirectories: extra,
+    );
+
+List<SessionSummary> _pending(Map<String, int> byProject) => [
+  for (final e in byProject.entries) _session(e.key, e.value),
+];
 
 Map<String, dynamic> _raw() => {
   'engineDir': '/repo/engine',
@@ -45,6 +64,29 @@ void main() {
     expect(parentPath('/'), '/');
   });
 
+  group('orgHome', () {
+    const config = DashboardConfig(
+      orgs: [
+        OrgConfig(name: 'A', roots: ['/dev/a']),
+        OrgConfig(name: 'B', roots: ['/dev/b']),
+        OrgConfig(name: 'C'),
+      ],
+    );
+    const projects = [Project(name: 'a', org: 'A'), Project(name: 'h', org: 'B', hidden: true)];
+
+    test('first visible project, else the activities of an org with roots, else null', () {
+      expect(orgHome('A', projects, config), '/p/a/flow');
+      expect(orgHome('B', projects, config), '/o/B/sessions');
+      expect(orgHome('C', projects, config), isNull);
+      expect(orgHome(kNoOrg, projects, config), isNull);
+    });
+
+    test('org locations encode each segment', () {
+      expect(orgSessionsLocation('ABM Soluções'), '/o/ABM%20Solu%C3%A7%C3%B5es/sessions');
+      expect(orgSessionsLocation('A', session: 's 1'), '/o/A/sessions/s%201');
+    });
+  });
+
   group('backTarget', () {
     const config = DashboardConfig(lastOrg: 'B');
     const projects = [Project(name: 'a', org: 'A'), Project(name: 'b', org: 'B'), Project(name: 'none')];
@@ -58,6 +100,11 @@ void main() {
     test('project of another org goes to the landing', () {
       expect(backTarget('/p/a/runs', config, projects), '/');
       expect(backTarget('/p/none/runs', config, projects), '/');
+    });
+
+    test('an org route stays in its org and goes to the landing from another', () {
+      expect(backTarget('/o/B/sessions', config, projects), '/o/B/sessions');
+      expect(backTarget('/o/A/sessions/s1', config, projects), '/');
     });
 
     test('without config or projects the target is kept', () {
@@ -197,10 +244,10 @@ void main() {
         Project(name: 'c', org: 'abm'),
       ];
       expect(projectsInOrg(projects, 'r10').map((p) => p.name), ['a']);
-      final pending = {'a': 2, 'b': 5, 'c': 1, 'ghost': 7};
-      expect(pendingInOrg(pending, projects, 'r10'), 2);
-      expect(pendingInOrg(pending, projects, 'abm'), 1);
-      expect(pendingInOrg(pending, projects, kNoOrg), 7);
+      final pending = _pending({'a': 2, 'b': 5, 'c': 1, 'ghost': 7});
+      expect(pendingInOrg(pending, projects, null, 'r10'), 2);
+      expect(pendingInOrg(pending, projects, null, 'abm'), 1);
+      expect(pendingInOrg(pending, projects, null, kNoOrg), 7);
     });
 
     test('currentOrg follows the route project and falls back to lastOrg for unknown ones', () {
@@ -219,9 +266,9 @@ void main() {
         ],
       );
       const projects = [Project(name: 'a', org: 'r10'), Project(name: 'h', hidden: true)];
-      expect(switchableOrgs(config, projects, const {}), ['r10', 'abm']);
-      expect(switchableOrgs(config, projects, const {'ghost': 1}), ['r10', 'abm', kNoOrg]);
-      expect(switchableOrgs(config, [...projects, const Project(name: 'loose')], const {}), ['r10', 'abm', kNoOrg]);
+      expect(switchableOrgs(config, projects, const []), ['r10', 'abm']);
+      expect(switchableOrgs(config, projects, _pending({'ghost': 1})), ['r10', 'abm', kNoOrg]);
+      expect(switchableOrgs(config, [...projects, const Project(name: 'loose')], const []), ['r10', 'abm', kNoOrg]);
     });
   });
 
@@ -445,39 +492,158 @@ void main() {
         isNull,
       );
     });
+
+    test('rejects a slash in the name, which would break the /o/<org> route', () {
+      expect(validateOrgs(const [OrgConfig(name: 'r10/app')]), 'o nome da org não pode ter "/"');
+      expect(validateOrgs(const [OrgConfig(name: 'ABM Soluções')]), isNull);
+    });
+  });
+
+  group('org sessions', () {
+    const otg = OrgConfig(name: 'OTG', roots: ['/dev/otg', '/vol/otg']);
+    const projects = [Project(name: 'a', org: 'OTG')];
+    final activity = _session('', 1, org: 'OTG', cwd: '/dev/otg', extra: ['/vol/otg']);
+
+    test('a pending org session counts in its org and never in Sem org', () {
+      const config = DashboardConfig(orgs: [otg]);
+      final sessions = [_session('a', 1), activity];
+      expect(sessionOrg(activity, projects, config), 'OTG');
+      expect(pendingInOrg(sessions, projects, config, 'OTG'), 2);
+      expect(pendingInOrg(sessions, projects, config, kNoOrg), 0);
+      expect(switchableOrgs(config, projects, sessions), ['OTG']);
+    });
+
+    test('a renamed org keeps the session through its cwd; a removed org leaves it in Sem org', () {
+      const renamed = DashboardConfig(
+        orgs: [
+          OrgConfig(name: 'R10', roots: ['/dev/otg', '/vol/otg']),
+        ],
+      );
+      const renamedProjects = [Project(name: 'a', org: 'R10')];
+      expect(sessionOrg(activity, renamedProjects, renamed), 'R10');
+      expect(pendingInOrg([activity], renamedProjects, renamed, 'R10'), 1);
+
+      const removed = DashboardConfig(
+        orgs: [
+          OrgConfig(name: 'abm', roots: ['/dev/abm']),
+        ],
+      );
+      const loose = [Project(name: 'a')];
+      expect(sessionOrg(activity, loose, removed), kNoOrg);
+      expect(pendingInOrg([activity], loose, removed, kNoOrg), 1);
+      expect(switchableOrgs(removed, const [], [activity]), ['abm', kNoOrg]);
+    });
+
+    test('project sessions keep their rule: unknown project in Sem org, hidden project in none', () {
+      const config = DashboardConfig(orgs: [otg]);
+      const withHidden = [...projects, Project(name: 'h', org: 'OTG', hidden: true)];
+      expect(sessionOrg(_session('a', 0), withHidden, config), 'OTG');
+      expect(sessionOrg(_session('ghost', 0), withHidden, config), kNoOrg);
+      expect(sessionOrg(_session('h', 0), withHidden, config), isNull);
+    });
+
+    test('routeOrg reads the project org under /p/ and the name under /o/', () {
+      expect(routeOrg('/p/a/flow', projects), 'OTG');
+      expect(routeOrg('/p/a', projects), 'OTG');
+      expect(routeOrg('/p/ghost/flow', projects), isNull);
+      expect(routeOrg('/o/x/sessions', projects), 'x');
+      expect(routeOrg('/o/x', projects), 'x');
+      expect(routeOrg('/o/ABM%20Solu%C3%A7%C3%B5es/sessions/s1', projects), 'ABM Soluções');
+      expect(routeOrg('/', projects), isNull);
+      expect(routeOrg('/settings', projects), isNull);
+    });
+
+    test('orgSessionDirs is the first root plus the others in config order', () {
+      final (cwd, additional) = orgSessionDirs(otg)!;
+      expect(cwd, '/dev/otg');
+      expect(additional, ['/vol/otg']);
+      final (single, none) = orgSessionDirs(const OrgConfig(name: 'one', roots: ['/dev/one']))!;
+      expect(single, '/dev/one');
+      expect(none, isEmpty);
+      expect(orgSessionDirs(const OrgConfig(name: 'none')), isNull);
+    });
+  });
+
+  group('shell helpers', () {
+    const projects = [Project(name: 'a', org: 'r10'), Project(name: 'z')];
+    const config = DashboardConfig(orgs: _orgs, lastOrg: 'abm');
+
+    test('isShellLocation accepts only /p/<x> and /o/<x> routes', () {
+      expect(isShellLocation('/p/a/flow'), isTrue);
+      expect(isShellLocation('/p/a'), isTrue);
+      expect(isShellLocation('/o/Sem%20org/sessions'), isTrue);
+      expect(isShellLocation('/'), isFalse);
+      expect(isShellLocation('/p'), isFalse);
+      expect(isShellLocation('/settings'), isFalse);
+      expect(isShellLocation('/about'), isFalse);
+    });
+
+    test('orgConfigOf finds a configured org only', () {
+      expect(orgConfigOf(config, 'abm')?.roots, hasLength(2));
+      expect(orgConfigOf(config, kNoOrg), isNull);
+      expect(orgConfigOf(config, 'gone'), isNull);
+      expect(orgConfigOf(null, 'abm'), isNull);
+    });
+
+    test('paletteOrg: route org in the shell, unknown project keeps lastOrg, landing org on /', () {
+      expect(paletteOrg('/p/a/flow', config, projects), 'r10');
+      expect(paletteOrg('/p/ghost/flow', config, projects), 'abm');
+      expect(paletteOrg('/o/r10/sessions', config, projects), 'r10');
+      expect(paletteOrg('/o/Sem%20org/sessions', config, projects), kNoOrg);
+      expect(paletteOrg('/', config, projects), 'abm');
+      expect(paletteOrg('/?org=r10', config, projects), 'abm');
+      expect(paletteOrg('/', const DashboardConfig(orgs: _orgs), projects), isNull);
+      expect(paletteOrg('/settings', config, projects), isNull);
+      expect(paletteOrg('/about', config, projects), isNull);
+    });
+
+    test('firstPendingInOrg points at the project or at the org activities', () {
+      final sessions = [
+        _session('a', 0),
+        _session('a', 2),
+        _session('', 1, org: 'abm', cwd: '/dev/abm'),
+        _session('', 3, org: 'removed', cwd: '/nowhere'),
+        _session('ghost', 1),
+      ];
+      expect(firstPendingInOrg(sessions, projects, config, 'r10'), (name: 'a', location: '/p/a/sessions'));
+      expect(firstPendingInOrg(sessions, projects, config, 'abm'), (name: 'abm', location: '/o/abm/sessions'));
+      expect(firstPendingInOrg(sessions, projects, config, kNoOrg), (name: kNoOrg, location: '/o/Sem%20org/sessions'));
+      expect(firstPendingInOrg([_session('ghost', 1)], projects, config, kNoOrg)?.name, 'ghost');
+      expect(firstPendingInOrg(sessions, projects, config, 'gone'), isNull);
+    });
   });
 
   group('landingFor', () {
     const projects = [Project(name: 'a', org: 'r10'), Project(name: 'z')];
 
     test('no orgs → create org, regardless of lastOrg', () {
-      expect(landingFor(const DashboardConfig(lastOrg: 'r10'), projects, const {}), isA<CreateOrgLanding>());
+      expect(landingFor(const DashboardConfig(lastOrg: 'r10'), projects, const []), isA<CreateOrgLanding>());
     });
 
     test('valid lastOrg opens directly', () {
       expect(
-        landingFor(const DashboardConfig(orgs: _orgs, lastOrg: 'abm'), projects, const {}),
+        landingFor(const DashboardConfig(orgs: _orgs, lastOrg: 'abm'), projects, const []),
         isA<OpenOrgLanding>().having((l) => l.org, 'org', 'abm'),
       );
       expect(
-        landingFor(const DashboardConfig(orgs: _orgs, lastOrg: kNoOrg), projects, const {}),
+        landingFor(const DashboardConfig(orgs: _orgs, lastOrg: kNoOrg), projects, const []),
         isA<OpenOrgLanding>().having((l) => l.org, 'org', kNoOrg),
       );
     });
 
     test('missing or invalid lastOrg offers the orgs, plus Sem org only when it has visible projects', () {
       expect(
-        landingFor(const DashboardConfig(orgs: _orgs), projects, const {}),
+        landingFor(const DashboardConfig(orgs: _orgs), projects, const []),
         isA<ChooseOrgLanding>().having((l) => l.options, 'options', ['r10', 'abm', kNoOrg]),
       );
       expect(
         landingFor(const DashboardConfig(orgs: _orgs, lastOrg: 'gone'), const [
           Project(name: 'z', hidden: true),
-        ], const {}),
+        ], const []),
         isA<ChooseOrgLanding>().having((l) => l.options, 'options', ['r10', 'abm']),
       );
       expect(
-        landingFor(const DashboardConfig(orgs: _orgs, lastOrg: kNoOrg), const [], const {}),
+        landingFor(const DashboardConfig(orgs: _orgs, lastOrg: kNoOrg), const [], const []),
         isA<ChooseOrgLanding>(),
       );
     });
@@ -487,19 +653,19 @@ void main() {
       const config = DashboardConfig(orgs: _orgs, lastOrg: kNoOrg);
 
       for (final pending in [
-        const <String, int>{},
-        const {'h': 2},
-        const {'a': 3},
+        const <SessionSummary>[],
+        _pending({'h': 2}),
+        _pending({'a': 3}),
       ]) {
         expect(
           landingFor(config, visible, pending),
           isA<ChooseOrgLanding>().having((l) => l.options, 'options', switchableOrgs(config, visible, pending)),
-          reason: '$pending',
+          reason: pending.map((s) => s.project).join(','),
         );
       }
-      expect(switchableOrgs(config, visible, const {'ghost': 1}), contains(kNoOrg));
+      expect(switchableOrgs(config, visible, _pending({'ghost': 1})), contains(kNoOrg));
       expect(
-        landingFor(config, visible, const {'ghost': 1}),
+        landingFor(config, visible, _pending({'ghost': 1})),
         isA<OpenOrgLanding>().having((l) => l.org, 'org', kNoOrg),
       );
     });

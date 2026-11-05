@@ -17,13 +17,14 @@ import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
 import '../../data/workflow_parser.dart';
 import '../launcher/command_palette.dart';
+import '../shell/shell_scope.dart';
 import 'session_cubit.dart';
 import 'session_events.dart';
 
 class SessionsPage extends StatefulWidget {
-  const SessionsPage({super.key, required this.projectName, this.sessionId});
+  const SessionsPage({super.key, required this.scope, this.sessionId});
 
-  final String projectName;
+  final ShellScope scope;
   final String? sessionId;
 
   @override
@@ -38,39 +39,70 @@ class _SessionsPageState extends State<SessionsPage> {
   @override
   void didUpdateWidget(SessionsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.projectName != widget.projectName) _autoSelected = null;
+    if (oldWidget.scope != widget.scope) _autoSelected = null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final projectName = widget.projectName;
     final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     final projects = context.watch<ProjectsCubit>().state.data ?? const <Project>[];
-    final org = currentOrg(projectName, projects, context.watch<ConfigCubit>().state.data);
-    final mine = all.where((s) => s.project == projectName).toList();
-    final others = all.where((s) => s.project != projectName && belongsToOrg(s.project, projects, org)).toList();
-    final project = projects.where((p) => p.name == projectName).firstOrNull;
-    final selected =
-        all.where((s) => s.id == (widget.sessionId ?? _autoSelected)).firstOrNull ??
-        mine.where((s) => s.pendingPermissions > 0).firstOrNull ??
-        mine.firstOrNull;
-    if (widget.sessionId == null) _autoSelected = selected?.id;
+    final config = context.watch<ConfigCubit>().state.data;
+    final SessionSummary? selected;
+    final Widget list;
+    switch (widget.scope) {
+      case ShellProjectScope(name: final projectName):
+        final org = currentOrg(projectName, projects, config);
+        final projectSessions = all.where((s) => !s.isOrgSession);
+        final mine = projectSessions.where((s) => s.project == projectName).toList();
+        final others = projectSessions
+            .where((s) => s.project != projectName && sessionOrg(s, projects, config) == org)
+            .toList();
+        selected = _select(all, mine, widget.sessionId);
+        list = _SessionList.project(
+          project: projects.where((p) => p.name == projectName).firstOrNull,
+          mine: mine,
+          others: others,
+          selected: selected?.id,
+        );
+      case ShellOrgScope(:final org):
+        final mine = orgActivities(all, projects, config, org);
+        // An id of another org's (or a project's) session is ignored, as if the route had none.
+        final routeId = mine.any((s) => s.id == widget.sessionId) ? widget.sessionId : null;
+        selected = _select(mine, mine, routeId);
+        list = _SessionList.org(
+          org: org,
+          target: OrgTarget.of(orgConfigOf(config, org)),
+          mine: mine,
+          selected: selected?.id,
+        );
+    }
     final sessions = SessionsScope.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _SessionList(project: project, mine: mine, others: others, selected: selected?.id),
+        list,
         Expanded(
-          child: selected == null
-              ? const Center(child: Muted('Nenhuma sessão. Rode uma skill com ⌘K.', size: 13))
-              : BlocProvider(
-                  key: ValueKey(selected.id),
-                  create: (_) => SessionCubit(sessions, selected.id),
-                  child: _SessionPanel(session: selected),
-                ),
+          child: switch (selected) {
+            null => const Center(child: Muted('Nenhuma sessão. Rode uma skill com ⌘K.', size: 13)),
+            final selected => BlocProvider(
+              key: ValueKey(selected.id),
+              create: (_) => SessionCubit(sessions, selected.id),
+              child: _SessionPanel(session: selected),
+            ),
+          },
         ),
       ],
     );
+  }
+
+  /// [routeId] (or, without one, the auto-selected id) among [candidates]; else the first pending of [mine].
+  SessionSummary? _select(List<SessionSummary> candidates, List<SessionSummary> mine, String? routeId) {
+    final selected =
+        candidates.where((s) => s.id == (routeId ?? _autoSelected)).firstOrNull ??
+        mine.where((s) => s.pendingPermissions > 0).firstOrNull ??
+        mine.firstOrNull;
+    if (routeId == null) _autoSelected = selected?.id;
+    return selected;
   }
 }
 
@@ -106,9 +138,19 @@ String statusLabel(SessionStatus s) => switch (s) {
 };
 
 class _SessionList extends StatelessWidget {
-  const _SessionList({required this.project, required this.mine, required this.others, required this.selected});
+  _SessionList.project({required Project? project, required this.mine, required this.others, required this.selected})
+    : org = null,
+      target = project == null ? null : ProjectTarget(project);
 
-  final Project? project;
+  const _SessionList.org({required String this.org, required this.target, required this.mine, required this.selected})
+    : others = const [];
+
+  /// `null` when nothing can be started: a project needs to be known, an org needs roots.
+  final PaletteTarget? target;
+
+  /// Set in an org's activities: [mine] are its org sessions.
+  final String? org;
+
   final List<SessionSummary> mine;
   final List<SessionSummary> others;
   final String? selected;
@@ -125,21 +167,22 @@ class _SessionList extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 12),
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: c.textPrimary,
-                side: BorderSide(color: c.borderStrong),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          if (target != null || org != kNoOrg)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: c.textPrimary,
+                  side: BorderSide(color: c.borderStrong),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                ),
+                onPressed: target == null ? null : () => showCommandPalette(context, target!, newConversation: true),
+                icon: const Icon(Icons.add, size: 16),
+                label: Text(org == null ? 'Nova conversa' : 'Nova atividade', style: const TextStyle(fontSize: 12)),
               ),
-              onPressed: project == null ? null : () => showCommandPalette(context, project, newConversation: true),
-              icon: const Icon(Icons.add, size: 16),
-              label: const Text('Nova conversa', style: TextStyle(fontSize: 12)),
             ),
-          ),
-          header('ESTE PROJETO'),
-          for (final s in mine) _SessionTile(session: s, selected: s.id == selected),
+          header(org == null ? 'ESTE PROJETO' : 'ATIVIDADES DA ORG'),
+          for (final s in mine) _SessionTile(session: s, org: org, selected: s.id == selected),
           if (others.isNotEmpty) ...[
             header('OUTROS PROJETOS'),
             for (final s in others) _SessionTile(session: s, selected: s.id == selected),
@@ -151,9 +194,12 @@ class _SessionList extends StatelessWidget {
 }
 
 class _SessionTile extends StatelessWidget {
-  const _SessionTile({required this.session, required this.selected});
+  const _SessionTile({required this.session, this.org, required this.selected});
 
   final SessionSummary session;
+
+  /// Org the session resolved to, for org sessions; may differ from `session.org` after a rename.
+  final String? org;
   final bool selected;
 
   @override
@@ -168,7 +214,10 @@ class _SessionTile extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(6),
           hoverColor: c.hover,
-          onTap: () => context.go('/p/${session.project}/sessions/${session.id}'),
+          onTap: () => context.go(switch (org) {
+            final org? => orgSessionsLocation(org, session: session.id),
+            null => '/p/${session.project}/sessions/${session.id}',
+          }),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             child: Row(
@@ -211,7 +260,7 @@ class _SessionTile extends StatelessWidget {
                           const SizedBox(width: 6),
                           Flexible(
                             child: Text(
-                              '· ${session.project} · ${_createdAt(session.createdAt)}',
+                              '· ${org ?? session.project} · ${_createdAt(session.createdAt)}',
                               maxLines: 1,
                               softWrap: false,
                               overflow: TextOverflow.ellipsis,
@@ -302,6 +351,7 @@ class _SessionPanel extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.fromLTRB(24, 20, 24, 20),
             children: [
+              if (s.isOrgSession) ...[_Directories(session: s), const SizedBox(height: 16)],
               if (s.status == SessionStatus.detached) ...[
                 _DetachedBanner(resumable: s.resumable, onResume: () => _act(context, () => sessions.resume(s.id))),
                 const SizedBox(height: 16),
@@ -327,6 +377,32 @@ class _SessionPanel extends StatelessWidget {
           waiting: s.status == SessionStatus.waitingPermission,
           onSend: (text) => _act(context, () => sessions.send(s.id, text)),
         ),
+      ],
+    );
+  }
+}
+
+/// Where an org session runs: its `cwd` (the org's first root) and the other roots it can reach.
+class _Directories extends StatelessWidget {
+  const _Directories({required this.session});
+
+  final SessionSummary session;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      key: const ValueKey('session-directories'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Muted('DIRETÓRIOS', size: 10),
+        const SizedBox(height: 6),
+        if (session.cwd case final cwd?) Mono(cwd, color: c.textPrimary, size: 12),
+        for (final dir in session.additionalDirectories)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Mono(dir, color: c.textSecondary, size: 12),
+          ),
       ],
     );
   }

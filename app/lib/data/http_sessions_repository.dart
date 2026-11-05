@@ -67,8 +67,19 @@ class HttpSessionsRepository implements SessionsRepository {
   }
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd}) async {
-    final json = await _request('POST', '/api/sessions', body: {'project': project, 'command': command, 'cwd': ?cwd});
+  Future<SessionSummary> create(String project, String command, {String? cwd}) =>
+      _create({'project': project, 'command': command, 'cwd': ?cwd});
+
+  @override
+  Future<SessionSummary> createInOrg(
+    String org,
+    String command, {
+    required String cwd,
+    List<String> additionalDirectories = const [],
+  }) => _create({'org': org, 'command': command, 'cwd': cwd, 'additionalDirectories': additionalDirectories});
+
+  Future<SessionSummary> _create(Map<String, Object?> body) async {
+    final json = await _request('POST', '/api/sessions', body: body);
     final summary = parseSummary(json as Map<String, dynamic>);
     _setList(upsertSummary(_list ?? const [], summary));
     return summary;
