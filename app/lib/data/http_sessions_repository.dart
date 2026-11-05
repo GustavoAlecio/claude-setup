@@ -4,6 +4,7 @@ import 'dart:developer';
 import 'dart:io';
 import 'dart:math' show min;
 
+import '../engine/engine_config.dart';
 import 'session_models.dart';
 import 'session_reducer.dart';
 import 'sessions_repository.dart';
@@ -67,8 +68,19 @@ class HttpSessionsRepository implements SessionsRepository {
   }
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) =>
-      _create({'project': project, 'command': command, 'cwd': ?cwd, 'githubAccount': ?githubAccount});
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) => _create({
+    'project': project,
+    'command': command,
+    'cwd': ?cwd,
+    'githubAccount': ?githubAccount,
+    'permissionMode': permissionMode.wire,
+  });
 
   @override
   Future<SessionSummary> createInOrg(
@@ -77,12 +89,14 @@ class HttpSessionsRepository implements SessionsRepository {
     required String cwd,
     List<String> additionalDirectories = const [],
     String? githubAccount,
+    required PermissionMode permissionMode,
   }) => _create({
     'org': org,
     'command': command,
     'cwd': cwd,
     'additionalDirectories': additionalDirectories,
     'githubAccount': ?githubAccount,
+    'permissionMode': permissionMode.wire,
   });
 
   Future<SessionSummary> _create(Map<String, Object?> body) async {
@@ -90,6 +104,17 @@ class HttpSessionsRepository implements SessionsRepository {
     final summary = parseSummary(json as Map<String, dynamic>);
     _setList(upsertSummary(_list ?? const [], summary));
     return summary;
+  }
+
+  /// Not [_sessionPost]: an engine older than the route also answers 404, and that must not drop the session.
+  @override
+  Future<void> setPermissionMode(String id, PermissionMode mode) async {
+    final json = await _request(
+      'POST',
+      '/api/sessions/${Uri.encodeComponent(id)}/permission-mode',
+      body: {'mode': mode.wire},
+    );
+    if (json is Map<String, dynamic>) _setList(upsertSummary(_list ?? const [], parseSummary(json)));
   }
 
   @override
@@ -212,12 +237,21 @@ class HttpSessionsRepository implements SessionsRepository {
     }
     final response = await request.close();
     final text = await response.transform(utf8.decoder).join();
-    final json = text.isEmpty ? null : jsonDecode(text);
     if (response.statusCode >= 400) {
+      final json = _errorBody(text);
       final error = json is Map && json['error'] is String ? json['error'] as String : 'HTTP ${response.statusCode}';
       throw SessionsException(error, statusCode: response.statusCode);
     }
-    return json;
+    return text.isEmpty ? null : jsonDecode(text);
+  }
+
+  /// An unknown route (engine older than the app) answers with an HTML page instead of the engine's JSON error.
+  static Object? _errorBody(String text) {
+    try {
+      return text.isEmpty ? null : jsonDecode(text);
+    } on FormatException {
+      return null;
+    }
   }
 
   /// One SSE connection with reconnect; returns when stopped, on `closed`, on 404 or when the engine stops.

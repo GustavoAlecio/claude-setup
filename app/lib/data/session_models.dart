@@ -1,3 +1,5 @@
+import '../engine/engine_config.dart';
+
 enum SessionStatus { starting, running, idle, waitingPermission, done, stopped, error, detached }
 
 class SessionSummary {
@@ -15,6 +17,7 @@ class SessionSummary {
     this.cwd,
     this.org,
     this.additionalDirectories = const [],
+    this.permissionMode = PermissionMode.defaultMode,
   });
 
   final String id;
@@ -37,24 +40,34 @@ class SessionSummary {
   final String? org;
   final List<String> additionalDirectories;
 
+  /// The session's own mode, fixed at creation and changed only through the session; the engine's absent value is
+  /// `default`.
+  final PermissionMode permissionMode;
+
   bool get isOrgSession => org != null;
 
-  SessionSummary copyWith({SessionStatus? status, double? cost, int? pendingPermissions, String? model}) =>
-      SessionSummary(
-        id: id,
-        project: project,
-        command: command,
-        title: title,
-        status: status ?? this.status,
-        createdAt: createdAt,
-        cost: cost ?? this.cost,
-        pendingPermissions: pendingPermissions ?? this.pendingPermissions,
-        resumable: resumable,
-        model: model ?? this.model,
-        cwd: cwd,
-        org: org,
-        additionalDirectories: additionalDirectories,
-      );
+  SessionSummary copyWith({
+    SessionStatus? status,
+    double? cost,
+    int? pendingPermissions,
+    String? model,
+    PermissionMode? permissionMode,
+  }) => SessionSummary(
+    id: id,
+    project: project,
+    command: command,
+    title: title,
+    status: status ?? this.status,
+    createdAt: createdAt,
+    cost: cost ?? this.cost,
+    pendingPermissions: pendingPermissions ?? this.pendingPermissions,
+    resumable: resumable,
+    model: model ?? this.model,
+    cwd: cwd,
+    org: org,
+    additionalDirectories: additionalDirectories,
+    permissionMode: permissionMode ?? this.permissionMode,
+  );
 }
 
 class SessionDetail {

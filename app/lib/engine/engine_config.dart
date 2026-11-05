@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 /// Must match `version` in `engine/package.json`; a mismatch only raises a non-blocking warning.
-const kEngineVersion = '0.4.0';
+const kEngineVersion = '0.5.0';
 
 const kEnvSentinel = '\x00__ENV__\x00';
 
@@ -44,17 +44,38 @@ class OrgGithub {
   int get hashCode => Object.hash(account, Object.hashAll(owners));
 }
 
+/// Modes the engine accepts in `POST /api/sessions` and `/permission-mode`; [wire] is the SDK spelling.
+enum PermissionMode {
+  defaultMode('default'),
+  acceptEdits('acceptEdits'),
+  auto('auto'),
+  bypassPermissions('bypassPermissions');
+
+  const PermissionMode(this.wire);
+
+  final String wire;
+
+  /// `null` for anything that is not one of the accepted spellings, so the next level applies.
+  static PermissionMode? parse(Object? raw) => values.where((m) => m.wire == raw).firstOrNull;
+}
+
+/// Global mode when `.dashboard.json` has no valid `permissionMode`.
+const kDefaultPermissionMode = PermissionMode.bypassPermissions;
+
 bool sameStrings(List<String> a, List<String> b) =>
     a.length == b.length && Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
 
 class OrgConfig {
-  const OrgConfig({required this.name, this.roots = const [], this.github});
+  const OrgConfig({required this.name, this.roots = const [], this.github, this.permissionMode});
 
   final String name;
   final List<String> roots;
 
   /// `null` when the key is absent: writes then keep whatever the file has.
   final OrgGithub? github;
+
+  /// `null`: inherits [DashboardConfig.permissionMode] (key absent or not an accepted mode).
+  final PermissionMode? permissionMode;
 }
 
 class ProjectEntry {
@@ -76,6 +97,7 @@ class DashboardConfig {
     this.projects = const [],
     this.hidden = const [],
     this.lastOrg,
+    this.permissionMode = kDefaultPermissionMode,
   });
 
   static const empty = DashboardConfig();
@@ -90,6 +112,7 @@ class DashboardConfig {
   final List<ProjectEntry> projects;
   final List<String> hidden;
   final String? lastOrg;
+  final PermissionMode permissionMode;
 
   /// Throws [FormatException] on invalid JSON; a non-object document yields [empty].
   static DashboardConfig parse(String source) {
@@ -113,7 +136,12 @@ class DashboardConfig {
       orgs: [
         for (final o in _maps(decoded['orgs']))
           if (_nonEmpty(o['name']) != null)
-            OrgConfig(name: o['name'] as String, roots: _strings(o['roots']), github: OrgGithub.fromRaw(o['github'])),
+            OrgConfig(
+              name: o['name'] as String,
+              roots: _strings(o['roots']),
+              github: OrgGithub.fromRaw(o['github']),
+              permissionMode: PermissionMode.parse(o['permissionMode']),
+            ),
       ],
       projects: [
         for (final p in _maps(decoded['projects']))
@@ -122,6 +150,7 @@ class DashboardConfig {
       ],
       hidden: _strings(decoded['hidden']),
       lastOrg: _nonEmpty(decoded['lastOrg']),
+      permissionMode: PermissionMode.parse(decoded['permissionMode']) ?? kDefaultPermissionMode,
     );
   }
 

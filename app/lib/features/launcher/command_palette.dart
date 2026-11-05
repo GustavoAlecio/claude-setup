@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../app/config_cubit.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/kickoff.dart';
 import '../../data/models.dart';
@@ -54,10 +55,12 @@ Future<void> showCommandPalette(BuildContext context, PaletteTarget target, {boo
     ProjectTarget(:final project) => project,
     OrgTarget() => null,
   };
-  final githubAccount = githubFor(switch (target) {
+  final org = switch (target) {
     ProjectTarget(:final project) => project?.org,
     OrgTarget(:final org) => org,
-  }, context.read<ConfigCubit>().state.data).account;
+  };
+  final config = context.read<ConfigCubit>().state.data;
+  final githubAccount = githubFor(org, config).account;
   return showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
@@ -65,6 +68,7 @@ Future<void> showCommandPalette(BuildContext context, PaletteTarget target, {boo
       target: target,
       sessions: sessions,
       githubAccount: githubAccount,
+      permissionMode: effectivePermissionMode(null, org, config),
       startOnPrompt: newConversation && (target is OrgTarget || project != null),
       onCreated: (s) => router.go(switch (target) {
         ProjectTarget() => '/p/${s.project}/sessions/${s.id}',
@@ -82,6 +86,7 @@ class _CommandPalette extends StatefulWidget {
     required this.target,
     required this.sessions,
     required this.githubAccount,
+    required this.permissionMode,
     required this.startOnPrompt,
     required this.onCreated,
     required this.onKickoff,
@@ -92,6 +97,9 @@ class _CommandPalette extends StatefulWidget {
 
   /// Of the target's org; `null` keeps the `gh` active account.
   final String? githubAccount;
+
+  /// Effective mode of the target's org; changing it in the palette applies to this session only.
+  final PermissionMode permissionMode;
   final bool startOnPrompt;
   final void Function(SessionSummary session) onCreated;
 
@@ -111,6 +119,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
   int _index = 0;
   bool _creating = false;
   String? _error;
+  late PermissionMode _permissionMode = widget.permissionMode;
 
   @override
   void initState() {
@@ -218,6 +227,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
           command,
           cwd: project.path,
           githubAccount: widget.githubAccount,
+          permissionMode: _permissionMode,
         ),
         OrgTarget() => await widget.sessions.createInOrg(
           target.org,
@@ -225,6 +235,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
           cwd: target.cwd,
           additionalDirectories: target.additionalDirectories,
           githubAccount: widget.githubAccount,
+          permissionMode: _permissionMode,
         ),
       };
       if (!mounted) return;
@@ -386,11 +397,24 @@ class _CommandPaletteState extends State<_CommandPalette> {
                     decoration: BoxDecoration(
                       border: Border(top: BorderSide(color: c.border)),
                     ),
-                    child: Muted(
-                      _mode == _Mode.list
-                          ? '↑↓ navegar · ↵ escolher · esc fechar · roda no engine local'
-                          : '↵ iniciar · esc voltar · permissões aparecem na aba Sessões',
-                      size: 11,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Muted(
+                            _mode == _Mode.list
+                                ? '↑↓ navegar · ↵ escolher · esc fechar · roda no engine local'
+                                : '↵ iniciar · esc voltar · permissões aparecem na aba Sessões',
+                            size: 11,
+                          ),
+                        ),
+                        if (_canStart)
+                          PermissionModeMenu(
+                            key: const ValueKey('palette-permission-mode'),
+                            mode: _permissionMode,
+                            tooltip: 'Permissões desta sessão',
+                            onSelected: _creating ? null : (m) => setState(() => _permissionMode = m),
+                          ),
+                      ],
                     ),
                   ),
                 ],

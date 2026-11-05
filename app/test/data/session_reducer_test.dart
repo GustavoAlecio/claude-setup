@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/session_reducer.dart';
 import 'package:claude_flow/data/sse.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _summary = SessionSummary(
@@ -279,6 +280,35 @@ void main() {
       expect(d.closed, isTrue);
     });
 
+    test('permission_mode sets the summary mode; an unknown mode is ignored', () {
+      final d = _reduce([
+        _event(1, {'kind': 'permission_mode', 'mode': 'bypassPermissions'}),
+        _status('idle'),
+      ]);
+      expect(_summary.permissionMode, PermissionMode.defaultMode);
+      expect(d.summary.permissionMode, PermissionMode.bypassPermissions);
+      expect(d.summary.status, SessionStatus.idle);
+      expect(d.lastSeq, 1);
+
+      final ignored = applyFrame(d, _event(2, {'kind': 'permission_mode', 'mode': 'plan'}));
+      expect(ignored.summary.permissionMode, PermissionMode.bypassPermissions);
+      expect(ignored.lastSeq, 2);
+    });
+
+    test('status, pending and model changes keep the mode', () {
+      final d = _reduce([
+        _event(1, {'kind': 'init', 'model': 'claude-opus'}),
+        _event(2, {
+          'kind': 'permission',
+          'requestId': 'r1',
+          'toolName': 'Bash',
+          'input': {'command': 'ls'},
+        }),
+        _status('waiting_permission'),
+      ], summary: _summary.copyWith(permissionMode: PermissionMode.acceptEdits));
+      expect((d.summary.permissionMode, d.summary.pendingPermissions), (PermissionMode.acceptEdits, 1));
+    });
+
     test('every engine status maps 1:1', () {
       const expected = {
         'starting': SessionStatus.starting,
@@ -388,6 +418,16 @@ void main() {
       expect(list.map((e) => (e.id, e.status)), [('b', SessionStatus.running), ('a', SessionStatus.done)]);
       list = applySessionsFrame(list, SseFrame('removed', jsonEncode({'id': 'b'})));
       expect(list.map((e) => e.id), ['a']);
+    });
+
+    test('parseSummary reads permissionMode; absent or invalid is default', () {
+      Map<String, Object?> json(Object? mode) => {'id': 'a', 'status': 'idle', 'permissionMode': ?mode};
+      expect(parseSummary(json('bypassPermissions')).permissionMode, PermissionMode.bypassPermissions);
+      expect(parseSummary(json('auto')).permissionMode, PermissionMode.auto);
+      expect(parseSummary(json(null)).permissionMode, PermissionMode.defaultMode);
+      expect(parseSummary(json('plan')).permissionMode, PermissionMode.defaultMode);
+      final list = applySessionsFrame(const [], SseFrame('summary', jsonEncode(json('acceptEdits'))));
+      expect(list.single.permissionMode, PermissionMode.acceptEdits);
     });
   });
 }

@@ -23,16 +23,28 @@ class _SlowSessions extends MockSessionsRepository {
   final gate = Completer<void>();
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
   }
 }
 
 class _FailingSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
-    createCalls.add((project, command, cwd, githubAccount));
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async {
+    createCalls.add((project, command, cwd, githubAccount, permissionMode));
     throw const SessionsException('cwd fora das raízes', statusCode: 400);
   }
 }
@@ -282,7 +294,7 @@ void main() {
 
     sessions.gate.complete();
     await tester.pumpAndSettle();
-    expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', null));
+    expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', null, PermissionMode.bypassPermissions));
     expect(_location(tester), '/p/x/sessions/mock-1');
   });
 
@@ -300,7 +312,7 @@ void main() {
 
     await tester.tap(_resolve(1));
     await tester.pumpAndSettle();
-    expect(sessions.createCalls.single, ('x', '/pr-status', '/dev/org/a/', null));
+    expect(sessions.createCalls.single, ('x', '/pr-status', '/dev/org/a/', null, PermissionMode.bypassPermissions));
   });
 
   testWidgets('known project path with a divergent remote keeps Resolver disabled', (tester) async {
@@ -445,6 +457,48 @@ void main() {
     expect(find.text('PR 12'), findsOneWidget);
   });
 
+  group('permission mode of the cwd org', () {
+    Map<String, dynamic> config() => {
+      ..._scopedConfig(),
+      'permissionMode': 'default',
+      'orgs': [
+        {...(_scopedConfig()['orgs'] as List).first as Map<String, dynamic>, 'permissionMode': 'acceptEdits'},
+      ],
+    };
+
+    testWidgets('Resolver in a checkout of the org passes the org mode', (tester) async {
+      final sessions = MockSessionsRepository();
+      await _open(
+        tester,
+        MockGitHubRepository(
+          pullRequests: [_pr(repo: 'x', cwd: '/dev/org/x')],
+        ),
+        sessions: sessions,
+        config: config(),
+      );
+
+      await tester.tap(_resolve(1));
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single.$3, '/dev/org/x');
+      expect(sessions.createCalls.single.$5, PermissionMode.acceptEdits);
+    });
+
+    testWidgets('Resolver in a cwd outside every org passes the global mode', (tester) async {
+      final sessions = MockSessionsRepository();
+      await _open(
+        tester,
+        MockGitHubRepository(pullRequests: [_pr()]),
+        sessions: sessions,
+        config: config(),
+      );
+
+      await tester.tap(_resolve(1));
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single.$3, '/tmp/a');
+      expect(sessions.createCalls.single.$5, PermissionMode.defaultMode);
+    });
+  });
+
   group('account of the project org', () {
     testWidgets('prs is called with the org account and Resolver passes it as githubAccount', (tester) async {
       final sessions = MockSessionsRepository();
@@ -455,7 +509,7 @@ void main() {
 
       await tester.tap(_resolve(1));
       await tester.pumpAndSettle();
-      expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', 'acct-a'));
+      expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', 'acct-a', PermissionMode.bypassPermissions));
     });
 
     testWidgets('project outside any org uses the active account', (tester) async {

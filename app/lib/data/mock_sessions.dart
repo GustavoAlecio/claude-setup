@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../engine/engine_config.dart';
 import 'session_models.dart';
 import 'session_reducer.dart';
 import 'sessions_repository.dart';
@@ -21,12 +22,25 @@ class MockSessionsRepository implements SessionsRepository {
   final _updates = StreamController<void>.broadcast();
   var _created = 0;
 
-  /// Every [create] call, in order, for tests to assert the exact command, cwd and account.
-  final createCalls = <(String project, String command, String? cwd, String? githubAccount)>[];
+  /// Every [create] call, in order, for tests to assert the exact command, cwd, account and mode.
+  final createCalls =
+      <(String project, String command, String? cwd, String? githubAccount, PermissionMode? permissionMode)>[];
 
   /// Every [createInOrg] call, in order.
   final orgCreateCalls =
-      <(String org, String command, String cwd, List<String> additionalDirectories, String? githubAccount)>[];
+      <
+        (
+          String org,
+          String command,
+          String cwd,
+          List<String> additionalDirectories,
+          String? githubAccount,
+          PermissionMode? permissionMode,
+        )
+      >[];
+
+  /// Every [setPermissionMode] call, in order.
+  final setPermissionModeCalls = <(String id, PermissionMode mode)>[];
 
   List<SessionSummary> get _list => [for (final id in _order) _details[id]!.summary];
 
@@ -57,8 +71,14 @@ class MockSessionsRepository implements SessionsRepository {
   ];
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
-    createCalls.add((project, command, cwd, githubAccount));
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async {
+    createCalls.add((project, command, cwd, githubAccount, permissionMode));
     return _add(
       (id) => SessionSummary(
         id: id,
@@ -67,6 +87,7 @@ class MockSessionsRepository implements SessionsRepository {
         title: command,
         status: SessionStatus.idle,
         createdAt: DateTime.now().toUtc().toIso8601String(),
+        permissionMode: permissionMode,
       ),
     );
   }
@@ -78,8 +99,9 @@ class MockSessionsRepository implements SessionsRepository {
     required String cwd,
     List<String> additionalDirectories = const [],
     String? githubAccount,
+    required PermissionMode permissionMode,
   }) async {
-    orgCreateCalls.add((org, command, cwd, additionalDirectories, githubAccount));
+    orgCreateCalls.add((org, command, cwd, additionalDirectories, githubAccount, permissionMode));
     return _add(
       (id) => SessionSummary(
         id: id,
@@ -91,8 +113,17 @@ class MockSessionsRepository implements SessionsRepository {
         cwd: cwd,
         org: org,
         additionalDirectories: additionalDirectories,
+        permissionMode: permissionMode,
       ),
     );
+  }
+
+  @override
+  Future<void> setPermissionMode(String id, PermissionMode mode) async {
+    setPermissionModeCalls.add((id, mode));
+    _apply(id, [
+      _event(id, {'kind': 'permission_mode', 'mode': mode.wire}),
+    ]);
   }
 
   SessionSummary _add(SessionSummary Function(String id) build) {

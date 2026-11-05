@@ -40,18 +40,23 @@ Map<String, dynamic>? applyConfigMutation(Map<String, dynamic> raw, ConfigMutati
   return jsonEncode(out) == jsonEncode(raw) ? null : out;
 }
 
-/// Appends the org and opens the app in it (`lastOrg`).
-ConfigMutation createOrg(String name, List<String> roots, {OrgGithub? github}) => (raw) {
-  final current = DashboardConfig.fromMap(raw);
-  _check(validateOrgs([...current.orgs, OrgConfig(name: name, roots: roots, github: github)]));
-  final out = _copy(raw);
-  out['orgs'] = [
-    ..._list(raw['orgs']),
-    {'name': name, 'roots': roots, 'github': ?github?.toRaw()},
-  ];
-  out['lastOrg'] = name;
-  return out;
-};
+/// Appends the org and opens the app in it (`lastOrg`). [permissionMode] `null` inherits the global mode.
+ConfigMutation createOrg(String name, List<String> roots, {OrgGithub? github, PermissionMode? permissionMode}) =>
+    (raw) {
+      final current = DashboardConfig.fromMap(raw);
+      _check(validateOrgs([...current.orgs, OrgConfig(name: name, roots: roots, github: github)]));
+      final out = _copy(raw);
+      out['orgs'] = [
+        ..._list(raw['orgs']),
+        {'name': name, 'roots': roots, 'github': ?github?.toRaw(), 'permissionMode': ?permissionMode?.wire},
+      ];
+      out['lastOrg'] = name;
+      return out;
+    };
+
+/// Global `permissionMode`; written even when it equals the default, so the choice survives a default change.
+ConfigMutation setGlobalPermissionMode(PermissionMode mode) =>
+    (raw) => _copy(raw)..['permissionMode'] = mode.wire;
 
 /// Replaces the org list. [renames] maps old name → new name so `projects[].org` and `lastOrg` follow;
 /// projects of a removed org lose their explicit `org` and fall back to the root rule.
@@ -188,12 +193,22 @@ Map<String, dynamic> _setHidden(
 
 /// `github` is rewritten only when it differs from what [previous] parses to, so an untouched org keeps its raw
 /// entry (unknown keys and dropped owners included); a rewrite still keeps unknown keys inside `github`.
+/// `permissionMode` follows the same rule: an invalid raw value parses to inherit and survives until the org gets a
+/// mode; inheriting over a valid mode removes the key, never writing `null`.
 Map<String, dynamic> _orgEntry(Map<String, dynamic>? previous, OrgConfig org) {
   final entry = {...?previous, 'name': org.name, 'roots': org.roots};
   final github = org.github;
   final before = previous?['github'];
   if (github != null && github != OrgGithub.fromRaw(before)) {
     entry['github'] = {if (before is Map<String, dynamic>) ...before, ...github.toRaw()};
+  }
+  final mode = org.permissionMode;
+  if (mode != PermissionMode.parse(previous?['permissionMode'])) {
+    if (mode == null) {
+      entry.remove('permissionMode');
+    } else {
+      entry['permissionMode'] = mode.wire;
+    }
   }
   return entry;
 }

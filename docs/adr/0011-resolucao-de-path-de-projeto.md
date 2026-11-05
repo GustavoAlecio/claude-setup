@@ -1,11 +1,11 @@
 ---
 id: 0011
 title: Path de projeto com a mesma precedência e desempate por profundidade no app e no engine
-status: accepted
+status: superseded
 date: 2026-10-01
 affects: ["app/lib/data/orgs.dart", "app/lib/data/project_scan.dart", "engine/cwd.mjs"]
 supersedes: []
-superseded_by: []
+superseded_by: ["0018"]
 tags: [flutter, engine, config]
 ---
 

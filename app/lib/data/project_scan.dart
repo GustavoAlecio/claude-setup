@@ -11,12 +11,17 @@ const kScanSkip = {'node_modules', '.git', 'build', 'dist', 'Pods', '.dart_tool'
 const kScanDepth = 3;
 
 /// Directory name → candidate paths under [roots], mirroring `engine/cwd.mjs`: dot and [kScanSkip]
-/// entries are skipped, symlinks are not followed and a directory is not a candidate for a name one
-/// of its ancestors already matched (the engine stops descending at a match).
+/// entries are skipped and symlinks are not followed. Once the scanned root or any directory below it holds a
+/// `.git`, a name below it is a candidate only when it holds a `.git` itself (dir, file or link: worktree and
+/// submodule), so a copy nested in another repo never resolves. A directory is not a candidate for a name an
+/// accepted ancestor already took (the engine stops descending there); a refused one does not stop the descent.
 Future<Map<String, List<ScanCandidate>>> scanRoots(Iterable<String> roots) async {
   final index = <String, Map<String, int>>{};
 
-  Future<void> walk(String dir, int depth, Set<String> ancestors) async {
+  Future<bool> hasGit(String dir) async =>
+      await FileSystemEntity.type('$dir/.git', followLinks: false) != FileSystemEntityType.notFound;
+
+  Future<void> walk(String dir, int depth, Set<String> accepted, bool insideRepo) async {
     if (depth < 0) return;
     final List<FileSystemEntity> entries;
     try {
@@ -24,18 +29,20 @@ Future<Map<String, List<ScanCandidate>>> scanRoots(Iterable<String> roots) async
     } on FileSystemException {
       return;
     }
+    final childInsideRepo = insideRepo || entries.any((e) => e.path.split('/').last == '.git');
     for (final entry in entries) {
       final name = entry.path.split('/').last;
       if (entry is! Directory || name.startsWith('.') || kScanSkip.contains(name)) continue;
-      if (!ancestors.contains(name)) {
+      final candidate = !accepted.contains(name) && (!childInsideRepo || await hasGit(entry.path));
+      if (candidate) {
         index.putIfAbsent(name, () => {}).putIfAbsent(entry.path, () => kScanDepth - depth);
       }
-      await walk(entry.path, depth - 1, {...ancestors, name});
+      await walk(entry.path, depth - 1, candidate ? {...accepted, name} : accepted, childInsideRepo);
     }
   }
 
   for (final root in roots) {
-    await walk(normalizePath(root), kScanDepth, const {});
+    await walk(normalizePath(root), kScanDepth, const {}, false);
   }
   return {
     for (final e in index.entries) e.key: [for (final c in e.value.entries) ScanCandidate(c.key, c.value)],

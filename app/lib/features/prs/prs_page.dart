@@ -261,7 +261,14 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
             createError: createError(_keyOf(pr)),
             onToggle: () => _toggle(_keyOf(pr)),
             onResolve: (cwd) => unawaited(
-              launchSession(_keyOf(pr), widget.projectName, '/pr-status', cwd: cwd, githubAccount: widget.account),
+              launchSession(
+                _keyOf(pr),
+                widget.projectName,
+                '/pr-status',
+                cwd: cwd,
+                githubAccount: widget.account,
+                permissionMode: launchOrg(cwd, projects, context.read<ConfigCubit>().state.data).mode,
+              ),
             ),
             onLink: openLink,
           ),

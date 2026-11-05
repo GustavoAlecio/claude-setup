@@ -1,8 +1,17 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:claude_flow/data/orgs.dart';
 import 'package:claude_flow/data/project_scan.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+bool _nodeMissing() {
+  try {
+    return Process.runSync('node', ['--version']).exitCode != 0;
+  } on ProcessException {
+    return true;
+  }
+}
 
 void main() {
   late Directory tmp;
@@ -80,6 +89,126 @@ void main() {
       expect({for (final c in index['x']!) c.path: c.depth}, {top: 0, copy: 2});
       expect(resolvePath(name: 'x', scanIndex: index), top);
       expect(resolvePath(name: 'twin', scanIndex: index), isNull);
+    });
+  });
+
+  group('scanRoots repo-root rule (same trees as engine/test/cwd.test.mjs)', () {
+    void gitDir(String rel) => mkdir('$rel/.git');
+    void gitFile(String rel) => File('${mkdir(rel)}/.git').writeAsStringSync('gitdir: /tmp/elsewhere\n');
+
+    test('a copy nested in another repo loses to the repo of the same name', () async {
+      gitDir('dev/repoA');
+      mkdir('dev/repoA/sub/proj');
+      gitDir('dev/proj');
+
+      final index = await scanRoots(['${tmp.path}/dev']);
+
+      expect(paths(index, 'proj'), ['${tmp.path}/dev/proj']);
+      expect(resolvePath(name: 'proj', scanIndex: index), '${tmp.path}/dev/proj');
+    });
+
+    test('a folder inside a repo that is not its root is not a candidate', () async {
+      gitDir('dev/repoB');
+      mkdir('dev/repoB/sub/nested');
+
+      final index = await scanRoots(['${tmp.path}/dev']);
+
+      expect(index['nested'], isNull);
+      expect(resolvePath(name: 'nested', scanIndex: index), isNull);
+    });
+
+    test('a folder with no .git anywhere is still a candidate', () async {
+      final plain = mkdir('dev/plain/loose');
+
+      expect(paths(await scanRoots(['${tmp.path}/dev']), 'loose'), [plain]);
+    });
+
+    test('a scanned root with .git counts as an ancestor', () async {
+      gitDir('dev');
+      mkdir('dev/x');
+
+      final index = await scanRoots(['${tmp.path}/dev']);
+
+      expect(index['x'], isNull);
+      expect(resolvePath(name: 'x', scanIndex: index), isNull);
+    });
+
+    test('.git as a file (worktree or submodule) inside another repo is a repo root', () async {
+      gitDir('dev/repoA');
+      gitFile('dev/repoA/x');
+
+      final index = await scanRoots(['${tmp.path}/dev']);
+
+      expect(paths(index, 'x'), ['${tmp.path}/dev/repoA/x']);
+      expect(resolvePath(name: 'x', scanIndex: index), '${tmp.path}/dev/repoA/x');
+    });
+
+    test('.git as a symlink counts without being followed', () async {
+      gitDir('dev/repoA');
+      Link('${mkdir('dev/repoA/linked')}/.git').createSync('${tmp.path}/missing');
+
+      expect(paths(await scanRoots(['${tmp.path}/dev']), 'linked'), ['${tmp.path}/dev/repoA/linked']);
+    });
+
+    test('a refused candidate does not stop the descent nor block the name below it', () async {
+      gitDir('dev/repoD');
+      mkdir('dev/repoD/deep');
+      gitDir('dev/repoD/deep/deep');
+
+      expect(paths(await scanRoots(['${tmp.path}/dev']), 'deep'), ['${tmp.path}/dev/repoD/deep/deep']);
+    });
+
+    test('app and engine resolve the same paths on the same tree', () async {
+      final mixed = '${tmp.path}/mixed';
+      final gitRoot = '${tmp.path}/gitroot';
+      gitDir('mixed/repoA');
+      mkdir('mixed/repoA/sub/proj');
+      gitDir('mixed/proj');
+      mkdir('mixed/repoA/sub/nested');
+      mkdir('mixed/plain/loose');
+      gitFile('mixed/repoA/wt');
+      gitDir('mixed/repoD');
+      mkdir('mixed/repoD/deep');
+      gitDir('mixed/repoD/deep/deep');
+      mkdir('mixed/a/twin');
+      mkdir('mixed/b/twin');
+      gitDir('gitroot');
+      mkdir('gitroot/inside');
+      const names = ['proj', 'nested', 'loose', 'wt', 'deep', 'twin', 'inside'];
+
+      final index = await scanRoots([mixed, gitRoot]);
+      final app = {for (final n in names) n: resolvePath(name: n, scanIndex: index)};
+
+      final cwd = File('../engine/cwd.mjs').absolute.uri;
+      final script =
+          'const {resolveCwd} = await import(${jsonEncode('$cwd')});'
+          'const out = {};'
+          'for (const n of ${jsonEncode(names)}) out[n] = (await resolveCwd(n, null)).cwd;'
+          'console.log(JSON.stringify(out));';
+      final result = Process.runSync(
+        'node',
+        ['--input-type=module', '-e', script],
+        environment: {'CLAUDE_HOME': mkdir('home'), 'CLAUDE_WEB_SCAN_ROOTS': '$mixed:$gitRoot'},
+      );
+      expect(result.exitCode, 0, reason: '${result.stderr}');
+
+      expect(jsonDecode(result.stdout as String), app);
+      expect(app, {
+        'proj': '$mixed/proj',
+        'nested': null,
+        'loose': '$mixed/plain/loose',
+        'wt': '$mixed/repoA/wt',
+        'deep': '$mixed/repoD/deep/deep',
+        'twin': null,
+        'inside': null,
+      });
+    }, skip: _nodeMissing() ? 'node não está no PATH' : false);
+
+    test('an accepted repo still blocks its own name below it', () async {
+      gitDir('dev/app');
+      gitDir('dev/app/app');
+
+      expect(paths(await scanRoots(['${tmp.path}/dev']), 'app'), ['${tmp.path}/dev/app']);
     });
   });
 

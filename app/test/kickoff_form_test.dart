@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/data/kickoff.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
@@ -18,17 +19,28 @@ const _engineError = 'engine indisponível';
 
 class _FailingSessions extends MockSessionsRepository {
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async =>
-      throw const SessionsException(_engineError, statusCode: 500);
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async => throw const SessionsException(_engineError, statusCode: 500);
 }
 
 class _SlowSessions extends MockSessionsRepository {
   final gate = Completer<void>();
 
   @override
-  Future<SessionSummary> create(String project, String command, {String? cwd, String? githubAccount}) async {
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+  }) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount);
+    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
   }
 }
 
@@ -111,7 +123,9 @@ void main() {
       await tester.enterText(_idField, '123');
       await tester.tap(_start);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, 'acct-a')]);
+      expect(sessions.createCalls, [
+        ('demo-app', '/kickoff 123', _demoPath, 'acct-a', PermissionMode.bypassPermissions),
+      ]);
     });
 
     testWidgets('a card ID starts the tracker kickoff in the project folder', (tester) async {
@@ -125,7 +139,7 @@ void main() {
 
       await tester.tap(_start);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, null)]);
+      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, null, PermissionMode.bypassPermissions)]);
       expect(_location(tester), '/p/demo-app/sessions/mock-1');
       expect(_form('demo-app'), findsNothing);
     });
@@ -137,7 +151,9 @@ void main() {
       await tester.enterText(_idField, 'lc-101');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
-      expect(sessions.createCalls, [('demo-app', '/kickoff LC-101', _demoPath, null)]);
+      expect(sessions.createCalls, [
+        ('demo-app', '/kickoff LC-101', _demoPath, null, PermissionMode.bypassPermissions),
+      ]);
     });
 
     testWidgets('manual bug sends the description verbatim and opens the session', (tester) async {
@@ -152,7 +168,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(sessions.createCalls, hasLength(1));
-      final (project, command, cwd, _) = sessions.createCalls.single;
+      final (project, command, cwd, _, _) = sessions.createCalls.single;
       expect(project, 'demo-app');
       expect(cwd, _demoPath);
       expect(command.codeUnits, '/kickoff --manual --bug\n\n$description'.codeUnits);
@@ -178,6 +194,82 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text(_engineError), findsOneWidget);
       expect(_form('demo-app'), findsOneWidget);
+    });
+  });
+
+  group('permission mode', () {
+    final kickoffMode = find.byKey(const ValueKey('kickoff-permission-mode'));
+    final paletteMode = find.byKey(const ValueKey('palette-permission-mode'));
+
+    Map<String, dynamic> orgMode(String mode) {
+      final config = MockFlowRepository.defaultConfig(MockFlowRepository().data);
+      config['permissionMode'] = 'bypassPermissions';
+      (config['orgs'] as List).first['permissionMode'] = mode;
+      return config;
+    }
+
+    Future<void> choose(WidgetTester tester, Finder menu, String label) async {
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label).last);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the form shows the org mode and a change applies to this session only', (tester) async {
+      final sessions = await pump(tester, '/p/demo-app/flow', config: orgMode('acceptEdits'));
+      await openFromTopBar(tester);
+      expect(find.descendant(of: kickoffMode, matching: find.text('aceitar edições')), findsOneWidget);
+
+      await choose(tester, kickoffMode, 'padrão');
+      expect(find.descendant(of: kickoffMode, matching: find.text('padrão')), findsOneWidget);
+      await tester.enterText(_idField, '123');
+      await tester.tap(_start);
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls, [('demo-app', '/kickoff 123', _demoPath, null, PermissionMode.defaultMode)]);
+
+      _router(tester).go('/p/demo-app/flow');
+      await tester.pumpAndSettle();
+      await openFromTopBar(tester);
+      expect(find.descendant(of: kickoffMode, matching: find.text('aceitar edições')), findsOneWidget);
+    });
+
+    testWidgets('without an org mode the form sends the global one', (tester) async {
+      final config = MockFlowRepository.defaultConfig(MockFlowRepository().data);
+      config['permissionMode'] = 'auto';
+      final sessions = await pump(tester, '/p/demo-app/flow', config: config);
+      await openFromTopBar(tester);
+      expect(find.descendant(of: kickoffMode, matching: find.text('auto (classificador)')), findsOneWidget);
+
+      await tester.enterText(_idField, '123');
+      await tester.tap(_start);
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single.$5, PermissionMode.auto);
+    });
+
+    testWidgets('the palette shows the effective mode and sends the one chosen for the session', (tester) async {
+      final sessions = await pump(tester, '/p/demo-app/flow', config: orgMode('acceptEdits'));
+      await _meta(tester, LogicalKeyboardKey.keyK);
+      expect(find.descendant(of: paletteMode, matching: find.text('aceitar edições')), findsOneWidget);
+
+      await choose(tester, paletteMode, 'bypass');
+      await tester.tap(_paletteItem('Nova conversa em demo-app'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'resuma');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls, [('demo-app', 'resuma', _demoPath, null, PermissionMode.bypassPermissions)]);
+    });
+
+    testWidgets('the palette on a project without a folder shows the error and creates nothing', (tester) async {
+      final sessions = await pump(tester, '/p/loose/flow');
+      await _meta(tester, LogicalKeyboardKey.keyK);
+      await tester.tap(_paletteItem('Nova conversa em loose'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'algo');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('sem pasta para loose: adicione a pasta em Configurações'), findsOneWidget);
+      expect(sessions.createCalls, isEmpty);
     });
   });
 
@@ -229,7 +321,9 @@ void main() {
       expect(_form('demo-app'), findsOneWidget);
 
       await _meta(tester, LogicalKeyboardKey.enter);
-      expect(sessions.createCalls, [('demo-app', '/kickoff --manual\n\nalgo', _demoPath, null)]);
+      expect(sessions.createCalls, [
+        ('demo-app', '/kickoff --manual\n\nalgo', _demoPath, null, PermissionMode.bypassPermissions),
+      ]);
     });
 
     testWidgets('project without a folder shows the same error as the palette', (tester) async {

@@ -10,12 +10,14 @@ import '../../app/projects_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../data/sessions_repository.dart';
 import '../../data/workflow_parser.dart';
+import '../../engine/engine_config.dart';
 import '../launcher/command_palette.dart';
 import '../shell/shell_scope.dart';
 import 'session_cubit.dart';
@@ -272,6 +274,19 @@ class _SessionTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (session.permissionMode == PermissionMode.bypassPermissions)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6, top: 2),
+                    child: Tooltip(
+                      message: 'bypass: roda sem pedir confirmação',
+                      child: Icon(
+                        Icons.gpp_maybe_outlined,
+                        key: ValueKey('session-bypass-${session.id}'),
+                        size: 13,
+                        color: c.fail.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ),
                 if (pending > 0)
                   Container(
                     margin: const EdgeInsets.only(left: 6, top: 1),
@@ -330,6 +345,8 @@ class _SessionPanel extends StatelessWidget {
               Flexible(child: Mono(s.command, color: c.textPrimary, size: 13)),
               const SizedBox(width: 12),
               if (s.model case final model?) Pill(label: model, color: _modelColor(c, model), mono: true, dot: false),
+              const SizedBox(width: 8),
+              _PermissionModeSelector(key: ValueKey('mode-${s.id}'), session: s),
               const Spacer(),
               Mono('\$${s.cost.toStringAsFixed(2)}', size: 12),
               const SizedBox(width: 16),
@@ -380,6 +397,57 @@ class _SessionPanel extends StatelessWidget {
       ],
     );
   }
+}
+
+/// The session's own mode, changed live through the engine. On a refusal the pill goes back to the previous mode
+/// and the engine text shows in a snackbar.
+class _PermissionModeSelector extends StatefulWidget {
+  const _PermissionModeSelector({super.key, required this.session});
+
+  final SessionSummary session;
+
+  @override
+  State<_PermissionModeSelector> createState() => _PermissionModeSelectorState();
+}
+
+class _PermissionModeSelectorState extends State<_PermissionModeSelector> {
+  /// Chosen mode until the summary catches up; the summary stays the source of truth.
+  PermissionMode? _pending;
+  bool _busy = false;
+
+  @override
+  void didUpdateWidget(_PermissionModeSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.session.permissionMode != oldWidget.session.permissionMode) _pending = null;
+  }
+
+  Future<void> _change(PermissionMode mode) async {
+    final current = _pending ?? widget.session.permissionMode;
+    if (_busy || mode == current) return;
+    final sessions = SessionsScope.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _busy = true;
+      _pending = mode;
+    });
+    try {
+      await sessions.setPermissionMode(widget.session.id, mode);
+    } on Exception catch (e, st) {
+      log('cannot change permission mode', name: 'SessionsPage', error: e, stackTrace: st);
+      if (mounted) setState(() => _pending = null);
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => PermissionModeMenu(
+    key: const ValueKey('session-permission-mode'),
+    mode: _pending ?? widget.session.permissionMode,
+    tooltip: 'Permissões da sessão',
+    onSelected: _busy ? null : _change,
+  );
 }
 
 /// Where an org session runs: its `cwd` (the org's first root) and the other roots it can reach.

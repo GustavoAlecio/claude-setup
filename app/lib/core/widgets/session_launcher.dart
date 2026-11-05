@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../data/docs_repository.dart';
 import '../../data/sessions_repository.dart';
+import '../../engine/engine_config.dart';
 
 /// Row actions that create a session and open it: one create per [key] at a time, its error kept per key
 /// until the next try.
@@ -26,6 +27,7 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
     String command, {
     required String cwd,
     required String? githubAccount,
+    required PermissionMode permissionMode,
   }) async {
     if (_creating.contains(key)) return;
     final sessions = SessionsScope.of(context);
@@ -35,7 +37,13 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
       _createErrors.remove(key);
     });
     try {
-      final s = await sessions.create(project, command, cwd: cwd, githubAccount: githubAccount);
+      final s = await sessions.create(
+        project,
+        command,
+        cwd: cwd,
+        githubAccount: githubAccount,
+        permissionMode: permissionMode,
+      );
       if (!mounted) return;
       router.go('/p/${s.project}/sessions/${s.id}');
     } on Exception catch (e, st) {

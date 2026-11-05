@@ -356,6 +356,24 @@ GithubScope githubFor(String? orgName, DashboardConfig? config) {
   return github == null ? GithubScope.none : GithubScope(account: github.account, owners: github.owners);
 }
 
+/// Mode a new session is created with: [sessionChoice] > the org's `permissionMode` > the global one. [kNoOrg], an
+/// org the config does not have and a `null` config fall through to the next level.
+PermissionMode effectivePermissionMode(PermissionMode? sessionChoice, String? orgName, DashboardConfig? config) =>
+    sessionChoice ??
+    (orgName == null ? null : orgConfigOf(config, orgName)?.permissionMode) ??
+    config?.permissionMode ??
+    kDefaultPermissionMode;
+
+/// Org and permission mode of a [cwd] for launching a session (Resolver, Revisar): the org of the known project
+/// at that path (if its path exactly matches), else the org whose root holds it, else [kNoOrg]. The mode is the
+/// effective one for that org and config.
+({String org, PermissionMode mode}) launchOrg(String cwd, List<Project> projects, DashboardConfig? config) {
+  final here = normalizePath(cwd);
+  final project = projects.where((p) => p.path != null && normalizePath(p.path!) == here).firstOrNull;
+  final org = project?.org ?? orgOf(cwd, orgs: config?.orgs ?? const [], canonical: normalizePath);
+  return (org: org, mode: effectivePermissionMode(null, org, config));
+}
+
 sealed class Landing {
   const Landing();
 }
