@@ -9,6 +9,7 @@ import '../../data/report_models.dart';
 import '../../data/report_parser.dart';
 import '../../data/session_models.dart';
 import '../sessions/session_labels.dart';
+import '../sessions/session_view.dart';
 import 'stage_timeline.dart';
 
 /// Sessão do projeto rodando uma skill do pipeline; vem das sessões, não do relatório.
@@ -18,7 +19,9 @@ class StageBanner extends StatelessWidget {
   final SessionSummary session;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LiveSessionSummary(session: session, builder: _banner);
+
+  Widget _banner(BuildContext context, SessionSummary session) {
     final c = context.colors;
     return Container(
       key: const ValueKey('stage-banner'),
@@ -34,7 +37,7 @@ class StageBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Etapa em andamento: ${session.command} (${statusLabel(session.status)})',
+              'Etapa em andamento: ${session.command} (${sessionStatusLabel(session)})',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12.5, color: c.textPrimary),
             ),

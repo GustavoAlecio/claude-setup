@@ -26,6 +26,7 @@ class StageReport {
     this.decisions = const [],
     this.findings = const [],
     this.artifacts = const [],
+    this.sessionId,
   });
 
   final Stage stage;
@@ -37,6 +38,9 @@ class StageReport {
   final List<ReportDecision> decisions;
   final List<ReportFindings> findings;
   final List<String> artifacts;
+
+  /// Engine session that ran the stage; absent when it ran in a terminal.
+  final String? sessionId;
 }
 
 enum DecisionKind { decision, mistake }

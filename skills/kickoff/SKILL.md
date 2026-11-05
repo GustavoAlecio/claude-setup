@@ -70,7 +70,7 @@ Leia `$WF_DIR/current.json` (se existir). Se `status` não for terminal (`verifi
 - não tem chave de tracker (`tracker`, `ado_id`, `linear_key` ausentes), ou
 - tem `ado_id`/`linear_key` diferente do novo ID.
 
-Nesse caso, **pare** e pergunte: "Já há um fluxo ativo em **PROJECT_NAME** (card X, status Y). Continuar (`/status`) ou resetar pra começar o <novo>?" — não clobber sem OK.
+Nesse caso, **pare** com um `AskUserQuestion` (parada incondicional): "Já há um fluxo ativo em **PROJECT_NAME** (card X, status Y). Continuar (`/status`) ou resetar pra começar o <novo>?" — não clobber sem OK.
 
 Resetar (só depois do OK do usuário): rode `python3 ~/.claude/bin/wf-report.py reset --workflow-dir "$WF_DIR" || true` antes de qualquer alteração no `current.json`.
 
@@ -119,7 +119,7 @@ Bug sempre segue pra `/fix`. **Feature exige um segundo julgamento pelo CONTEÚD
   - repo de app único (ex. um app mobile) — card cross-platform ou explicitamente backend/server-side ("vale pros dois OSes", "enforcement no backend", infra, API)
   - monorepo — card que cai fora de `apps/*` e `packages/*`, ou que é puramente de infra/ops sem mudança de código
 
-Se **nenhum** sinal → prossiga normal (4b → 6). Se **houver** sinal, **pare e ofereça 3 rotas** (mesmo com auto on — esta decisão não é automatizável):
+Se **nenhum** sinal → prossiga normal (4b → 6). Se **houver** sinal, **pare com um `AskUserQuestion` de 3 rotas** (parada incondicional, mesmo com auto on — esta decisão não é automatizável):
 
 1. **refine-only** — invoque o refine do tracker (`/ado-refine` ou `/linear-refine`) para investigar o card no codebase (o que existe, onde vive, gaps) e postar os achados. **Sem** seed/branch/specify. É a rota certa pra auditoria.
 2. **Feature completa** — segue 4b → 6 (o usuário assume que há escopo implementável aqui).
@@ -134,7 +134,7 @@ Execute conforme a escolha. Rota 1: invoque o refine e encerre. Rota 3: pare aqu
 Nunca começar o card na branch de outro trabalho. Prepare o isolamento:
 
 ```bash
-# 1) mudanças pendentes? stasha (avisa o usuário do stash)
+# 1) mudanças pendentes? stasha (só anuncie o stash, sem pedir confirmação)
 [ -n "$(git status --porcelain)" ] && git stash push -u -m "kickoff-<id>-wip"
 ```
 
@@ -158,7 +158,7 @@ SLUG=$(~/.claude/bin/to-slug.sh "<título curto da issue>")
 git checkout -b "<prefixo>/<key-minusculo>-$SLUG" "origin/$BASE"   # ex: feat/eng-101-refresh-token
 ```
 
-**Confirme a base com o usuário** antes do checkout na rota ADO (release errada é custosa). Se houve stash, lembre o usuário ao final que há um `stash` pendente da branch anterior.
+Na rota ADO, se a base for `release/*`, faça um `AskUserQuestion` para confirmar a base antes do checkout (parada incondicional; release errada é custosa). Com `main` e no `checkout -b` de branch nova, apenas anuncie, sem gate. Se houve stash, anuncie que há um `stash` pendente da branch anterior.
 
 ## 5. Rota BUG
 
@@ -300,7 +300,7 @@ BRANCH="<feat|fix>/$SLUG"
 ```
 
 Base:
-- Raiz conhecida → a base do tracker da raiz (tabela do passo 0): ADO = última `release/*` no remoto, senão `main` (confirme com o usuário só se for `release/*`); Linear = `main`.
+- Raiz conhecida → a base do tracker da raiz (tabela do passo 0): ADO = última `release/*` no remoto, senão `main` (confirme com `AskUserQuestion` só se for `release/*`); Linear = `main`.
 - Fora das raízes:
 
 ```bash
@@ -322,10 +322,10 @@ git show-ref --verify --quiet "refs/heads/$BRANCH" && echo BRANCH_EXISTS
 ```
 
 - Sem remoto `origin`: base `main` local (ou o HEAD atual), sem fetch — avise "sem `origin`: branch criada a partir de `<START>` local".
-- `BRANCH_EXISTS` → **pergunte**: reusar (`git checkout "$BRANCH"`) ou criar com sufixo `-2` (`BRANCH="$BRANCH-2"`).
+- `BRANCH_EXISTS` → **`AskUserQuestion`** (parada incondicional): reusar (`git checkout "$BRANCH"`) ou criar com sufixo `-2` (`BRANCH="$BRANCH-2"`).
 - Senão: `git checkout -b "$BRANCH" "$START"`.
 
-Se houve stash, lembre ao final que há um stash `kickoff-manual-<slug>-wip` pendente.
+Stash e `checkout -b` de branch nova são só anunciados. Se houve stash, anuncie que há um stash `kickoff-manual-<slug>-wip` pendente.
 
 ### M6. Rotas
 

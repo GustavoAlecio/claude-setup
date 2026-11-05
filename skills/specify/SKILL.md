@@ -165,7 +165,6 @@ python3 ~/.claude/bin/wf-report.py stage-end specify --workflow-dir "$WF_DIR" --
 test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO_ON" || echo "AUTO_OFF"
 ```
 
-- Se `AUTO_ON`: atualize `status` para `"spec_approved"` no `current.json`, apresente resumo da spec em 3-5 linhas e avance automaticamente executando `/challenge-spec`
-- Se `AUTO_OFF`: finalize com "Spec gerada. Esta correta? Se sim: `/challenge-spec` (ou `/plan` para pular o desafio)"
+Com auto on ou off, apresente o resumo da spec em 3-5 linhas e execute `/challenge-spec` sem perguntar. A aprovação da spec é o gate `spec` no fim do `/challenge-spec`, nunca aqui.
 
-> **Nota:** quando o usuario aprovar a spec (confirmando ou executando `/plan`), o `/plan` deve setar `status` para `"spec_approved"` antes de iniciar.
+> **Nota:** o `/challenge-spec` seta `status` para `"spec_approved"` ao aprovar o gate; se o usuário pular o desafio e executar `/plan`, o `/plan` seta antes de iniciar.

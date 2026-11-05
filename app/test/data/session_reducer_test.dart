@@ -251,6 +251,32 @@ void main() {
       expect(d.summary.pendingPermissions, 1);
     });
 
+    test('a last reattached marks the session interrupted until a new message', () {
+      var d = _reduce([
+        _event(1, {'kind': 'user_text', 'text': '/plan'}),
+        _event(2, {'kind': 'assistant_text', 'text': 'feito'}),
+        _event(3, {'kind': 'reattached'}),
+        _status('idle'),
+      ], summary: _summary.copyWith(status: SessionStatus.detached));
+      expect(d.summary.interrupted, isTrue);
+      expect(d.summary.status, SessionStatus.idle);
+
+      d = applyFrame(d, _event(4, {'kind': 'permission_mode', 'mode': 'plan'}));
+      expect(d.summary.interrupted, isTrue);
+
+      d = applyFrame(d, _event(5, {'kind': 'user_text', 'text': 'continue'}));
+      expect(d.summary.interrupted, isFalse);
+    });
+
+    test('the model acting on its own after reattached clears interrupted', () {
+      final d = _reduce([
+        _event(1, {'kind': 'reattached'}),
+        _event(2, {'kind': 'permission', 'requestId': 'r2', 'toolName': 'Edit', 'input': <String, Object?>{}}),
+        _status('waiting_permission'),
+      ]);
+      expect(d.summary.interrupted, isFalse);
+    });
+
     test('running ToolCall is interrupted when the status leaves running/waiting_permission', () {
       var d = _reduce([
         _event(1, {'kind': 'tool_use', 'id': 't1', 'name': 'Bash', 'input': <String, Object?>{}}),
@@ -361,6 +387,40 @@ void main() {
     });
   });
 
+  group('isLive / showsInterrupted', () {
+    test('isLive: só processo que ainda age (running, waitingPermission, idle)', () {
+      expect(
+        {for (final s in SessionStatus.values) s: isLive(s)},
+        {
+          SessionStatus.starting: false,
+          SessionStatus.running: true,
+          SessionStatus.waitingPermission: true,
+          SessionStatus.idle: true,
+          SessionStatus.done: false,
+          SessionStatus.stopped: false,
+          SessionStatus.error: false,
+          SessionStatus.detached: false,
+        },
+      );
+    });
+
+    test('showsInterrupted: interrupted só vale com status idle', () {
+      SessionSummary s(SessionStatus status, {required bool interrupted}) => SessionSummary(
+        id: 'x',
+        project: 'p',
+        command: '/x',
+        title: 'x',
+        status: status,
+        createdAt: '',
+        interrupted: interrupted,
+      );
+      expect(s(SessionStatus.idle, interrupted: true).showsInterrupted, isTrue);
+      expect(s(SessionStatus.idle, interrupted: false).showsInterrupted, isFalse);
+      expect(s(SessionStatus.running, interrupted: true).showsInterrupted, isFalse);
+      expect(s(SessionStatus.done, interrupted: true).showsInterrupted, isFalse);
+    });
+  });
+
   group('sessions list', () {
     SessionSummary s(String id, String project, SessionStatus status, int pending) => SessionSummary(
       id: id,
@@ -382,6 +442,22 @@ void main() {
         s('f', 'p3', SessionStatus.stopped, 1),
       ];
       expect(pendingByProject(list), {'p1': 3, 'p2': 1});
+    });
+
+    test('pendingRequests keeps unresolved, unexpired requests in arrival order', () {
+      const question = QuestionRequest('t', requestId: 'q', seq: 2, questions: []);
+      const permission = PermissionRequest('t', requestId: 'p', seq: 3, toolName: 'Bash', target: 'ls');
+      const detail = SessionDetail(
+        summary: _summary,
+        events: [
+          UserText('t', '/plan'),
+          question,
+          permission,
+          QuestionRequest('t', requestId: 'done', seq: 4, questions: [], decision: PermissionDecision.answer),
+          PermissionRequest('t', requestId: 'old', seq: 5, toolName: 'Bash', target: 'ls', expired: true),
+        ],
+      );
+      expect([for (final r in pendingRequests(detail)) r.requestId], ['q', 'p']);
     });
 
     test('pendingByProject leaves org sessions out', () {

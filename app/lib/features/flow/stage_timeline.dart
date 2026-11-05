@@ -19,12 +19,21 @@ class StageTimeline extends StatefulWidget {
     this.derived = const {},
     this.stageMinutes = const {},
     this.project,
+    this.selected,
+    this.onSelect,
   });
 
   final ReportDoc? report;
   final Map<Stage, StageState> derived;
   final Map<Stage, int> stageMinutes;
   final String? project;
+
+  /// Stage whose session the Fluxo side panel shows; highlighted.
+  final Stage? selected;
+
+  /// Tapping a stage's row selects it, with or without a report entry; the chevron expands its report separately.
+  /// `null` makes the whole row expand the report instead (read-only history).
+  final ValueChanged<Stage>? onSelect;
 
   @override
   State<StageTimeline> createState() => _StageTimelineState();
@@ -90,26 +99,41 @@ class _StageTimelineState extends State<StageTimeline> with SessionLauncher<Stag
           const Spacer(),
           if (entry == null)
             const Muted('sem relatório desta etapa', size: 11)
-          else
+          else if (widget.onSelect == null)
             Icon(expanded ? Icons.expand_more : Icons.chevron_right, size: 16, color: c.textMuted),
         ],
       ),
     );
-    return Column(
+    final onSelect = widget.onSelect;
+    void toggle() => setState(() {
+      if (!_expanded.remove(s)) _expanded.add(s);
+    });
+    return Container(
       key: ValueKey('timeline-stage-${s.name}'),
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (entry == null)
-          header
-        else
-          InkWell(
-            onTap: () => setState(() {
-              if (!_expanded.remove(s)) _expanded.add(s);
-            }),
-            child: header,
-          ),
-        if (expanded) _body(context, entry),
-      ],
+      color: widget.selected == s ? c.hover : null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (onSelect == null)
+            entry == null ? header : InkWell(onTap: toggle, child: header)
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(onTap: () => onSelect(s), child: header),
+                ),
+                if (entry != null)
+                  IconButton(
+                    key: ValueKey('timeline-chevron-${s.name}'),
+                    tooltip: expanded ? 'Recolher relatório' : 'Expandir relatório',
+                    onPressed: toggle,
+                    icon: Icon(expanded ? Icons.expand_more : Icons.chevron_right, size: 16, color: c.textMuted),
+                  ),
+              ],
+            ),
+          if (expanded) _body(context, entry),
+        ],
+      ),
     );
   }
 

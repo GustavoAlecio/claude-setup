@@ -6,7 +6,20 @@ import 'session_models.dart';
 import 'sse.dart';
 
 const _liveTools = {SessionStatus.starting, SessionStatus.running, SessionStatus.waitingPermission};
-const _awaitingUser = {SessionStatus.running, SessionStatus.waitingPermission, SessionStatus.idle};
+
+/// A process that can still act on the user's answer or message. `starting` is not live yet; the ended statuses
+/// are not live anymore.
+bool isLive(SessionStatus status) => switch (status) {
+  SessionStatus.running || SessionStatus.waitingPermission || SessionStatus.idle => true,
+  SessionStatus.starting ||
+  SessionStatus.done ||
+  SessionStatus.stopped ||
+  SessionStatus.error ||
+  SessionStatus.detached => false,
+};
+
+/// Events that show a live process after `reattached`: a new message, or the model acting on its own.
+const _work = {'user_text', 'assistant_text', 'thinking', 'tool_use', 'permission', 'result'};
 
 SessionStatus parseStatus(Object? raw) => switch (raw) {
   'starting' => SessionStatus.starting,
@@ -40,7 +53,13 @@ SessionSummary parseSummary(Map<String, dynamic> json) => SessionSummary(
 );
 
 /// Badge "aguardando você": only sessions whose process can still act on the answer.
-int pendingOf(SessionSummary session) => _awaitingUser.contains(session.status) ? session.pendingPermissions : 0;
+int pendingOf(SessionSummary session) => isLive(session.status) ? session.pendingPermissions : 0;
+
+/// Requests the user can still answer, in arrival order.
+List<PendingRequest> pendingRequests(SessionDetail detail) => [
+  for (final e in detail.events)
+    if (e is PendingRequest && e.pending) e,
+];
 
 /// Project badges only: org sessions belong to no project.
 Map<String, int> pendingByProject(List<SessionSummary> sessions) {
@@ -82,7 +101,10 @@ SessionDetail applyFrame(SessionDetail state, SseFrame frame) {
       if (data is! Map<String, dynamic>) return state;
       final seq = (data['seq'] as num?)?.toInt();
       if (seq == null || seq <= state.lastSeq) return state;
-      return _applyEvent(state, data, seq).copyWith(lastSeq: seq);
+      final next = _applyEvent(state, data, seq).copyWith(lastSeq: seq);
+      return next.summary.interrupted && _work.contains(data['kind'])
+          ? next.copyWith(summary: next.summary.copyWith(interrupted: false))
+          : next;
     case 'status':
       final data = _decode(frame);
       if (data is! Map<String, dynamic>) return state;
@@ -232,7 +254,7 @@ SessionDetail _applyEvent(SessionDetail state, Map<String, dynamic> e, int seq) 
     case 'reattached':
       // The engine sets `idle` right after `reattached`; replay only sends the final status at the end.
       final status = state.summary.status == SessionStatus.detached ? SessionStatus.idle : null;
-      return _withRequests(state.copyWith(summary: state.summary.copyWith(status: status)), [
+      return _withRequests(state.copyWith(summary: state.summary.copyWith(status: status, interrupted: true)), [
         for (final ev in events) ev is PendingRequest && ev.pending && ev.seq < seq ? ev.expire() : ev,
       ]);
     case 'result':

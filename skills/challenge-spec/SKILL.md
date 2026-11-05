@@ -45,12 +45,24 @@ Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$
 python3 ~/.claude/bin/wf-report.py stage-end challenge --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
 ```
 
-## 5. Piloto automático
+## 5. Parada incondicional e gate `spec`
 
 ```bash
 test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO_ON" || echo "AUTO_OFF"
 ```
 
-- `AUTO_ON` e veredito **OK ou AJUSTES**: aplique todos os ajustes e os critérios reescritos, informe em 1 linha e avance para `/plan`.
-- `AUTO_ON` e veredito **BLOQUEANTE**: **pare** mesmo com auto. Bloqueante significa que a spec contradiz o código ou o critério central não é verificável — não é decisão automatizável.
-- `AUTO_OFF`: finalize com "Spec desafiada. Seguir para o plano? `/plan`".
+- Veredito **BLOQUEANTE** (com auto on ou off): parada incondicional, fora do `gates.json`. Bloqueante significa que a spec contradiz o código ou o critério central não é verificável; não é decisão automatizável. Faça um `AskUserQuestion` com as opções "Aplicar os ajustes propostos (Recommended)", "Voltar ao `/specify`" e "Abortar", e só siga ao gate abaixo depois de resolvido.
+- `AUTO_ON` e veredito **OK ou AJUSTES**: aplique todos os ajustes e os critérios reescritos.
+
+Gate `spec` (decisão determinística; nunca leia `gates.json`):
+
+```bash
+python3 ~/.claude/bin/wf-report.py gate spec
+```
+
+- `skip`: atualize `status` para `"spec_approved"` no `current.json`, informe em 1 linha e execute `/plan`.
+- `ask`: o `stage-end` acima já rodou; faça um `AskUserQuestion` ("Spec aprovada para planejar?") com as opções:
+  - **Aprovar (Recommended)**: atualize `status` para `"spec_approved"` no `current.json`, execute `/plan` na mesma sessão.
+  - **Ajustar**: o usuário escreve o ajuste em Other; aplique o texto e repita este mesmo gate.
+  - **Rejeitar**: rode `stage-end challenge --status blocked` (mesmo `--summary-file`), mantenha o `status` do `current.json` e encerre o turno.
+- A resposta do usuário vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision challenge --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.

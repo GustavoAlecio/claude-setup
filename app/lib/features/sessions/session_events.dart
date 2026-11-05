@@ -287,9 +287,9 @@ class _PermissionCardState extends State<PermissionCard> {
               border: Border(top: BorderSide(color: c.border)),
             ),
             child: pending
-                ? Row(
-                    children: [
-                      FilledButton(
+                ? LayoutBuilder(
+                    builder: (context, constraints) {
+                      final allow = FilledButton(
                         style: FilledButton.styleFrom(
                           backgroundColor: c.accent,
                           foregroundColor: Colors.white,
@@ -297,9 +297,8 @@ class _PermissionCardState extends State<PermissionCard> {
                         ),
                         onPressed: _sending ? null : () => _decide(PermissionDecision.allow),
                         child: const Text('Permitir', style: TextStyle(fontSize: 12)),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
+                      );
+                      final always = OutlinedButton(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: c.textSecondary,
                           side: BorderSide(color: c.borderStrong),
@@ -307,13 +306,22 @@ class _PermissionCardState extends State<PermissionCard> {
                         ),
                         onPressed: _sending ? null : () => _decide(PermissionDecision.always),
                         child: Text('Sempre permitir ${e.toolName} nesta sessão', style: const TextStyle(fontSize: 12)),
-                      ),
-                      const Spacer(),
-                      TextButton(
+                      );
+                      final deny = TextButton(
                         onPressed: _sending ? null : () => _decide(PermissionDecision.deny),
                         child: Text('Negar', style: TextStyle(fontSize: 12, color: c.fail)),
-                      ),
-                    ],
+                      );
+                      // The Fluxo side panel is too narrow for one row.
+                      if (constraints.maxWidth < 560) {
+                        return Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [allow, always, deny],
+                        );
+                      }
+                      return Row(children: [allow, const SizedBox(width: 8), always, const Spacer(), deny]);
+                    },
                   )
                 : Row(
                     children: [

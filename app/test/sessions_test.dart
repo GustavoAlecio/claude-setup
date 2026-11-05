@@ -1,13 +1,20 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/session_models.dart';
+import 'package:claude_flow/data/session_reducer.dart';
 import 'package:claude_flow/data/sessions_repository.dart';
+import 'package:claude_flow/data/sse.dart';
+import 'package:claude_flow/features/sessions/session_labels.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 const _noCwd = 'sem diretório para demo-app: defina cwds.demo-app em ~/.claude/workflow/.dashboard.json';
 
@@ -107,6 +114,83 @@ class _DetachedBypassSessions extends MockSessionsRepository {
     ],
   );
 }
+
+/// A done session with 200 messages whose stream the test appends to.
+class _FeedSessions extends MockSessionsRepository {
+  static const _summary = SessionSummary(
+    id: 'feed',
+    project: 'demo-app',
+    command: '/status',
+    title: 'Feed longo',
+    status: SessionStatus.done,
+    createdAt: '2026-03-08T10:00:00Z',
+  );
+
+  final _updates = StreamController<SessionDetail>.broadcast();
+  var _detail = SessionDetail(
+    summary: _summary,
+    events: [for (var i = 0; i < 200; i++) AssistantText('', 'mensagem $i')],
+    lastSeq: 200,
+  );
+
+  void push(String text) {
+    _detail = _detail.copyWith(events: [..._detail.events, AssistantText('', text)], lastSeq: _detail.lastSeq + 1);
+    _updates.add(_detail);
+  }
+
+  @override
+  Stream<List<SessionSummary>> watchSessions() => super.watchSessions().map((list) => [...list, _summary]);
+
+  @override
+  Stream<SessionDetail> watchSession(String id) {
+    if (id != _summary.id) return super.watchSession(id);
+    return Stream.multi((controller) {
+      controller.add(_detail);
+      final sub = _updates.stream.listen(controller.add);
+      controller.onCancel = sub.cancel;
+    });
+  }
+}
+
+/// An idle session whose log ends in `reattached`: the engine restarted under it.
+class _ReattachedSessions extends MockSessionsRepository {
+  static const _summary = SessionSummary(
+    id: 'reattached',
+    project: 'demo-app',
+    command: '/plan',
+    title: 'Sessão reanexada',
+    status: SessionStatus.idle,
+    createdAt: '2026-03-08T10:00:00Z',
+  );
+
+  @override
+  Stream<List<SessionSummary>> watchSessions() => super.watchSessions().map((list) => [...list, _summary]);
+
+  @override
+  Stream<SessionDetail> watchSession(String id) {
+    if (id != _summary.id) return super.watchSession(id);
+    final frames = [
+      SseFrame('event', jsonEncode({'seq': 1, 'at': '', 'kind': 'user_text', 'text': '/plan'})),
+      SseFrame('event', jsonEncode({'seq': 2, 'at': '', 'kind': 'reattached'})),
+    ];
+    return Stream.value(frames.fold(const SessionDetail(summary: _summary), applyFrame));
+  }
+}
+
+Finder _headerStatus(String label) =>
+    find.descendant(of: find.byKey(const ValueKey('session-status')), matching: find.text(label));
+
+final _newMessages = find.byKey(const ValueKey('session-new-messages'));
+
+Finder _message(int i) => find.text('mensagem $i', findRichText: true);
+
+ScrollPosition _feedPosition(WidgetTester tester) => tester
+    .state<ScrollableState>(
+      find.descendant(of: find.byKey(const ValueKey('session-feed')), matching: find.byType(Scrollable)).first,
+    )
+    .position;
+
+GoRouter _router(WidgetTester tester) => GoRouter.of(tester.element(find.byType(Scaffold).first));
 
 final _headerMode = find.byKey(const ValueKey('session-permission-mode'));
 
@@ -226,12 +310,106 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('desanexada'), findsNothing);
     expect(find.text('Retomar'), findsNothing);
-    expect(find.text('aguardando resposta'), findsOneWidget);
+    expect(_headerStatus(kInterruptedLabel), findsOneWidget);
+    expect(find.byKey(const ValueKey('session-interrupted-s-status')), findsOneWidget);
 
     await tester.enterText(find.byType(TextField), 'e agora?');
     await _cmdEnter(tester);
     expect(find.text('e agora?'), findsOneWidget);
     expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+    expect(_headerStatus('aguardando resposta'), findsOneWidget);
+    expect(find.byKey(const ValueKey('session-interrupted-s-status')), findsNothing);
+  });
+
+  testWidgets('a snapshot ending in reattached shows interrupted in the header and the tile', (tester) async {
+    await openSessions(tester, sessions: _ReattachedSessions());
+    await tester.tap(find.text('Sessão reanexada'));
+    await tester.pumpAndSettle();
+
+    expect(_headerStatus(kInterruptedLabel), findsOneWidget);
+    expect(find.byKey(const ValueKey('session-interrupted-reattached')), findsOneWidget);
+    expect(find.byKey(const ValueKey('session-interrupted-s-challenge')), findsNothing);
+  });
+
+  group('conversation scroll', () {
+    Future<_FeedSessions> openFeed(WidgetTester tester) async {
+      final sessions = _FeedSessions();
+      await openSessions(tester, sessions: sessions);
+      _router(tester).go('/p/demo-app/sessions/feed');
+      await tester.pumpAndSettle();
+      return sessions;
+    }
+
+    testWidgets('opening a session with 200 events leaves the list at the end', (tester) async {
+      await openFeed(tester);
+
+      final p = _feedPosition(tester);
+      expect(p.maxScrollExtent, greaterThan(0));
+      expect(p.pixels, p.maxScrollExtent);
+      expect(_message(199), findsOneWidget);
+      expect(_message(0), findsNothing);
+    });
+
+    testWidgets('switching sessions goes to the end of the new one', (tester) async {
+      await openFeed(tester);
+      _feedPosition(tester).jumpTo(0);
+      await tester.pump();
+
+      await tester.tap(find.text('Desafio da spec Favoritos offline'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Feed longo'));
+      await tester.pumpAndSettle();
+
+      final p = _feedPosition(tester);
+      expect(p.pixels, p.maxScrollExtent);
+    });
+
+    testWidgets('near the end a new event follows it without the button', (tester) async {
+      final sessions = await openFeed(tester);
+
+      sessions.push('mensagem nova');
+      await tester.pumpAndSettle();
+
+      final p = _feedPosition(tester);
+      expect(p.pixels, p.maxScrollExtent);
+      expect(find.text('mensagem nova', findRichText: true), findsOneWidget);
+      expect(_newMessages, findsNothing);
+    });
+
+    testWidgets('scrolled to the top a new event does not scroll and the button goes to the end', (tester) async {
+      final sessions = await openFeed(tester);
+      _feedPosition(tester).jumpTo(0);
+      await tester.pumpAndSettle();
+
+      sessions.push('mensagem nova');
+      await tester.pumpAndSettle();
+
+      expect(_feedPosition(tester).pixels, 0);
+      expect(_newMessages, findsOneWidget);
+
+      await tester.tap(_newMessages);
+      await tester.pumpAndSettle();
+
+      final p = _feedPosition(tester);
+      expect(p.pixels, p.maxScrollExtent);
+      expect(find.text('mensagem nova', findRichText: true), findsOneWidget);
+      expect(_newMessages, findsNothing);
+    });
+
+    testWidgets('scrolling back near the end hides the button', (tester) async {
+      final sessions = await openFeed(tester);
+      _feedPosition(tester).jumpTo(0);
+      await tester.pumpAndSettle();
+      sessions.push('mensagem nova');
+      await tester.pumpAndSettle();
+      expect(_newMessages, findsOneWidget);
+
+      final p = _feedPosition(tester);
+      p.jumpTo(p.maxScrollExtent - 40);
+      await tester.pumpAndSettle();
+
+      expect(_newMessages, findsNothing);
+    });
   });
 
   testWidgets('interrupting a session waiting for permission leaves it awaiting a reply', (tester) async {

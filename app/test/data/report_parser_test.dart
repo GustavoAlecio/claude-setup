@@ -57,6 +57,7 @@ SessionSummary _session(
   SessionStatus status = SessionStatus.running,
   String createdAt = '2026-03-10T10:00:00Z',
   String? org,
+  int pending = 0,
 }) => SessionSummary(
   id: id,
   project: project,
@@ -65,6 +66,7 @@ SessionSummary _session(
   status: status,
   createdAt: createdAt,
   org: org,
+  pendingPermissions: pending,
 );
 
 void main() {
@@ -429,6 +431,65 @@ void main() {
 
     test('lista vazia', () {
       expect(runningStageSession(const [], project), isNull);
+    });
+  });
+
+  group('sessão da etapa', () {
+    test('session_id é lido; ausente ou não-string vira null', () {
+      final doc = parseReport(
+        _report([
+          _stage('specify', extra: {'session_id': 's1'}),
+          _stage('plan', extra: {'session_id': 7}),
+          _stage('tasks'),
+        ]),
+      )!;
+
+      expect([for (final s in doc.stages) s.sessionId], ['s1', null, null]);
+    });
+
+    test('stageOfSession: a etapa mais recente da sessão; sem correspondência, null', () {
+      final doc = parseReport(
+        _report([
+          _stage('specify', extra: {'session_id': 's1', 'started_at': '2026-03-10T08:00:00Z'}),
+          _stage('challenge', extra: {'session_id': 's1', 'started_at': '2026-03-10T09:00:00Z'}),
+          _stage('plan', extra: {'session_id': 's2', 'started_at': '2026-03-10T10:00:00Z'}),
+        ]),
+      );
+
+      expect(stageOfSession(doc, 's1')?.stage, Stage.challenge);
+      expect(stageOfSession(doc, 's2')?.stage, Stage.plan);
+      expect(stageOfSession(doc, 's3'), isNull);
+      expect(stageOfSession(null, 's1'), isNull);
+    });
+
+    test('pendingProjectSessions: só do projeto, sem org, com pendência respondível, a mais antiga primeiro', () {
+      final sessions = [
+        _session('nova', '/plan', pending: 1, createdAt: '2026-03-10T11:00:00Z'),
+        _session('velha', '/specify', pending: 1, createdAt: '2026-03-10T09:00:00Z'),
+        _session('sem', '/tasks'),
+        _session('org', '/plan', project: '', org: 'acme', pending: 1),
+        _session('outro', '/plan', project: 'beta', pending: 1),
+        _session('morta', '/plan', status: SessionStatus.detached, pending: 1),
+      ];
+
+      expect([for (final s in pendingProjectSessions(sessions, 'alpha')) s.id], ['velha', 'nova']);
+    });
+
+    test('endedStageSessions: etapa running com sessão encerrada; viva, ausente ou etapa done não contam', () {
+      final doc = parseReport(
+        _report([
+          _stage('challenge', status: 'running', extra: {'session_id': 'dead'}),
+          _stage('plan', status: 'running', extra: {'session_id': 'live'}),
+          _stage('tasks', status: 'running', extra: {'session_id': 'gone'}),
+          _stage('specify', extra: {'session_id': 'dead'}),
+        ]),
+      );
+      final sessions = [
+        _session('dead', '/challenge-spec', status: SessionStatus.detached),
+        _session('live', '/plan', status: SessionStatus.idle),
+      ];
+
+      expect([for (final e in endedStageSessions(doc, sessions)) (e.stage, e.session.id)], [(Stage.challenge, 'dead')]);
     });
   });
 }

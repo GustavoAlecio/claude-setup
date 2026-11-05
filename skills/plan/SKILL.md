@@ -19,7 +19,7 @@ Leia `~/.claude/workflow/$PROJECT_NAME/current.json` para contexto do ciclo.
 
 ## 3. Marcar spec como aprovada e capturar metricas
 
-Atualize `status` para `"spec_approved"` no `current.json` (gate de aprovacao implicito — o usuario invocou `/plan`).
+Atualize `status` para `"spec_approved"` no `current.json` (a aprovação da spec é o gate `spec` do `/challenge-spec`, ou a invocação direta do `/plan`).
 
 ```bash
 bash ~/.claude/bin/capture-metrics.sh start plan "$PROJECT_NAME" "$PROJECT_PATH"
@@ -140,13 +140,21 @@ Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$
 python3 ~/.claude/bin/wf-report.py stage-end plan --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
 ```
 
-## 9. Verificar piloto automatico e finalizar
+## 9. Gate `plan`
+
+Apresente o resumo do plano em 3-5 linhas.
+
+Gate `plan` (decisão determinística; nunca leia `gates.json`):
 
 ```bash
-test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO_ON" || echo "AUTO_OFF"
+python3 ~/.claude/bin/wf-report.py gate plan
 ```
 
-- Se `AUTO_ON`: atualize `status` para `"plan_approved"` no `current.json`, apresente resumo do plano em 3-5 linhas e avance automaticamente executando `/tasks`
-- Se `AUTO_OFF`: finalize com "Plano gerado. Esta ok? Se sim: `/tasks`"
+- `skip`: atualize `status` para `"plan_approved"` no `current.json`, informe em 1 linha e execute `/tasks`.
+- `ask`: o `stage-end` acima já rodou; faça um `AskUserQuestion` ("Plano aprovado para gerar as tasks?") com as opções:
+  - **Aprovar (Recommended)**: atualize `status` para `"plan_approved"` no `current.json`, execute `/tasks` na mesma sessão.
+  - **Ajustar**: o usuário escreve o ajuste em Other; aplique o texto e repita este mesmo gate.
+  - **Rejeitar**: rode `stage-end plan --status blocked` (mesmo `--summary-file`), mantenha o `status` do `current.json` e encerre o turno.
+- A resposta do usuário vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision plan --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.
 
 > **Nota:** quando o usuario aprovar o plano (confirmando ou executando `/tasks`), o `/tasks` deve setar `status` para `"plan_approved"` antes de iniciar.
