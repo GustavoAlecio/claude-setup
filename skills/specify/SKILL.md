@@ -9,6 +9,7 @@ description: Etapa 1 do Fluxo Smart — analisa a descricao do usuario e gera do
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 source ~/.claude/bin/get-project.sh
 PROJECT_NAME=$(get-project-name)
+WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ```
 Diretorio de workflow: `~/.claude/workflow/$PROJECT_NAME/`
 
@@ -17,7 +18,7 @@ Diretorio de workflow: `~/.claude/workflow/$PROJECT_NAME/`
 **Caso A — spec.md ja existe (fluxo em andamento):**
 Pare e pergunte: "Ja existe um fluxo em andamento em **PROJECT_NAME**. Continuar (`/status`) ou Resetar?"
 - Continuar → encerre, sugira `/status`
-- Resetar → delete `spec.md`, `plan.md`, `tasks.md`, `current.json` e prossiga
+- Resetar → só depois do OK do usuário: rode `python3 ~/.claude/bin/wf-report.py reset --workflow-dir "$WF_DIR" || true` (precisa do `current.json` ainda existente), depois delete `spec.md`, `plan.md`, `tasks.md`, `current.json` e prossiga
 
 **Caso B — phases.md existe mas spec.md nao (continuacao de phases):**
 Leia `~/.claude/workflow/$PROJECT_NAME/phases.md`, encontre a primeira phase com `[ ]` e prossiga gerando spec para ela.
@@ -139,7 +140,26 @@ Crie `~/.claude/workflow/$PROJECT_NAME/current.json` (o script de metricas ja cr
 
 Depois rode o script de metricas end novamente se o current.json nao existia antes (para popular a fase specify).
 
+Relatório: início da etapa (só aqui o `current.json` já existe).
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-start specify --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
+```
+
+Se dividiu o escopo em phases, registre a divisão. Registre como decisão do orquestrador (best-effort): escreva o texto com **Write** em `$WF_DIR/.decision.md` e rode (acrescente `--mistake` se for um erro seu):
+
+```bash
+python3 ~/.claude/bin/wf-report.py decision specify --workflow-dir "$WF_DIR" --by orchestrator --text-file "$WF_DIR/.decision.md" || true
+```
+
 ## 9. Verificar piloto automatico e finalizar
+
+Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode:
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-end specify --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
+```
+
 
 ```bash
 test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO_ON" || echo "AUTO_OFF"

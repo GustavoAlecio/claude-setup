@@ -58,8 +58,8 @@ Future<void> _go(WidgetTester tester, String location) async {
 Finder _tierChip(Tier tier) => find.byWidgetPredicate((w) => w is TierChip && w.tier == tier);
 
 Finder _currentStage(String stage) => find.descendant(
-  of: find.ancestor(of: find.text('em andamento'), matching: find.byType(Column)).first,
-  matching: find.text(stage),
+  of: find.byKey(ValueKey('timeline-stage-$stage')),
+  matching: find.byWidgetPredicate((w) => w is Text && (w.data == 'em andamento' || w.data == 'bloqueada')),
 );
 
 class _CountingRepository extends MockFlowRepository {

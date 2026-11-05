@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "cycle": {
+    "feature": "Pagina alpha",
+    "started_at": "2026-03-10T09:00:00Z"
+  },
+  "stages": [
+    {
+      "stage": "kickoff",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:00:00Z",
+      "summary_md": "Card sintético triado como feature.\n\n- Tipo: **feature**\n- Projeto: `alpha`",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:10:00Z"
+    },
+    {
+      "stage": "specify",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:15:00Z",
+      "summary_md": "Spec aprovada com 2 critérios.",
+      "decisions": [
+        {
+          "id": "03812f9fcd18055ba7e326940406d0f6cf620415b26f172537e7587dc167746a",
+          "by": "orchestrator",
+          "text_md": "Recorte limitado à página alpha.",
+          "kind": "decision",
+          "alternative_md": "Incluir também a tela de detalhe."
+        }
+      ],
+      "findings": [],
+      "artifacts": [
+        "spec.md"
+      ],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:25:00Z"
+    },
+    {
+      "stage": "challenge",
+      "status": "running",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:30:00Z",
+      "summary_md": "",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": []
+    }
+  ]
+}

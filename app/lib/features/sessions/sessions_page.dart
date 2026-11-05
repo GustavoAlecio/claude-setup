@@ -22,6 +22,7 @@ import '../launcher/command_palette.dart';
 import '../shell/shell_scope.dart';
 import 'session_cubit.dart';
 import 'session_events.dart';
+import 'session_labels.dart';
 
 class SessionsPage extends StatefulWidget {
   const SessionsPage({super.key, required this.scope, this.sessionId});
@@ -126,17 +127,6 @@ Color statusColor(AppColors c, SessionStatus s) => switch (s) {
   SessionStatus.done => c.pass,
   SessionStatus.error => c.fail,
   SessionStatus.stopped || SessionStatus.detached => c.idle,
-};
-
-String statusLabel(SessionStatus s) => switch (s) {
-  SessionStatus.starting => 'iniciando',
-  SessionStatus.running => 'rodando',
-  SessionStatus.waitingPermission => 'aguardando permissão',
-  SessionStatus.idle => 'aguardando resposta',
-  SessionStatus.done => 'concluída',
-  SessionStatus.stopped => 'interrompida',
-  SessionStatus.error => 'erro',
-  SessionStatus.detached => 'desanexada',
 };
 
 class _SessionList extends StatelessWidget {

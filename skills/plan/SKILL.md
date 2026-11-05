@@ -9,6 +9,7 @@ description: Etapa 2 do Fluxo Smart — gera plano tecnico detalhado baseado na 
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 source ~/.claude/bin/get-project.sh
 PROJECT_NAME=$(get-project-name)
+WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ```
 
 ## 2. Verificar pre-requisito
@@ -24,6 +25,12 @@ Atualize `status` para `"spec_approved"` no `current.json` (gate de aprovacao im
 bash ~/.claude/bin/capture-metrics.sh start plan "$PROJECT_NAME" "$PROJECT_PATH"
 ```
 Guarde o output como `STEP_START_TS`.
+
+Relatório: início da etapa
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-start plan --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
+```
 
 ## 4. Reconhecimento do codebase (OBRIGATORIO)
 
@@ -57,6 +64,12 @@ Apos explorar o codebase, verifique se a spec ainda faz sentido:
 3. Pergunte: "Encontrei gaps na spec apos analisar o codebase. Posso atualizar a spec com as correcoes acima antes de prosseguir?"
 4. Se aprovado, atualize `spec.md` e continue
 5. Se rejeitado, siga com a spec original
+
+Se a spec foi atualizada por gaps do código, registre quais. Registre como decisão do orquestrador (best-effort): escreva o texto com **Write** em `$WF_DIR/.decision.md` e rode (acrescente `--mistake` se for um erro seu):
+
+```bash
+python3 ~/.claude/bin/wf-report.py decision plan --workflow-dir "$WF_DIR" --by orchestrator --text-file "$WF_DIR/.decision.md" || true
+```
 
 ## 6b. Modo ToT (Tree of Thoughts orquestrado)
 
@@ -119,6 +132,12 @@ Os paths da "Estrategia de testes" viram o campo `tests` das tasks e são execut
 ## 8. Capturar metricas finais — EXECUTE AGORA (obrigatorio)
 ```bash
 bash ~/.claude/bin/capture-metrics.sh end plan "$PROJECT_NAME" "$PROJECT_PATH"
+```
+
+Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode:
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-end plan --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
 ```
 
 ## 9. Verificar piloto automatico e finalizar

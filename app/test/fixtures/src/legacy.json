@@ -8,5 +8,17 @@
     "blockers": [],
     "tags": []
   },
-  "runs": []
+  "runs": [],
+  "report": [
+    {
+      "cmd": "stage-start",
+      "stage": "kickoff"
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "kickoff",
+      "summary": "Projeto legado triado.",
+      "status": "blocked"
+    }
+  ]
 }

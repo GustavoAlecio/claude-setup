@@ -1,3 +1,5 @@
+import 'report_models.dart';
+
 enum Tier { haiku, sonnet, opus, fable }
 
 enum Verdict { pass, fail, running, blocked, inconclusive, pending }
@@ -165,6 +167,7 @@ class Run {
     required this.tasks,
     this.reason,
     this.gates = const [],
+    this.round,
   });
 
   final String id;
@@ -174,6 +177,9 @@ class Run {
   final List<TaskRun> tasks;
   final String? reason;
   final List<GateResult> gates;
+
+  /// Last verify round of the run; `null` for an implement run or a result without round data.
+  final int? round;
 
   int? get tokensOut => _sumKnown(tasks.map((t) => t.tokensOut));
 
@@ -190,6 +196,7 @@ class Cycle {
     this.feature,
     this.tracker,
     this.branch,
+    this.report,
   });
 
   final String? feature;
@@ -202,6 +209,9 @@ class Cycle {
 
   /// Planned tasks from current.json in plan order, without attempts.
   final List<TaskRun> plan;
+
+  /// `null` without a valid `report.json` (missing, over the size limit, invalid or `version != 1`).
+  final ReportDoc? report;
 
   Run? get latestRun => runs.isEmpty ? null : runs.first;
 }

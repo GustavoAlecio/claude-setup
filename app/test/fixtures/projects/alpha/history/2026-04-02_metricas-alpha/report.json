@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "cycle": {
+    "feature": "Métricas alpha",
+    "started_at": "2026-04-02T07:00:00Z"
+  },
+  "stages": [
+    {
+      "stage": "kickoff",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:00:00Z",
+      "summary_md": "Triagem do ciclo de métricas.",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:10:00Z"
+    },
+    {
+      "stage": "implement",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:15:00Z",
+      "summary_md": "T1 e T2 concluídas.",
+      "decisions": [
+        {
+          "id": "3fd29dc0a60012e8840948b8133b5f70b1b747c0ff26c5a7f35b58f1afeeda9e",
+          "by": "agent:T1",
+          "text_md": "Escalada para opus após falha de analyze.",
+          "kind": "decision"
+        }
+      ],
+      "findings": [],
+      "artifacts": [
+        "plan.md"
+      ],
+      "run_ids": [],
+      "ended_at": "2026-03-10T07:25:00Z"
+    }
+  ]
+}

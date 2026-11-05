@@ -2,13 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/sessions_cubit.dart';
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
+import '../../data/session_models.dart';
 import '../launcher/kickoff_form.dart';
+import 'flow_panels.dart';
+import 'stage_timeline.dart';
 
 class FlowPage extends StatelessWidget {
   const FlowPage({super.key, required this.projectName});
@@ -40,28 +46,48 @@ class _FlowView extends StatelessWidget {
   Widget build(BuildContext context) {
     final project = this.project;
     final cycle = project?.cycle;
+    final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
+    final stageSession = project == null ? null : runningStageSession(sessions, project);
+    final banner = stageSession == null ? null : StageBanner(session: stageSession);
     if (project == null || cycle == null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Muted('Nenhum ciclo ativo. Comece com /kickoff ou /specify.', size: 13),
-            const SizedBox(height: 14),
-            FilledButton.icon(
-              style: FilledButton.styleFrom(backgroundColor: context.colors.accent, foregroundColor: Colors.white),
-              onPressed: project == null ? null : () => showKickoffForm(context, project),
-              icon: const Icon(Icons.rocket_launch_outlined, size: 15),
-              label: const Text('Novo kickoff'),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (banner != null) Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 0), child: banner),
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Muted('Nenhum ciclo ativo. Comece com /kickoff ou /specify.', size: 13),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: context.colors.accent,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: project == null ? null : () => showKickoffForm(context, project),
+                    icon: const Icon(Icons.rocket_launch_outlined, size: 15),
+                    label: const Text('Novo kickoff'),
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       );
     }
     final run = cycle.latestRun;
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        _StagePipeline(cycle: cycle),
+        if (banner != null) ...[banner, const SizedBox(height: 16)],
+        StageTimeline(
+          report: cycle.report,
+          derived: derivedStageStates(cycle),
+          stageMinutes: cycle.stageMinutes,
+          project: project.name,
+        ),
         const SizedBox(height: 16),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -77,93 +103,12 @@ class _FlowView extends StatelessWidget {
             ),
           ],
         ),
-      ],
-    );
-  }
-}
-
-class _StagePipeline extends StatelessWidget {
-  const _StagePipeline({required this.cycle});
-
-  final Cycle cycle;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final blocked = cycle.latestRun?.status == Verdict.blocked;
-    return Panel(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-      child: Row(
-        children: [
-          for (final s in Stage.values) ...[
-            Expanded(
-              child: _StageNode(
-                stage: s,
-                state: s.index < cycle.stage.index
-                    ? _NodeState.done
-                    : s == cycle.stage
-                    ? (blocked ? _NodeState.blocked : _NodeState.current)
-                    : _NodeState.pending,
-                minutes: cycle.stageMinutes[s],
-              ),
-            ),
-            if (s != Stage.values.last)
-              Container(
-                width: 18,
-                height: 1.5,
-                color: s.index < cycle.stage.index ? c.pass.withValues(alpha: 0.6) : c.border,
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-enum _NodeState { done, current, blocked, pending }
-
-class _StageNode extends StatelessWidget {
-  const _StageNode({required this.stage, required this.state, this.minutes});
-
-  final Stage stage;
-  final _NodeState state;
-  final int? minutes;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final color = switch (state) {
-      _NodeState.done => c.pass,
-      _NodeState.current => c.running,
-      _NodeState.blocked => c.fail,
-      _NodeState.pending => c.idle,
-    };
-    final icon = switch (state) {
-      _NodeState.done => Icons.check,
-      _NodeState.current => Icons.more_horiz,
-      _NodeState.blocked => Icons.priority_high,
-      _NodeState.pending => null,
-    };
-    return Column(
-      children: [
-        Container(
-          width: 26,
-          height: 26,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: state == _NodeState.pending ? null : color.withValues(alpha: 0.16),
-            border: Border.all(color: color, width: 1.5),
-          ),
-          child: icon == null ? null : Icon(icon, size: 14, color: color),
-        ),
-        const SizedBox(height: 8),
-        Mono(stage.label, size: 11, color: state == _NodeState.pending ? c.textMuted : c.textPrimary),
-        const SizedBox(height: 2),
-        Muted(switch (state) {
-          _NodeState.current || _NodeState.blocked => 'em andamento',
-          _ when minutes != null => '${minutes}m',
-          _ => '—',
-        }, size: 10),
+        const SizedBox(height: 16),
+        TasksPanel(cycle: cycle),
+        const SizedBox(height: 16),
+        VerifyPanel(runs: cycle.runs),
+        const SizedBox(height: 16),
+        DecisionsPanel(report: cycle.report),
       ],
     );
   }

@@ -383,5 +383,41 @@
         ]
       }
     }
+  ],
+  "report": [
+    {
+      "cmd": "stage-start",
+      "stage": "kickoff"
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "kickoff",
+      "summary": "Card sintético triado como feature.\n\n- Tipo: **feature**\n- Projeto: `alpha`",
+      "status": "done"
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "specify"
+    },
+    {
+      "cmd": "decision",
+      "stage": "specify",
+      "by": "orchestrator",
+      "text": "Recorte limitado à página alpha.",
+      "alternative": "Incluir também a tela de detalhe."
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "specify",
+      "summary": "Spec aprovada com 2 critérios.",
+      "status": "done",
+      "artifacts": [
+        "spec.md"
+      ]
+    },
+    {
+      "cmd": "stage-start",
+      "stage": "challenge"
+    }
   ]
 }

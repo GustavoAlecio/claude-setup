@@ -33,6 +33,12 @@ RUN_DIR="$WF_DIR/runs/$RUN_ID"
 mkdir -p "$RUN_DIR"
 ```
 
+Relatório: início da etapa
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-start implement --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
+```
+
 Checkpoint base:
 - `current.json.exec.checkpoint` existe (retomada ou execução anterior) → use-o.
 - Senão: `bash ~/.claude/bin/wf-checkpoint.sh create "$PROJECT_PATH"` e grave em `exec.checkpoint` **e** `exec.base_checkpoint` (o verify usa o base para o diff do ciclo inteiro).
@@ -68,6 +74,7 @@ Grave o JSON retornado em `$RUN_DIR/workflow-result.json` e persista:
 
 ```bash
 python3 ~/.claude/bin/wf-event.py persist --run-dir "$RUN_DIR" --workflow-dir "$WF_DIR" --result-file "$RUN_DIR/workflow-result.json"
+python3 ~/.claude/bin/wf-report.py import-run implement --workflow-dir "$WF_DIR" --run-dir "$RUN_DIR" || true
 bash ~/.claude/bin/capture-metrics.sh end implement "$PROJECT_NAME" "$PROJECT_PATH"
 ```
 
@@ -79,6 +86,14 @@ Marque `[x]` no `tasks.md` para as tasks `done`. Apresente:
 |---|---|---|---|---|
 - Escaladas: N · tokens de saída (trace): X
 ```
+
+Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode (acrescente `--status blocked` em `backtrack`/`blocked`):
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-end implement --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
+```
+
+Backtracks e blockers já entram pelo `import-run`; use `decision` só para escolhas suas fora disso.
 
 Depois, por `status`:
 

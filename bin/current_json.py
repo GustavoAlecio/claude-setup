@@ -2,7 +2,7 @@
 Atomic read-modify-write for current.json with file locking.
 
 Usage:
-    from current_json import update_current_json
+    from current_json import update_current_json, update_json
 
     def modifier(data: dict) -> dict:
         data["status"] = "implementing"
@@ -11,37 +11,45 @@ Usage:
     update_current_json("/path/to/workflow/project", modifier)
 """
 
+import copy
 import fcntl
 import json
 import os
 from pathlib import Path
 
 
-def update_current_json(workflow_dir: str, modifier_fn, default: dict = None):
-    current_path = Path(workflow_dir) / "current.json"
-    lock_path = Path(workflow_dir) / ".current.json.lock"
-
-    current_path.parent.mkdir(parents=True, exist_ok=True)
+def update_json(path, lock_path, fn, default: dict = None):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(lock_path, "w") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         try:
-            if current_path.exists():
-                with open(current_path) as f:
+            if path.exists():
+                with open(path, encoding="utf-8") as f:
                     data = json.load(f)
             else:
-                data = default or {}
+                data = copy.deepcopy(default) if default is not None else {}
 
-            data = modifier_fn(data)
+            data = fn(data)
 
-            tmp_path = current_path.with_suffix(".tmp")
-            with open(tmp_path, "w") as f:
+            tmp_path = path.with_name(path.name + ".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            os.replace(str(tmp_path), str(current_path))
+            os.replace(str(tmp_path), str(path))
 
             return data
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def update_current_json(workflow_dir: str, modifier_fn, default: dict = None):
+    return update_json(
+        Path(workflow_dir) / "current.json",
+        Path(workflow_dir) / ".current.json.lock",
+        modifier_fn,
+        default,
+    )
 
 
 def read_current_json(workflow_dir: str) -> dict:

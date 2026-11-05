@@ -12,6 +12,8 @@ set -euo pipefail
 CMD="${1:?cmd}"
 REPO="${2:?repo}"
 TREE="${3:-}"
+# `@<file>` reads the sha from a file gate_g0.py wrote, so no LLM ever retypes a hash.
+if [ "${TREE#@}" != "$TREE" ]; then TREE="$(tr -d '[:space:]' < "${TREE#@}" 2>/dev/null || true)"; fi
 cd "$REPO"
 
 snapshot() {

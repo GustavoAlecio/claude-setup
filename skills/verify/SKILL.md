@@ -29,6 +29,12 @@ RUN_DIR="$WF_DIR/runs/$RUN_ID"
 mkdir -p "$RUN_DIR"
 ```
 
+Relatório: início da etapa
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-start verify --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
+```
+
 Para G2 com runtime, o device do profile (`g2_device`) precisa estar disponível. Cheque com o dart MCP (`list_devices`); se não estiver, avise antes de disparar — o QA vai voltar `inconclusive`.
 
 ## 4. Disparar
@@ -58,7 +64,12 @@ Informe em 1 linha e encerre o turno.
 
 ## 5. Ao receber o resultado
 
-Grave em `$RUN_DIR/workflow-result.json` e persista com `wf-event.py persist` (mesmo comando do `/implement`).
+Grave em `$RUN_DIR/workflow-result.json` e persista e importe o run no relatório:
+
+```bash
+python3 ~/.claude/bin/wf-event.py persist --run-dir "$RUN_DIR" --workflow-dir "$WF_DIR" --result-file "$RUN_DIR/workflow-result.json"
+python3 ~/.claude/bin/wf-report.py import-run verify --workflow-dir "$WF_DIR" --run-dir "$RUN_DIR" || true
+```
 
 Relatório:
 
@@ -84,3 +95,9 @@ Por `status`:
 - **blocked / backtrack** → mesmo tratamento do `/implement` (diagnosis ToT, protocolo de desvio). Nunca decida sozinho.
 
 Findings minor/nit dos reviewers: liste no fim como "não bloqueantes", sem abrir task.
+
+Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode (acrescente `--status blocked` em `inconclusive`/`blocked`/`backtrack`):
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-end verify --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
+```

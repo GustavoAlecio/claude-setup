@@ -241,6 +241,33 @@ int pendingInOrg(List<SessionSummary> sessions, List<Project> projects, Dashboar
 (String, List<String>)? orgSessionDirs(OrgConfig org) =>
     org.roots.isEmpty ? null : (org.roots.first, org.roots.sublist(1));
 
+const _pipelineCommands = {
+  '/kickoff', '/specify', '/challenge-spec', '/plan', '/tasks', '/implement', '/verify', '/complete', '/fix', //
+};
+
+/// Newest live session of [project] (not an org session) whose command starts with a pipeline skill; it is the
+/// stage in progress when the project has no cycle yet.
+SessionSummary? runningStageSession(List<SessionSummary> sessions, Project project) {
+  SessionSummary? best;
+  DateTime? bestAt;
+  for (final s in sessions) {
+    if (s.isOrgSession || s.project != project.name) continue;
+    if (s.status != SessionStatus.running &&
+        s.status != SessionStatus.idle &&
+        s.status != SessionStatus.waitingPermission) {
+      continue;
+    }
+    final command = s.command.trimLeft().split(RegExp(r'\s'));
+    if (!_pipelineCommands.contains(command.first)) continue;
+    final at = DateTime.tryParse(s.createdAt);
+    if (best == null || (at != null && (bestAt == null || at.isAfter(bestAt)))) {
+      best = s;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
 /// Inside the shell the org is the route project's; an unknown or still-loading project keeps `lastOrg`.
 String currentOrg(String? routeProject, List<Project> projects, DashboardConfig? config) =>
     projects.where((p) => p.name == routeProject).firstOrNull?.org ?? config?.lastOrg ?? kNoOrg;

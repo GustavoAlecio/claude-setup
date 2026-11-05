@@ -72,6 +72,8 @@ Leia `$WF_DIR/current.json` (se existir). Se `status` não for terminal (`verifi
 
 Nesse caso, **pare** e pergunte: "Já há um fluxo ativo em **PROJECT_NAME** (card X, status Y). Continuar (`/status`) ou resetar pra começar o <novo>?" — não clobber sem OK.
 
+Resetar (só depois do OK do usuário): rode `python3 ~/.claude/bin/wf-report.py reset --workflow-dir "$WF_DIR" || true` antes de qualquer alteração no `current.json`.
+
 No modo manual, a regra de mesma descrição está em "Modo manual" (M3).
 
 ## 3. Puxar o card
@@ -198,11 +200,23 @@ update_current_json('$WF_DIR', m, default=seed)
 "
 ```
 
+Relatório: início da etapa, só depois do seed.
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-start kickoff --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
+```
+
 ### 6b. Refinar
 
 **Invoque o refine do tracker** — `/ado-refine <id>` ou `/linear-refine <KEY>`. Gera o detalhamento técnico em `$WF_DIR/details/<slug>.md` e (com seu OK) comenta no card. Aguarde ele concluir.
 
 ### 6c. Especificar
+
+Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode:
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-end kickoff --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
+```
 
 **Invoque `/specify`** usando como descrição de entrada: o card (título + descrição + critérios de aceite) **+ o doc de refino recém-gerado** (`$WF_DIR/details/<slug>.md`). Na rota Linear, inclua também a **RFC** lida no refine — ela é o input principal da spec. Diga ao `/specify` explicitamente para se basear nesse material em vez de pedir a descrição ao usuário.
 
@@ -336,6 +350,18 @@ def m(d):
     return d
 update_current_json(wf, m, default=seed)
 PY
+```
+
+Relatório: início da etapa, só depois do seed.
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-start kickoff --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
+```
+
+Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode:
+
+```bash
+python3 ~/.claude/bin/wf-report.py stage-end kickoff --workflow-dir "$WF_DIR" --summary-file "$WF_DIR/.stage-summary.md" || true
 ```
 
 Depois **invoque `/specify`** com a descrição (conteúdo de `$WF_DIR/manual-description.md`) como entrada, dizendo explicitamente para se basear nela em vez de pedir a descrição ao usuário. O Flow Smart segue como na rota FEATURE. No fim do ciclo, `/pr-open` abre o PR sem vínculo de tracker.

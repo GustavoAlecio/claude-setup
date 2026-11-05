@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/data/inventory_models.dart';
+import 'package:claude_flow/data/file_metrics_repository.dart';
 import 'package:claude_flow/data/inventory_repository.dart';
+import 'package:claude_flow/data/metrics_models.dart';
 import 'package:claude_flow/data/metrics_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_inventory_repository.dart';
@@ -20,6 +24,24 @@ class _RoutingInventory extends MockInventoryRepository {
 
   @override
   Future<ProjectInventory> loadProject(Project project) async => ProjectInventory(routing: routing);
+}
+
+class _FixedMetrics implements MetricsRepository {
+  const _FixedMetrics(this.metrics);
+
+  final ProjectMetrics metrics;
+
+  @override
+  Future<ProjectMetrics> loadProject(Project project) async => metrics;
+}
+
+/// Histórico do `alpha` gerado pelo `gen.sh`: um ciclo com `report.json` e outro sem.
+Future<MetricsRepository> _alphaHistory(WidgetTester tester) async {
+  final fixtures = Directory('test/fixtures').absolute.path;
+  final metrics = await tester.runAsync(
+    () => FileMetricsRepository(fixtures, '$fixtures/workflow').loadProject(const Project(name: 'alpha')),
+  );
+  return _FixedMetrics(metrics!);
 }
 
 Future<GoRouter> _open(
@@ -137,5 +159,37 @@ void main() {
     await _open(tester, '/o/x/metrics');
 
     expect(find.byType(MetricsPage), findsNothing);
+  });
+
+  testWidgets('"ver relatório" só nos ciclos com relatório e abre o componente em modo leitura', (tester) async {
+    await _open(tester, '/p/demo-app/metrics', metrics: await _alphaHistory(tester));
+    const withReport = ValueKey('metrics-report-2026-04-02_metricas-alpha');
+    expect(find.byKey(withReport), findsOneWidget);
+    expect(find.byKey(const ValueKey('metrics-report-2026-03-20_sem-trace-alpha')), findsNothing);
+
+    await tester.tap(find.byKey(withReport));
+    await tester.pumpAndSettle();
+
+    final timeline = find.byKey(const ValueKey('metrics-report-timeline'));
+    expect(timeline, findsOneWidget);
+    expect(find.descendant(of: timeline, matching: find.text('sem relatório desta etapa')), findsNWidgets(6));
+
+    await tester.tap(find.descendant(of: timeline, matching: find.text('implement')));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: timeline, matching: find.text('T1 e T2 concluídas.', findRichText: true)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: timeline, matching: find.textContaining('Escalada para opus', findRichText: true)),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: timeline, matching: find.text('plan.md')), findsOneWidget);
+    expect(find.descendant(of: timeline, matching: find.byType(TextButton)), findsNothing);
+
+    await tester.tap(find.byTooltip('Fechar'));
+    await tester.pumpAndSettle();
+    expect(timeline, findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }

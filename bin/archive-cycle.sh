@@ -32,7 +32,7 @@ CYCLE_DIR="$HISTORY_DIR/${DATE}_${FEATURE_SLUG}"
 
 mkdir -p "$CYCLE_DIR"
 
-for f in spec.md plan.md tasks.md tot-plan.json; do
+for f in spec.md plan.md tasks.md tot-plan.json report.json; do
     if [ -f "$WORKFLOW_DIR/$f" ]; then
         cp "$WORKFLOW_DIR/$f" "$CYCLE_DIR/$f"
     fi
