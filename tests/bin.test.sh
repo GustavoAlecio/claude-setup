@@ -93,4 +93,72 @@ assert r['verdict']=='fail', r; assert 'G0-ANALYZE-RETURN_OF_INVALID_TYPE' in id
 else
   echo "- gate_g0: skipped (dart not on PATH)"
 fi
+
+echo "- routing-stats.py: --write creates bands and overrides, preserves other keys, exits 2 without --project"
+H=$(tmp); mkdir -p "$H/.claude/projects/test1/history"
+mkdir -p "$H/.claude/workflow/test1/runs/run1"
+mkdir -p "$H/.claude/workflow/test1/runs/run2"
+# First result.json with some tasks
+printf '{"tasks":[
+{"id":"T1","complexity":"S","risk":"low","status":"done","attempts":1,"escalations":[],"tier":"haiku"},
+{"id":"T2","complexity":"S","risk":"low","status":"done","attempts":1,"escalations":[],"tier":"haiku"},
+{"id":"T3","complexity":"S","risk":"low","status":"done","attempts":1,"escalations":[],"tier":"haiku"},
+{"id":"T4","complexity":"S","risk":"low","status":"done","attempts":1,"escalations":[],"tier":"haiku"},
+{"id":"T5","complexity":"S","risk":"low","status":"done","attempts":1,"escalations":[],"tier":"haiku"},
+{"id":"T6","complexity":"S","risk":"low","status":"done","attempts":2,"escalations":["e1"],"tier":"sonnet"},
+{"id":"T7","complexity":"M","risk":"high","status":"done","attempts":3,"escalations":[],"tier":"sonnet"},
+{"id":"T10","complexity":"M","risk":"low","status":"done","attempts":2,"escalations":[],"tier":"haiku"}
+]}' > "$H/.claude/workflow/test1/runs/run1/result.json"
+# Second result.json with more tasks
+printf '{"tasks":[
+{"id":"T8","complexity":"M","risk":"high","status":"done","attempts":2,"escalations":["e1","e2"],"tier":"opus"},
+{"id":"T9","complexity":"M","risk":"high","status":"blocked","attempts":4,"escalations":[],"tier":"unknown"}
+]}' > "$H/.claude/workflow/test1/runs/run2/result.json"
+# Test with existing routing.json that has extra keys
+printf '{"extra_key":"preserve_me","overrides":{"S:low":{"tier0":"haiku","reason":"old"}}}' > "$H/.claude/projects/test1/routing.json"
+# Run routing-stats with --write
+HOME="$H" python3 "$BIN/routing-stats.py" --project test1 --write >/dev/null
+# Verify bands
+python3 -c "
+import json
+data = json.load(open('$H/.claude/projects/test1/routing.json'))
+assert 'bands' in data, 'bands not in output'
+assert 'overrides' in data, 'overrides not in output'
+assert data['extra_key'] == 'preserve_me', 'extra key not preserved'
+assert len(data['bands']) == 3, f'expected 3 bands, got {len(data[\"bands\"])}'
+# Check S:low band (5 pass, 1 escalated, 0 blocked, 6 total)
+slo = [b for b in data['bands'] if b['complexity']=='S' and b['risk']=='low'][0]
+assert slo['n'] == 6, f'S:low n={slo[\"n\"]}, expected 6'
+assert slo['pass_tier0'] == 5, f'S:low pass_tier0={slo[\"pass_tier0\"]}, expected 5'
+assert slo['escalated'] == 1, f'S:low escalated={slo[\"escalated\"]}, expected 1'
+assert slo['blocked'] == 0, f'S:low blocked={slo[\"blocked\"]}, expected 0'
+assert slo['attempts_per_task'] == 1.2, f'S:low attempts_per_task={slo[\"attempts_per_task\"]}, expected 1.2'
+# Check M:low band (1 task, no escalations)
+mlo = [b for b in data['bands'] if b['complexity']=='M' and b['risk']=='low'][0]
+assert mlo['n'] == 1, f'M:low n={mlo[\"n\"]}, expected 1'
+assert mlo['pass_tier0'] == 1, f'M:low pass_tier0={mlo[\"pass_tier0\"]}, expected 1'
+assert mlo['escalated'] == 0, f'M:low escalated={mlo[\"escalated\"]}, expected 0'
+assert mlo['blocked'] == 0, f'M:low blocked={mlo[\"blocked\"]}, expected 0'
+assert mlo['attempts_per_task'] == 2.0, f'M:low attempts_per_task={mlo[\"attempts_per_task\"]}, expected 2.0'
+# Check M:high band (1 pass, 1 escalated, 1 blocked, 3 total)
+mhi = [b for b in data['bands'] if b['complexity']=='M' and b['risk']=='high'][0]
+assert mhi['n'] == 3, f'M:high n={mhi[\"n\"]}, expected 3'
+assert mhi['pass_tier0'] == 1, f'M:high pass_tier0={mhi[\"pass_tier0\"]}, expected 1'
+assert mhi['escalated'] == 1, f'M:high escalated={mhi[\"escalated\"]}, expected 1'
+assert mhi['blocked'] == 1, f'M:high blocked={mhi[\"blocked\"]}, expected 1'
+assert mhi['attempts_per_task'] == 3.0, f'M:high attempts_per_task={mhi[\"attempts_per_task\"]}, expected 3.0'
+" || fail "bands format or content"
+# Test exit code 2 without --project
+HOME="$H" python3 "$BIN/routing-stats.py" --write >/dev/null 2>&1 || EXIT_CODE=$?
+[ "$EXIT_CODE" -eq 2 ] || fail "expected exit code 2, got $EXIT_CODE"
+# Test with no runs: should write bands: [] and overrides: {}
+H2=$(tmp); mkdir -p "$H2/.claude/projects/empty"
+HOME="$H2" python3 "$BIN/routing-stats.py" --project empty --write >/dev/null
+python3 -c "
+import json
+data = json.load(open('$H2/.claude/projects/empty/routing.json'))
+assert data.get('bands') == [], f'expected empty bands, got {data.get(\"bands\")}'
+assert data.get('overrides') == {}, f'expected empty overrides, got {data.get(\"overrides\")}'
+" || fail "empty project output"
+
 echo "OK"

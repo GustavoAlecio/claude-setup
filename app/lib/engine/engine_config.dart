@@ -148,6 +148,15 @@ class EngineLaunchError extends EngineLaunchResult {
   final String message;
 }
 
+/// Define beats config; `~/` expands against [home] and a trailing slash is dropped. `null` when neither is set.
+String? effectiveEngineDir({required String engineDirDefine, required DashboardConfig config, required String? home}) {
+  final raw = engineDirDefine.isNotEmpty ? engineDirDefine : config.engineDir;
+  return raw == null ? null : _trimSlash(_expandHome(raw, home));
+}
+
+String _expandHome(String path, String? home) =>
+    home != null && path.startsWith('~/') ? '$home${path.substring(1)}' : path;
+
 /// Engine dir: `--dart-define=ENGINE_DIR` → `engineDir`. Node: `nodePath` → `PATH` of [env].
 EngineLaunchResult resolveEngineLaunch({
   required String engineDirDefine,
@@ -156,13 +165,14 @@ EngineLaunchResult resolveEngineLaunch({
   required bool Function(String path) fileExists,
 }) {
   final home = env['HOME'];
-  String expand(String path) => home != null && path.startsWith('~/') ? '$home${path.substring(1)}' : path;
+  final engineDir = effectiveEngineDir(engineDirDefine: engineDirDefine, config: config, home: home);
+  if (engineDir == null) return const EngineLaunchError(kMissingEngineDir);
 
-  final rawDir = engineDirDefine.isNotEmpty ? engineDirDefine : config.engineDir;
-  if (rawDir == null) return const EngineLaunchError(kMissingEngineDir);
-  final engineDir = _trimSlash(expand(rawDir));
-
-  final node = _resolveNode(config.nodePath == null ? null : expand(config.nodePath!), env['PATH'], fileExists);
+  final node = _resolveNode(
+    config.nodePath == null ? null : _expandHome(config.nodePath!, home),
+    env['PATH'],
+    fileExists,
+  );
   if (node == null) return const EngineLaunchError(kMissingNode);
 
   if (!fileExists('$engineDir/node_modules')) return EngineLaunchError(missingNodeModules(engineDir));

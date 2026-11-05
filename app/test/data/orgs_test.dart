@@ -45,6 +45,27 @@ void main() {
     expect(parentPath('/'), '/');
   });
 
+  group('backTarget', () {
+    const config = DashboardConfig(lastOrg: 'B');
+    const projects = [Project(name: 'a', org: 'A'), Project(name: 'b', org: 'B'), Project(name: 'none')];
+
+    test('project of the current org, unknown project and non-project routes stay', () {
+      expect(backTarget('/p/b/runs', config, projects), '/p/b/runs');
+      expect(backTarget('/p/ghost', config, projects), '/p/ghost');
+      expect(backTarget('/', config, projects), '/');
+    });
+
+    test('project of another org goes to the landing', () {
+      expect(backTarget('/p/a/runs', config, projects), '/');
+      expect(backTarget('/p/none/runs', config, projects), '/');
+    });
+
+    test('without config or projects the target is kept', () {
+      expect(backTarget('/p/a/runs', null, projects), '/p/a/runs');
+      expect(backTarget('/p/a/runs', config, null), '/p/a/runs');
+    });
+  });
+
   group('orgOf', () {
     test('explicit org wins over the path', () {
       expect(orgOf('/Users/me/development/r10/score', explicit: 'abm', orgs: _orgs, canonical: _identity), 'abm');

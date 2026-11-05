@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 
+import '../core/claude_home.dart';
 import '../engine/engine_config.dart';
 import 'config_mutations.dart';
 import 'dashboard_config_repository.dart';
@@ -19,16 +20,10 @@ typedef _ConfigRead = ({DashboardConfig config, String? source});
 
 class FileFlowRepository implements FlowRepository {
   FileFlowRepository(this._requestedRoot, {String? stacksDir, String? checkpointScript, ScanRoots? scanRoots})
-    : _stacksDir = stacksDir ?? '$_claudeHome/stacks',
-      _checkpointScript = checkpointScript ?? '$_claudeHome/bin/wf-checkpoint.sh',
+    : _stacksDir = stacksDir ?? '${claudeHome()}/stacks',
+      _checkpointScript = checkpointScript ?? '${claudeHome()}/bin/wf-checkpoint.sh',
       _scanRoots = scanRoots ?? scan.scanRoots,
       _configRepository = FileDashboardConfigRepository('$_requestedRoot/.dashboard.json');
-
-  static String get defaultRoot => '$_claudeHome/workflow';
-
-  static String get _home => Platform.environment['HOME'] ?? '';
-
-  static String get _claudeHome => '$_home/.claude';
 
   static const _debounce = Duration(milliseconds: 300);
 
@@ -96,7 +91,7 @@ class FileFlowRepository implements FlowRepository {
       scan.inspectDirectory(dir, workflowExists: (name) => Directory('$_requestedRoot/$name').existsSync());
 
   @override
-  Future<List<String>> suggestedRoots() => scan.listSubdirectories('$_home/development');
+  Future<List<String>> suggestedRoots() => scan.listSubdirectories('${Platform.environment['HOME'] ?? ''}/development');
 
   void _ensureStarted() {
     if (_started) return;

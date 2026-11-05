@@ -119,6 +119,7 @@ class EngineSupervisor implements EngineController {
   EngineSupervisor({
     required String workflowRoot,
     String engineDirDefine = '',
+    String? claudeHome,
     CaptureEnv captureEnv = captureLoginEnv,
     StartProcess startProcess = Process.start,
     FileExists fileExists = fileExistsOnDisk,
@@ -127,6 +128,7 @@ class EngineSupervisor implements EngineController {
     Duration readyTimeout = const Duration(seconds: 5),
     Duration killGrace = const Duration(seconds: 3),
   }) : _workflowRoot = workflowRoot,
+       _claudeHome = claudeHome ?? Directory(workflowRoot).parent.path,
        _engineDirDefine = engineDirDefine,
        _captureEnv = captureEnv,
        _startProcess = startProcess,
@@ -137,6 +139,7 @@ class EngineSupervisor implements EngineController {
        _killGrace = killGrace;
 
   final String _workflowRoot;
+  final String _claudeHome;
   final String _engineDirDefine;
   final CaptureEnv _captureEnv;
   final StartProcess _startProcess;
@@ -218,7 +221,7 @@ class EngineSupervisor implements EngineController {
         launch.node,
         [launch.script, '--port', '0', '--sessions-dir', sessionsDir],
         workingDirectory: launch.engineDir,
-        environment: {...env, 'CLAUDE_HOME': Directory(_workflowRoot).parent.path},
+        environment: {...env, 'CLAUDE_HOME': _claudeHome},
         includeParentEnvironment: false,
       );
     } on ProcessException catch (e, st) {

@@ -22,16 +22,6 @@ class SettingsPage extends StatelessWidget {
   /// Location of "Voltar": the last project route visited, or the landing.
   final String Function() backTo;
 
-  /// An org switched from here (⌘N) changes `lastOrg` without leaving; back in a project of the old org
-  /// the shell would write that org back, so the landing opens the new one instead.
-  String _back(DashboardConfig? config, List<Project>? projects) {
-    final target = backTo();
-    final segments = Uri.parse(target).pathSegments;
-    if (config == null || projects == null || segments.length < 2 || segments.first != 'p') return target;
-    final org = projects.where((p) => p.name == segments[1]).firstOrNull?.org;
-    return org == null || org == config.lastOrg ? target : '/';
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -50,7 +40,7 @@ class SettingsPage extends StatelessWidget {
               children: [
                 TextButton.icon(
                   style: TextButton.styleFrom(foregroundColor: c.textSecondary),
-                  onPressed: () => context.go(_back(config, projects)),
+                  onPressed: () => context.go(backTarget(backTo(), config, projects)),
                   icon: const Icon(Icons.arrow_back, size: 16),
                   label: const Text('Voltar', style: TextStyle(fontSize: 12)),
                 ),

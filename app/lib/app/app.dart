@@ -8,8 +8,11 @@ import 'package:go_router/go_router.dart';
 
 import '../core/theme/app_theme.dart';
 import '../data/flow_repository.dart';
+import '../data/inventory_repository.dart';
+import '../data/mock_inventory_repository.dart';
 import '../data/sessions_repository.dart';
 import '../engine/engine_supervisor.dart';
+import '../core/claude_home.dart';
 import 'config_cubit.dart';
 import 'org_switch.dart';
 import 'engine_cubit.dart';
@@ -24,19 +27,25 @@ class ClaudeFlowApp extends StatefulWidget {
     required this.sessions,
     required this.engine,
     this.pickDirectory = getDirectoryPath,
+    this.inventory = const MockInventoryRepository.empty(),
+    this.paths,
   });
 
   final FlowRepository repository;
   final FolderPicker pickDirectory;
   final SessionsRepository sessions;
   final EngineController engine;
+  final InventoryRepository inventory;
+
+  /// `null` reads the real environment.
+  final EffectivePaths? paths;
 
   @override
   State<ClaudeFlowApp> createState() => _ClaudeFlowAppState();
 }
 
 class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
-  late final GoRouter _router = buildRouter();
+  late final GoRouter _router = buildRouter(widget.paths ?? EffectivePaths.fromEnvironment());
   late final AppLifecycleListener _lifecycle;
 
   @override
@@ -62,24 +71,27 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
     return RepositoryScope(
       repository: widget.repository,
       pickDirectory: widget.pickDirectory,
-      child: SessionsScope(
-        sessions: widget.sessions,
-        engine: widget.engine,
-        child: MultiBlocProvider(
-          providers: [
-            BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
-            BlocProvider(create: (_) => ConfigCubit(widget.repository)),
-            BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
-            BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
-          ],
-          child: MaterialApp.router(
-            title: 'Claude Flow',
-            debugShowCheckedModeBanner: false,
-            theme: buildTheme(Brightness.light),
-            darkTheme: buildTheme(Brightness.dark),
-            themeMode: ThemeMode.dark,
-            routerConfig: _router,
-            builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
+      child: InventoryScope(
+        repository: widget.inventory,
+        child: SessionsScope(
+          sessions: widget.sessions,
+          engine: widget.engine,
+          child: MultiBlocProvider(
+            providers: [
+              BlocProvider(create: (_) => ProjectsCubit(widget.repository)),
+              BlocProvider(create: (_) => ConfigCubit(widget.repository)),
+              BlocProvider(create: (_) => SessionsCubit(widget.sessions)),
+              BlocProvider(create: (_) => EngineCubit(widget.engine), lazy: false),
+            ],
+            child: MaterialApp.router(
+              title: 'Claude Flow',
+              debugShowCheckedModeBanner: false,
+              theme: buildTheme(Brightness.light),
+              darkTheme: buildTheme(Brightness.dark),
+              themeMode: ThemeMode.dark,
+              routerConfig: _router,
+              builder: (context, child) => _GlobalShortcuts(router: _router, child: child!),
+            ),
           ),
         ),
       ),
@@ -99,7 +111,7 @@ const _digits = [
   LogicalKeyboardKey.digit9,
 ];
 
-/// Above the Navigator so ⌘1..⌘9 (orgs in config order) and ⌘, work on every route.
+/// Above the Navigator so ⌘1..⌘9 (orgs in config order), ⌘, and ⌘I work on every route.
 class _GlobalShortcuts extends StatelessWidget {
   const _GlobalShortcuts({required this.router, required this.child});
 
@@ -123,6 +135,7 @@ class _GlobalShortcuts extends StatelessWidget {
     bindings: {
       for (final (i, key) in _digits.indexed) SingleActivator(key, meta: true): () => _switch(context, i),
       const SingleActivator(LogicalKeyboardKey.comma, meta: true): () => router.go('/settings'),
+      const SingleActivator(LogicalKeyboardKey.keyI, meta: true): () => router.go('/about'),
     },
     child: Focus(autofocus: true, child: child),
   );

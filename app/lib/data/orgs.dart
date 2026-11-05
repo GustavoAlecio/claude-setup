@@ -20,6 +20,21 @@ String parentPath(String path) {
   return i <= 0 ? '/' : p.substring(0, i);
 }
 
+/// Project name of a `/p/<name>/...` location; `null` for any other route.
+String? routeProject(String location) {
+  final segments = Uri.parse(location).pathSegments;
+  return segments.length >= 2 && segments.first == 'p' ? segments[1] : null;
+}
+
+/// Target of "Voltar" in Configurações and Sobre. An org switched there (⌘N) changed `lastOrg`; going back to a
+/// project of the old org would make the shell write that org back, so the landing opens the new one instead.
+String backTarget(String target, DashboardConfig? config, List<Project>? projects) {
+  final project = routeProject(target);
+  if (config == null || projects == null || project == null) return target;
+  final org = projects.where((p) => p.name == project).firstOrNull?.org;
+  return org == null || org == config.lastOrg ? target : '/';
+}
+
 /// Segment-wise prefix: `/dev/r10` contains `/dev/r10/app` but not `/dev/r10x`.
 bool containsPath(String root, String path) {
   final r = normalizePath(root);
