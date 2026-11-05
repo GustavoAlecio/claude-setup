@@ -144,7 +144,7 @@ Depois rode o script de metricas end novamente se o current.json nao existia ant
 test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO_ON" || echo "AUTO_OFF"
 ```
 
-- Se `AUTO_ON`: atualize `status` para `"spec_approved"` no `current.json`, apresente resumo da spec em 3-5 linhas e avance automaticamente executando `/plan`
-- Se `AUTO_OFF`: finalize com "Spec gerada. Esta correta? Se sim: `/plan`"
+- Se `AUTO_ON`: atualize `status` para `"spec_approved"` no `current.json`, apresente resumo da spec em 3-5 linhas e avance automaticamente executando `/challenge-spec`
+- Se `AUTO_OFF`: finalize com "Spec gerada. Esta correta? Se sim: `/challenge-spec` (ou `/plan` para pular o desafio)"
 
 > **Nota:** quando o usuario aprovar a spec (confirmando ou executando `/plan`), o `/plan` deve setar `status` para `"spec_approved"` antes de iniciar.

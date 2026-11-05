@@ -1,122 +1,85 @@
 ---
 name: verify
 model: opus
-description: Etapa 5 do Fluxo Smart — valida a implementacao contra os criterios de aceite da spec
+description: Etapa 5 do Fluxo Smart — G1 arquitetural do ciclo inteiro + G2 QA (critérios de aceite, testes, app rodando) via workflow smart-verify; reprovou → reentra na escada automaticamente
 ---
 
 ## 1. Detectar projeto
 ```bash
 PROJECT_PATH=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 PROJECT_NAME=$(basename "$PROJECT_PATH")
+WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ```
 
-## 2. Verificar pre-requisitos
+## 2. Pré-requisitos
 
-Leia os 3 artefatos:
-- `~/.claude/workflow/$PROJECT_NAME/spec.md` — fonte dos criterios de aceite
-- `~/.claude/workflow/$PROJECT_NAME/plan.md` — estrategia de testes mapeada
-- `~/.claude/workflow/$PROJECT_NAME/tasks.md` — confirmar que todas estao `[x]`
+Leia `$WF_DIR/current.json`, `spec.md`, `plan.md`, `tasks.md`.
+- Tasks pendentes → "Há tasks pendentes. Rode `/implement` primeiro."
+- Sem `exec.base_checkpoint` → o ciclo não passou pelo `/implement` novo; pare e explique.
 
-Se algum nao existir, informe qual etapa esta faltando.
-Leia `~/.claude/workflow/$PROJECT_NAME/current.json` para contexto.
+Mesmo profile de stack do `/implement` (seção 3 de lá).
 
-### Context budget
-Da spec.md, leia apenas: "Criterios de aceite". Do plan.md, leia apenas: "Estrategia de testes (TDD)". Nao carregue artefatos inteiros — foque no que e necessario para validar.
+## 3. Preparar run
 
-Se houver tasks `[ ]` pendentes no tasks.md, avise: "Ha tasks pendentes. Execute `/implement` primeiro ou deseja verificar parcialmente?"
-
-## 3. Capturar metricas de inicio — EXECUTE AGORA
 ```bash
 bash ~/.claude/bin/capture-metrics.sh start verify "$PROJECT_NAME" "$PROJECT_PATH"
+RUN_ID="verify-$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DIR="$WF_DIR/runs/$RUN_ID"
+mkdir -p "$RUN_DIR"
 ```
 
-## 4. Executar testes mapeados
+Para G2 com runtime, o device do profile (`g2_device`) precisa estar disponível. Cheque com o dart MCP (`list_devices`); se não estiver, avise antes de disparar — o QA vai voltar `inconclusive`.
 
-Leia a tabela "Estrategia de testes (TDD)" do plan.md. Para cada teste mapeado:
+## 4. Disparar
 
-1. Verifique se o arquivo de teste existe
-2. Se existir, execute-o
-3. Registre: PASS ou FAIL + motivo
+Ferramenta **Workflow** com `name: "smart-verify"` e `args`:
 
-```bash
-# Adapte ao projeto — ex:
-# flutter test <path_to_test>
-# npm test -- <path_to_test>
-# pytest <path_to_test>
+```json
+{
+  "project_path": "<PROJECT_PATH>",
+  "workflow_dir": "<WF_DIR>",
+  "run_dir": "<RUN_DIR>",
+  "stack_name": "flutter",
+  "stack": { "...profile..." },
+  "base_checkpoint": "<exec.base_checkpoint>",
+  "checkpoint": "<exec.checkpoint>",
+  "plan_path": "<WF_DIR>/plan.md",
+  "spec_path": "<WF_DIR>/spec.md",
+  "lessons_path": "<se existir>",
+  "tasks": [ "...todos os tasks.items, com tier/tier0/attempts/files_changed/tests/affects..." ],
+  "max_rounds": 2,
+  "max_attempts": 5,
+  "per_tier": 2
+}
 ```
 
-Se nao houver testes mapeados ou o projeto nao tiver suite de testes configurada, pule esta etapa e registre "Sem testes automatizados mapeados".
+Informe em 1 linha e encerre o turno.
 
-## 5. Validar criterios de aceite
+## 5. Ao receber o resultado
 
-Para cada criterio de aceite `[ ]` da spec.md:
+Grave em `$RUN_DIR/workflow-result.json` e persista com `wf-event.py persist` (mesmo comando do `/implement`).
 
-1. **Localize a evidencia no codigo:** busque no codebase o trecho que implementa o criterio
-2. **Avalie:** o codigo atende ao criterio? Leia o codigo real, nao assuma.
-3. **Classifique:**
-   - **PASS** — criterio atendido, com evidencia (arquivo:linha)
-   - **PARTIAL** — parcialmente atendido, descreva o que falta
-   - **FAIL** — nao atendido, descreva o gap
-   - **UNTESTABLE** — nao e verificavel por inspecao de codigo (ex: requer teste manual de UI)
-
-## 6. Verificar lessons learned
-
-Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, leia-o e verifique: "alguma regra documentada foi violada nesta implementacao?"
-
-Se sim, registre como FAIL adicional no relatorio com referencia a lesson violada.
-
-## 7. Gerar relatorio de verificacao
-
-Apresente o resultado:
+Relatório:
 
 ```markdown
-## Verificacao: <Feature>
+## Verify — <status> (rodadas: N)
 
-### Criterios de aceite
-| # | Criterio | Status | Evidencia |
-|---|----------|--------|-----------|
-| 1 | <criterio> | PASS/PARTIAL/FAIL/UNTESTABLE | <arquivo:linha ou motivo> |
+### G1 — arquitetura
+| Reviewer | Veredito | Bloqueantes |
+|---|---|---|
 
-### Testes automatizados
-| Teste | Arquivo | Status |
-|-------|---------|--------|
-| <nome> | <path> | PASS/FAIL/NOT_FOUND |
+### G2 — critérios de aceite
+| # | Critério | Status | Evidência |
+|---|---|---|---|
 
-### Lessons learned
-- <Nenhuma violacao encontrada> ou <lesson violada: detalhes>
-
-### Resultado
-- **Criterios:** X/Y PASS, Z PARTIAL, W FAIL
-- **Testes:** X/Y passando
-- **Veredicto:** APROVADO / APROVADO COM RESSALVAS / REPROVADO
+### Reentradas
+- r1: T2, V1 → done (T2 sonnet→opus)
 ```
 
-## 8. Acao baseada no resultado
+Por `status`:
 
-**APROVADO (todos PASS ou UNTESTABLE):**
-1. Marque todos os criterios como `[x]` na spec.md
-2. Atualize `current.json` status para `"verified"`
-3. Arquive o ciclo:
-   ```bash
-   bash ~/.claude/bin/archive-cycle.sh completed "$PROJECT_NAME"
-   ```
-4. Finalize: "Implementacao verificada e aprovada. Ciclo arquivado."
+- **verified** → marque os critérios PASS como `[x]` na `spec.md`, rode `capture-metrics.sh end verify` (seta `verified`). Liste os UNTESTABLE explicitamente — são o que o QA humano precisa olhar. Auto on: siga para `/complete`. Auto off: "Verificado. Fechar o ciclo? `/complete`".
+- **inconclusive** → o QA não conseguiu validar (device, backend, credencial). Mostre o motivo; não marque nada. Ofereça rodar de novo depois de resolver o ambiente.
+- **blocked / backtrack** → mesmo tratamento do `/implement` (diagnosis ToT, protocolo de desvio). Nunca decida sozinho.
 
-**APROVADO COM RESSALVAS (tem PARTIAL ou UNTESTABLE, mas nenhum FAIL):**
-1. Marque os PASS como `[x]` na spec.md
-2. Liste as ressalvas (PARTIAL e UNTESTABLE) para o usuario decidir
-3. Pergunte: "Ha ressalvas. Deseja aprovar assim mesmo e arquivar, ou corrigir os pontos pendentes?"
-   - Se aprovar → arquive
-   - Se corrigir → liste o que precisa ser feito e sugira `/implement` com tasks complementares
-
-**REPROVADO (tem FAIL):**
-1. Liste todos os FAILs com detalhes
-2. Proponha tasks de correcao para cada FAIL
-3. Pergunte: "A verificacao encontrou gaps. Deseja que eu crie tasks de correcao e execute?"
-   - Se sim → crie tasks complementares no tasks.md e execute como no `/implement`
-   - Se nao → mantenha o estado para revisao manual
-
-## 9. Capturar metricas finais — EXECUTE AGORA (obrigatorio)
-```bash
-bash ~/.claude/bin/capture-metrics.sh end verify "$PROJECT_NAME" "$PROJECT_PATH"
-```
+Findings minor/nit dos reviewers: liste no fim como "não bloqueantes", sem abrir task.

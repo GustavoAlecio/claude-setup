@@ -32,11 +32,12 @@ CYCLE_DIR="$HISTORY_DIR/${DATE}_${FEATURE_SLUG}"
 
 mkdir -p "$CYCLE_DIR"
 
-for f in spec.md plan.md tasks.md; do
+for f in spec.md plan.md tasks.md tot-plan.json; do
     if [ -f "$WORKFLOW_DIR/$f" ]; then
         cp "$WORKFLOW_DIR/$f" "$CYCLE_DIR/$f"
     fi
 done
+[ -d "$WORKFLOW_DIR/runs" ] && cp -R "$WORKFLOW_DIR/runs" "$CYCLE_DIR/runs"
 
 # Generate results.md and metrics.json
 python3 - "$WORKFLOW_DIR/current.json" "$CYCLE_DIR" "$FEATURE_NAME" "$PROJECT_NAME" "$STATUS" << 'PYEOF'

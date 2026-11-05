@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-setup installer — symlinks skills, agents and bin scripts into ~/.claude/
+# claude-setup installer — symlinks skills, agents, bin scripts, workflows and stack profiles into ~/.claude/
 # Usage:
 #   ./install.sh                    # installs the "all" bundle (everything)
 #   ./install.sh smart-flow         # installs only the smart-flow bundle
@@ -15,6 +15,7 @@ CLAUDE_DIR="$HOME/.claude"
 BUNDLES_DIR="$REPO_DIR/bundles"
 DRY_RUN=0
 UNINSTALL=0
+LINK_DIRS="skills agents bin workflows stacks"
 
 # ---- arg parsing ---------------------------------------------------------
 
@@ -54,7 +55,7 @@ done
 
 if [ "$UNINSTALL" -eq 1 ]; then
   echo "Removing symlinks pointing into $REPO_DIR..."
-  for d in skills agents bin; do
+  for d in $LINK_DIRS; do
     [ -d "$CLAUDE_DIR/$d" ] || continue
     find "$CLAUDE_DIR/$d" -maxdepth 1 -type l | while read -r link; do
       target=$(readlink "$link")
@@ -109,7 +110,7 @@ BACKUP_DIR="$CLAUDE_DIR/backups/pre-claude-setup-$TIMESTAMP"
 
 if [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$BACKUP_DIR"
-  for d in skills agents bin; do
+  for d in $LINK_DIRS; do
     if [ -e "$CLAUDE_DIR/$d" ]; then
       cp -R "$CLAUDE_DIR/$d" "$BACKUP_DIR/" 2>/dev/null || true
     fi
@@ -119,11 +120,16 @@ fi
 
 # ---- linking -------------------------------------------------------------
 
-mkdir -p "$CLAUDE_DIR/skills" "$CLAUDE_DIR/agents" "$CLAUDE_DIR/bin"
+for d in $LINK_DIRS; do mkdir -p "$CLAUDE_DIR/$d"; done
 
 link_one() {
   local src="$1"
   local dest="$2"
+
+  if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+    echo "  skipped $dest (real file/dir, not a symlink — move it away to install)" >&2
+    return
+  fi
 
   if [ "$DRY_RUN" -eq 1 ]; then
     echo "  [dry-run] $dest -> $src"
@@ -151,15 +157,15 @@ for entry in "${RESOLVED_ENTRIES[@]}"; do
       name=$(basename "$entry")
       link_one "$src_path" "$CLAUDE_DIR/agents/$name"
       ;;
-    bin/)
+    bin/|workflows/|stacks/)
+      dir="${entry%/}"
       for f in "$src_path"*; do
-        [ -e "$f" ] || continue
-        link_one "$f" "$CLAUDE_DIR/bin/$(basename "$f")"
+        [ -f "$f" ] || continue
+        link_one "$f" "$CLAUDE_DIR/$dir/$(basename "$f")"
       done
       ;;
-    bin/*)
-      name=$(basename "$entry")
-      link_one "$src_path" "$CLAUDE_DIR/bin/$name"
+    bin/*|workflows/*|stacks/*)
+      link_one "$src_path" "$CLAUDE_DIR/${entry%%/*}/$(basename "$entry")"
       ;;
     *)
       echo "Warning: unknown entry type '$entry', skipping" >&2

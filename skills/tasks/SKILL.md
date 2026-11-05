@@ -45,6 +45,13 @@ Classifique cada task como:
 
 Baseie a classificacao na tabela "Arquivos impactados" do plano e no tipo de mudanca.
 
+**Campos que a escada de modelos consome** (o `/implement` recusa task sem eles):
+- `affects` — paths/globs que a task deve tocar (da tabela "Arquivos impactados"). Usado no G1 e no match de ADRs.
+- `tests` — arquivos de teste da task (da tabela "Estrategia de testes"), relativos ao repo. O G0 roda exatamente esses. Task de teste (Red) lista o proprio teste; task Green lista o teste que deve passar. Task sem teste aplicavel: `[]`.
+- `risk` — `high` se mexe em contrato (API, gRPC, WebSocket, schema), estado compartilhado/real-time, auth/assinatura, migracao, ou codigo citado por ADR; senao `low`.
+- `tier0` — modelo inicial: `S→haiku`, `M→sonnet`, `L→opus`. `risk: high` sobe um degrau (max `opus`). Override aprendido: se `~/.claude/projects/$PROJECT_NAME/routing.json` tiver `overrides["<S|M|L>:<low|high>"].tier0`, ele vence — diga quando aplicar.
+- `description` — o que + onde + criterio de conclusao, autocontido: o dev-implementer le o plano, mas nao le esta conversa.
+
 ## 5. Salvar tasks.md
 
 Crie `~/.claude/workflow/$PROJECT_NAME/tasks.md` — **checklist com complexidade**:
@@ -52,9 +59,9 @@ Crie `~/.claude/workflow/$PROJECT_NAME/tasks.md` — **checklist com complexidad
 ```markdown
 # Tasks: <Feature>
 
-- [ ] `S` #ID — Titulo da task
-- [ ] `M` #ID — Titulo da task
-- [ ] `L` #ID — Titulo da task
+- [ ] `S` `haiku` #ID — Titulo da task
+- [ ] `M` `sonnet` #ID — Titulo da task
+- [ ] `L` `opus` #ID — Titulo da task
 ```
 
 ## 6. Capturar metricas finais — EXECUTE AGORA (obrigatorio)
@@ -70,16 +77,29 @@ Atualize o objeto `tasks` no `current.json`:
   "completed": 0,
   "current_task_id": null,
   "items": [
-    { "id": "T1", "title": "<titulo>", "complexity": "S|M|L", "status": "pending" },
-    { "id": "T2", "title": "<titulo>", "complexity": "M", "status": "pending" }
+    {
+      "id": "T1", "title": "<titulo>", "description": "<o que + onde + criterio>",
+      "complexity": "S", "risk": "low", "tier0": "haiku", "tier": "haiku", "attempts": 0,
+      "affects": ["lib/features/auth/bloc/**"], "tests": ["test/features/auth/auth_bloc_test.dart"],
+      "status": "pending"
+    }
   ]
 }
 ```
 
-Cada item deve ter o ID, titulo, complexidade e status `"pending"`.
+Cada item deve ter todos os campos acima; `tier` comeca igual a `tier0` e e a escada que o altera.
 
-## 7. Finalizar
+## 7. Verificar piloto automatico e finalizar
 
-Apresente resumo: "N tasks criadas (Xs S, Xm M, Xl L). Avancando para implementacao."
+```bash
+test -f ~/.claude/workflow/auto_mode.flag && echo "AUTO_ON" || echo "AUTO_OFF"
+```
 
-Avance automaticamente executando `/implement`.
+Apresente o resumo: "N tasks criadas (Xs S, Xm M, Xl L) · tier0: Xh haiku, Ys sonnet, Zo opus · K de risco alto."
+
+- Se `AUTO_ON`: avance automaticamente executando `/implement`.
+- Se `AUTO_OFF`: **pare** e finalize com "Tasks criadas. Seguir para implementacao? Se sim: `/implement`".
+
+> Este gate existe pelo mesmo motivo do `/specify` e do `/plan`: `/implement`
+> escreve codigo. Encadear sem OK com auto off era inconsistente com as outras
+> etapas do fluxo.

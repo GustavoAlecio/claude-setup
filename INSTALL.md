@@ -4,7 +4,9 @@
 
 - [Claude Code](https://claude.com/claude-code) installed and run at least once (so `~/.claude/` exists).
 - `bash` 3.2+ (default on macOS) or `bash` 4+ on Linux.
-- `git`.
+- `git`, `python3`.
+- For the Smart Flow: dynamic workflows enabled in Claude Code (`/config` → Dynamic workflows). For the Flutter stack, `dart`/`flutter` on PATH (or `fvm`) and the `dart-flutter` MCP server for G2 runtime checks.
+- `node` 18+ only to run `tests/`.
 
 ## Install
 
@@ -18,9 +20,9 @@ cd claude-setup
 
 ## What it does
 
-1. **Backs up** your existing `~/.claude/skills/`, `~/.claude/agents/`, `~/.claude/bin/` to `~/.claude/backups/pre-claude-setup-<timestamp>/`.
+1. **Backs up** your existing `~/.claude/{skills,agents,bin,workflows,stacks}/` to `~/.claude/backups/pre-claude-setup-<timestamp>/`.
 2. **Resolves bundle dependencies** (entries starting with `@` reference other bundles).
-3. **Symlinks** each item from this repo into `~/.claude/`. Existing symlinks are replaced; existing real files in `~/.claude/skills/<name>/` are NOT touched (only the symlink at the top level is overwritten).
+3. **Symlinks** each item from this repo into `~/.claude/`. Existing symlinks are replaced. Existing **real** files or directories with the same name are skipped with a warning, never overwritten — move them away (they are in the backup) and re-run to link them.
 
 Symlinks are item-by-item (not directory-level), so any custom skills or agents you have in `~/.claude/` that aren't in this repo are preserved.
 
@@ -81,3 +83,12 @@ cp settings/settings.example.json ~/.claude/settings.json
 ```
 
 Review the file before applying — it includes hook references that depend on `bin/` being installed.
+
+## Tests
+
+```bash
+./tests/run.sh
+```
+
+Runs smoke tests for the deterministic helpers in `bin/` (checkpoint/restore, ADR matching, result persistence, and the G0 gate when `dart` is available) and the workflow ladder tests, which drive `workflows/*.js` with mocked agents.
+
