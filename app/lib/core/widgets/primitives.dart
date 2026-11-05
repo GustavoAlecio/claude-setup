@@ -189,3 +189,60 @@ String formatTokens(int? n) => switch (n) {
   >= 1000 => '${(n / 1000).toStringAsFixed(1)}k',
   _ => '$n',
 };
+
+/// Inline error under a toolbar; [onRetry] `null` disables "Tentar de novo".
+class ErrorRetryRow extends StatelessWidget {
+  const ErrorRetryRow(this.message, {super.key, required this.onRetry});
+
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 14, color: c.fail),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(message, style: TextStyle(fontSize: 12, color: c.fail)),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: onRetry,
+            child: const Text('Tentar de novo', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Header of a fixed-width table; a `null` width is the flexible column and an empty label a spacer.
+class TableHeaderRow extends StatelessWidget {
+  const TableHeaderRow(this.columns, {super.key});
+
+  final List<(String, double?)> columns;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    Widget cell(String label, double? width) {
+      final text = Text(
+        label,
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: c.textMuted),
+      );
+      return width == null ? Expanded(child: text) : SizedBox(width: width, child: text);
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Row(children: [for (final (label, width) in columns) cell(label, width)]),
+    );
+  }
+}
