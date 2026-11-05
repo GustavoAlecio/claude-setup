@@ -4,9 +4,11 @@ import 'package:go_router/go_router.dart';
 import '../core/claude_home.dart';
 import '../data/orgs.dart';
 import '../features/about/about_page.dart';
+import '../features/artifacts/artifacts_page.dart';
 import '../features/flow/flow_page.dart';
 import '../features/landing/landing_page.dart';
 import '../features/placeholder/planned_page.dart';
+import '../features/reviews/reviews_page.dart';
 import '../features/runs/runs_page.dart';
 import '../features/runs/task_detail_page.dart';
 import '../features/sessions/sessions_page.dart';
@@ -79,10 +81,17 @@ GoRouter buildRouter(EffectivePaths paths) {
             path: '/p/:project/:tab',
             pageBuilder: (_, state) {
               final project = state.pathParameters['project']!;
+              final query = state.uri.queryParameters;
               return _instant(state, switch (AppTab.parse(state.pathParameters['tab'])) {
                 AppTab.flow => FlowPage(projectName: project),
                 AppTab.runs => RunsPage(projectName: project),
                 AppTab.sessions => SessionsPage(scope: ShellProjectScope(project)),
+                AppTab.artifacts => ArtifactsPage(key: ValueKey(project), projectName: project, doc: query['doc']),
+                AppTab.reviews => ReviewsPage(
+                  key: ValueKey(project),
+                  projectName: project,
+                  pr: int.tryParse(query['pr'] ?? ''),
+                ),
                 final tab => PlannedPage(tab: tab),
               });
             },

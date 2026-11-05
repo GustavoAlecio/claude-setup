@@ -5,11 +5,6 @@ import '../../core/widgets/primitives.dart';
 import '../shell/shell_page.dart';
 
 const _planned = {
-  AppTab.artifacts: (
-    'Artefatos',
-    ['spec.md, plan.md, tasks.md, details/ com markdown + mermaid', 'Diff entre versões da spec após challenge-spec'],
-  ),
-  AppTab.reviews: ('Reviews', ['Diff com comentários inline dos agentes por stack', 'Aprovar / publicar o review']),
   AppTab.prs: ('PRs', ['prs.json enriquecido via gh: CI, review, merge', 'Próximo passo por PR']),
   AppTab.inbox: (
     'Para revisar',
