@@ -41,8 +41,9 @@ python3 ~/.claude/bin/wf-report.py stage-start tasks --workflow-dir "$WF_DIR" ${
 
 Use `TaskCreate` para cada unidade de trabalho. Regras:
 - 1 responsabilidade por task
-- Ordenadas por dependencia (infra → feature → testes)
-- Se TDD: task de teste (Red) antes da task de implementacao (Green)
+- Ordenadas por dependencia (infra → feature → testes); `depends_on` lista os ids anteriores de que a task depende
+- Cada task termina com seus testes passando: o G0 roda os `tests` da task e reprova teste vermelho. TDD acontece **dentro** da task (escreve o teste, ve falhar, implementa, ve passar). Nunca crie task cujo resultado seja teste falhando (Red-only) seguida de outra que o faz passar: junte as duas
+- Task so de teste e valida quando o teste passa ao fim dela (regressao de bug ja corrigido, cobertura de codigo existente)
 - Titulo objetivo, descricao no formato de 4 blocos (ver `description` abaixo)
 
 **Estimativa de complexidade por task:**
@@ -55,7 +56,7 @@ Baseie a classificacao na tabela "Arquivos impactados" do plano e no tipo de mud
 
 **Campos que a escada de modelos consome** (o `/implement` recusa task sem eles):
 - `affects` — paths/globs que a task deve tocar (da tabela "Arquivos impactados"). Usado no G1 e no match de ADRs.
-- `tests` — arquivos de teste da task (da tabela "Estrategia de testes"), relativos ao repo. O G0 roda exatamente esses. Task de teste (Red) lista o proprio teste; task Green lista o teste que deve passar. Task sem teste aplicavel: `[]`.
+- `tests` — arquivos de teste da task (da tabela "Estrategia de testes"), relativos ao repo. O G0 roda exatamente esses e todos precisam passar ao fim da task. Teste novo precisa estar no `affects` desta task ou de uma anterior. Task sem teste aplicavel: `[]`.
 - `risk` — `high` se mexe em contrato (API, gRPC, WebSocket, schema), estado compartilhado/real-time, auth/assinatura, migracao, ou codigo citado por ADR; senao `low`.
 - `tier0` — modelo inicial: `S→haiku`, `M→sonnet`, `L→opus`. `risk: high` sobe um degrau (max `opus`). Override aprendido: se `~/.claude/projects/$PROJECT_NAME/routing.json` tiver `overrides["<S|M|L>:<low|high>"].tier0`, ele vence — diga quando aplicar.
 - `description` — autocontida (o dev-implementer le o plano, mas nao le esta conversa), com **exatamente 4 blocos nesta ordem**, separados por uma linha em branco:
@@ -122,6 +123,14 @@ Atualize o objeto `tasks` no `current.json`:
 ```
 
 Cada item deve ter todos os campos acima; `tier` comeca igual a `tier0` e e a escada que o altera.
+
+### Validar o plano (obrigatorio, deterministico)
+
+```bash
+python3 ~/.claude/bin/wf_gate.py tasks-check --workflow-dir "$WF_DIR" --repo "$PROJECT_PATH"
+```
+
+Saida 1 lista erros por task (`RED_ONLY`, `TEST_NOT_PRODUCED`, `BAD_DEPENDENCY`, `DESCRIPTION_BLOCKS`, `MISSING_FIELD`). Corrija as tasks (no `current.json` e no `tasks.md`) e rode de novo ate sair 0. Nao siga para o gate com erro.
 
 Relatório: fim da etapa. Escreva com **Write** um resumo de 3 a 10 linhas em `$WF_DIR/.stage-summary.md` (nunca interpole texto em shell) e rode:
 

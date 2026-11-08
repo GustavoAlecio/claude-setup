@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".claude" / "bin"))
 from current_json import update_current_json  # noqa: E402
+from wf_gate import bind_revision  # noqa: E402
 
 
 def now():
@@ -55,7 +56,7 @@ def cmd_log(a):
 
 def cmd_persist(a):
     run_dir = Path(a.run_dir)
-    result = json.loads(Path(a.result_file).read_text())
+    result = bind_revision(json.loads(Path(a.result_file).read_text()))
     run_dir.mkdir(parents=True, exist_ok=True)
     tmp = run_dir / "result.json.tmp"
     tmp.write_text(json.dumps(result, indent=2, ensure_ascii=False))
@@ -86,6 +87,13 @@ def cmd_persist(a):
         if result.get("checkpoint"):
             ex["checkpoint"] = resolve_ref(result["checkpoint"])
         ex["last_status"] = result.get("status")
+        # Any later run (implement, reentry) changes the tree, so only a verify result can stand as the verify of record.
+        dec = result.get("decision")
+        if isinstance(dec, dict):
+            ex["verify"] = {"run": run_dir.name, "status": result.get("status"), "reason_code": dec.get("reason_code"),
+                            "revision_id": dec.get("revision_id"), "repo": dec.get("repo"), "at": ts}
+        else:
+            ex.pop("verify", None)
         if result.get("status") == "blocked":
             d.setdefault("blockers", []).append({"run": run_dir.name, "task": result.get("blocked_task"), "reason": result.get("reason")})
         return d

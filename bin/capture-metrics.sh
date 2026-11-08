@@ -66,7 +66,8 @@ def modifier(current):
 
     if step_name == "verify":
         current["end_date"] = end_ts
-        current["status"] = "verified"
+        v = (current.get("exec") or {}).get("verify") or {}
+        current["status"] = "verified" if v.get("status") == "verified" else "unverified"
 
     return current
 

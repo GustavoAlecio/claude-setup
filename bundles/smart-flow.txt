@@ -21,6 +21,7 @@ bin/get-project.sh
 bin/to-slug.sh
 bin/wf-checkpoint.sh
 bin/wf-event.py
+bin/wf_gate.py
 bin/gate_g0.py
 bin/adr-index.py
 bin/routing-stats.py

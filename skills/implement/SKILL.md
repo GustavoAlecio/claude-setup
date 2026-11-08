@@ -18,7 +18,13 @@ WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 
 Leia `$WF_DIR/plan.md`, `$WF_DIR/tasks.md` e `$WF_DIR/current.json`. Faltando algum, informe a etapa.
 
-Cada item de `tasks.items` precisa de `complexity`, `tier0`, `tests` e `affects` (gerados pelo `/tasks`). Faltando, pare e peça `/tasks` de novo — sem eles a escada e o G0 não funcionam.
+Valide o plano de tasks antes de disparar (campos da escada, Red-only, testes que nenhuma task cria):
+
+```bash
+python3 ~/.claude/bin/wf_gate.py tasks-check --workflow-dir "$WF_DIR" --repo "$PROJECT_PATH"
+```
+
+Saída 1: mostre os erros e pare, apontando `/tasks` — sem isso o G0 reprova por construção.
 
 ## 3. Stack
 

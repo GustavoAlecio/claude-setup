@@ -25,6 +25,17 @@ if [ -z "$FEATURE_NAME" ]; then
     exit 1
 fi
 
+# `completed` is a claim: it needs a verify valid for the tree on disk or a human-accepted exception for it.
+# Abandoning stays free, so no path through here can mint `completed` without proof.
+COMPLETION=""
+if [ "$STATUS" = "completed" ]; then
+    if ! COMPLETION=$(python3 "$SCRIPT_DIR/wf_gate.py" complete-check --workflow-dir "$WORKFLOW_DIR"); then
+        echo "$COMPLETION"
+        echo "Error: cycle not archived as completed: no valid verify for this revision and no human exception (wf_gate.py accept-unverified)" >&2
+        exit 1
+    fi
+fi
+
 FEATURE_SLUG=$(to-slug "$FEATURE_NAME")
 DATE=$(date +%Y-%m-%d)
 HISTORY_DIR="$PROJECTS_DIR/$PROJECT_NAME/history"
@@ -32,7 +43,8 @@ CYCLE_DIR="$HISTORY_DIR/${DATE}_${FEATURE_SLUG}"
 
 mkdir -p "$CYCLE_DIR"
 
-for f in spec.md plan.md tasks.md tot-plan.json report.json; do
+[ -n "$COMPLETION" ] && printf '%s\n' "$COMPLETION" > "$CYCLE_DIR/completion.json"
+for f in spec.md plan.md tasks.md tot-plan.json report.json overrides.jsonl; do
     if [ -f "$WORKFLOW_DIR/$f" ]; then
         cp "$WORKFLOW_DIR/$f" "$CYCLE_DIR/$f"
     fi
@@ -128,6 +140,12 @@ metrics = {
     "completion_rate": completion_rate, "status": status,
     "backtracks": backtracks, "phases": {},
 }
+try:
+    with open(f"{cycle_dir}/completion.json") as f:
+        c = json.load(f)
+    metrics["verify"] = {k: c.get(k) for k in ("verdict", "reason_code", "human_override", "revision_id", "verify_run")}
+except (OSError, ValueError):
+    pass
 for pn in ["specify", "plan", "tasks", "implement", "verify"]:
     phase = phases.get(pn, {})
     if phase:
