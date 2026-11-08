@@ -1,3 +1,5 @@
+import 'tracker.dart';
+
 enum PrChecks { failing, pending, passing }
 
 class ReviewThread {
@@ -12,7 +14,7 @@ class ReviewThread {
 class PullRequest {
   const PullRequest({
     this.number,
-    this.adoId,
+    this.card,
     this.branch,
     this.target,
     this.title = '',
@@ -33,7 +35,7 @@ class PullRequest {
   });
 
   final int? number;
-  final String? adoId;
+  final CardRef? card;
   final String? branch;
   final String? target;
   final String title;

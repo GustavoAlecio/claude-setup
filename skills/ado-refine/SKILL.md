@@ -8,8 +8,7 @@ Skill que orquestra: buscar work item do Azure DevOps → entender contexto → 
 
 ## Defaults
 
-- **Org:** `<your-org>`
-- **Project:** `<your-project>`
+- **Org / Project:** os do tracker da org do repo (`orgs[].tracker` no `.dashboard.json`, configurado no app; `python3 ~/.claude/bin/tracker.py resolve`). O `ado.sh` já os lê sozinho.
 
 Sobrescritos por `--org=...` / `--project=...` nos args. Primeiro argumento numerico = ID do work item.
 

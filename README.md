@@ -20,7 +20,7 @@ My personal [Claude Code](https://claude.com/claude-code) configuration — skil
 | `dart-clean-arch` | Opinionated Dart conventions (sealed freezed, naming, extensions, lint) |
 | `flutter-clean-arch` | Opinionated Flutter architecture (Cubit-first, multi-state, manual DI, go_router) |
 | `refine` | Standalone technical refinement of a task against the project's codebase |
-| **ADO Flow** (`kickoff`, `ado-get`, `ado-comment`, `ado-close`, `ado-refine`) | Azure DevOps work item pipeline — triage, refine, comment, close (set `ADO_ORG` / `ADO_PROJECT`) |
+| **Tracker Flow** (`kickoff`, `ado-get`, `ado-comment`, `ado-close`, `ado-refine`, `jira-refine`) | Card pipeline — triage, refine, comment, close. The tracker (Azure DevOps, Jira or Linear) is per org: `orgs[].tracker` in `~/.claude/workflow/.dashboard.json`, set in the app |
 | `pr-open`, `pr-status` | Open PRs linked to work items and track in-flight PRs (review/CI/comments digest) |
 | `orcamento` | Commercial proposal generator (Markdown/HTML/PDF) driven by a local `company.json` — see `company.example.json` |
 
@@ -64,7 +64,8 @@ Helper scripts used by skills and hooks:
 - `routing-stats.py` — escalation stats per complexity × risk and tier0 overrides
 - `capture-metrics.sh` — capture per-cycle metrics
 - `pr-review.sh`, `pr-inspect.sh`, `pr-registry.sh` — `gh` PR helpers for Review Flow and `pr-status`
-- `ado.sh` — Azure DevOps REST helper (requires `ADO_ORG` / `ADO_PROJECT` env vars)
+- `tracker.py` — resolves the org's tracker for a repo and normalizes card IDs
+- `ado.sh`, `jira.py` — Azure DevOps and Jira REST helpers (org/project/site from the org's tracker, or `ADO_*` / `JIRA_*` env vars)
 - `current_json.py`, `get-project.sh`, `to-slug.sh` — small utilities
 
 ## Installation
@@ -113,7 +114,7 @@ Bundles are named subsets defined as plain text files under `bundles/`. Use them
 | `agents-react` | React agents (5) |
 | `agents-backend` | NestJS + GCP agents (11, incl. `gcp-cloudsql-ops`) |
 | `agents-all` | All 36 agents |
-| `ado-flow` | Azure DevOps pipeline skills (kickoff, refine, ado-*, pr-open, pr-status) |
+| `ado-flow` | Card pipeline skills (kickoff, refine, ado-*, jira-refine, pr-open, pr-status) |
 | `all` | Everything (default) |
 
 Bundles can reference other bundles with `@<name>` lines. Bundle files are simple — feel free to edit or add your own.
@@ -121,7 +122,7 @@ Bundles can reference other bundles with `@<name>` lines. Bundle files are simpl
 ## Smart Flow
 
 ```
-/kickoff         → pull the card, triage, refine (ADO / Linear)
+/kickoff         → pull the card, triage, refine (the org's tracker: ADO / Jira / Linear)
 /specify         → business spec
 /challenge-spec  → adversarial pass on the spec before planning
 /plan            → technical plan (Tree of Thoughts workflow for risky changes)

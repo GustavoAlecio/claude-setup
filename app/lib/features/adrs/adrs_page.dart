@@ -544,7 +544,7 @@ class _ChainItem extends StatelessWidget {
       ),
       child: Text(
         item.id,
-        style: TextStyle(fontSize: 12, fontWeight: selected ? FontWeight.w700 : FontWeight.w400, color: color),
+        style: TextStyle(fontSize: 12, fontWeight: selected ? FontWeight.w600 : FontWeight.w400, color: color),
       ),
     );
     if (selected || !exists) return label;

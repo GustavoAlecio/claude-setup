@@ -76,6 +76,9 @@ Finder _paletteItem(String label) => find.descendant(
   matching: find.text(label),
 );
 
+const _ado = {'kind': 'ado', 'org': 'o', 'project': 'p'};
+const _jira = {'kind': 'jira', 'site': 'x.atlassian.net', 'project': 'LC', 'email': 'me@x.com'};
+
 Future<void> _meta(WidgetTester tester, LogicalKeyboardKey key) async {
   await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
   await tester.sendKeyEvent(key);
@@ -95,8 +98,16 @@ void main() {
     String location, {
     MockSessionsRepository? sessions,
     Map<String, dynamic>? config,
+    Map<String, String>? tracker = _ado,
   }) async {
     final repo = sessions ?? MockSessionsRepository();
+    config ??= MockFlowRepository.defaultConfig(MockFlowRepository().data);
+    final org = (config['orgs'] as List).first as Map<String, dynamic>;
+    if (tracker == null) {
+      org.remove('tracker');
+    } else {
+      org['tracker'] = tracker;
+    }
     await tester.pumpWidget(
       ClaudeFlowApp(
         repository: MockFlowRepository(
@@ -154,13 +165,37 @@ void main() {
     });
 
     testWidgets('enter in the ID field submits the normalized key', (tester) async {
-      final sessions = await pump(tester, '/p/demo-app/flow');
+      final sessions = await pump(tester, '/p/demo-app/flow', tracker: _jira);
       await openFromTopBar(tester);
 
       await tester.enterText(_idField, 'lc-101');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(sessions.createCalls, [('demo-app', '/kickoff LC-101', _demoPath, null, PermissionMode.acceptEdits)]);
+    });
+
+    testWidgets('a Jira number gets the project key and the field names the tracker', (tester) async {
+      final sessions = await pump(tester, '/p/demo-app/flow', tracker: _jira);
+      await openFromTopBar(tester);
+
+      expect(find.text('ID do card no Jira'), findsOneWidget);
+      expect(find.text('opcional · LC-101'), findsOneWidget);
+      await tester.enterText(_idField, '77');
+      await tester.tap(_start);
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single.$2, '/kickoff LC-77');
+    });
+
+    testWidgets('an org without tracker only offers the manual kickoff', (tester) async {
+      final sessions = await pump(tester, '/p/demo-app/flow', tracker: null);
+      await openFromTopBar(tester);
+
+      expect(_idField, findsNothing);
+      expect(find.byKey(const ValueKey('kickoff-no-tracker')), findsOneWidget);
+      await tester.enterText(_descriptionField, 'algo');
+      await tester.tap(_start);
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single.$2, '/kickoff --manual\n\nalgo');
     });
 
     testWidgets('manual bug sends the description verbatim and opens the session', (tester) async {
@@ -300,10 +335,10 @@ void main() {
       final sessions = await pump(tester, '/p/demo-app/flow');
       await openFromTopBar(tester);
 
-      await tester.enterText(_idField, 'abc');
+      await tester.enterText(_idField, 'LC-101');
       await tester.tap(_start);
       await tester.pumpAndSettle();
-      expect(find.text('ID inválido'), findsOneWidget);
+      expect(find.text('não é um ID do Azure DevOps'), findsOneWidget);
       expect(sessions.createCalls, isEmpty);
     });
 

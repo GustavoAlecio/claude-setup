@@ -189,16 +189,16 @@ class _RunsViewState extends State<_RunsView> {
             style: header.copyWith(color: c.textMuted),
             child: const Row(
               children: [
-                SizedBox(width: 40, child: Text('TASK')),
+                SizedBox(width: 40, child: Text('Task')),
                 SizedBox(
                   width: 44,
-                  child: Tooltip(message: 'tamanho da task (P/M/G) e risco', child: Text('TAM.')),
+                  child: Tooltip(message: 'tamanho da task (P/M/G) e risco', child: Text('Tam.')),
                 ),
-                Expanded(child: Text('TÍTULO')),
-                SizedBox(width: 150, child: Text('ESCADA')),
-                SizedBox(width: 170, child: Text('MODELO INICIAL → ATUAL')),
-                SizedBox(width: 70, child: Text('TOKENS')),
-                SizedBox(width: 100, child: Text('STATUS')),
+                Expanded(child: Text('Título')),
+                SizedBox(width: 150, child: Text('Escada')),
+                SizedBox(width: 170, child: Text('Modelo inicial → atual')),
+                SizedBox(width: 70, child: Text('Tokens')),
+                SizedBox(width: 100, child: Text('Status')),
                 SizedBox(width: 20),
               ],
             ),

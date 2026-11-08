@@ -103,7 +103,7 @@ class _ProjectSections extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (hasPath) ...[
-          const SectionTitle('RULES'),
+          const SectionTitle('Rules'),
           if (data.rules.isEmpty) const Muted('nenhuma'),
           for (final r in data.rules)
             Padding(
@@ -134,7 +134,7 @@ class _ProjectSections extends StatelessWidget {
                       ],
                     ),
             ),
-          const SectionTitle('WORKFLOWS DO PROJETO'),
+          const SectionTitle('Workflows do projeto'),
           if (data.workflows.isEmpty) const Muted('nenhum: rodam os de ~/.claude/workflows'),
           if (data.workflows.isNotEmpty)
             const Muted('.claude/workflows do repo; têm precedência sobre o pessoal de mesmo nome', size: 11),
@@ -161,11 +161,11 @@ class _ProjectSections extends StatelessWidget {
               Mono(ladder.tiers.join(' → '), key: const ValueKey('about-project-ladder'), color: c.textPrimary),
           ],
         ],
-        const SectionTitle('LESSONS'),
+        const SectionTitle('Lessons'),
         if (data.lessons.isEmpty) const Muted('nenhuma'),
         for (final l in data.lessons)
           InlineMarkdown('- $l', style: TextStyle(fontSize: 12, height: 1.5, color: c.textSecondary)),
-        const SectionTitle('ROUTING'),
+        const SectionTitle('Routing'),
         if (routing.error != null) ErrorText(routing.error!),
         _RoutingTable(routing: routing),
       ],

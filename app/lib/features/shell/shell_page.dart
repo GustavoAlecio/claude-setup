@@ -279,7 +279,7 @@ class _Sidebar extends StatelessWidget {
             ),
             const SizedBox(height: 12),
           ],
-          const Padding(padding: EdgeInsets.fromLTRB(8, 0, 8, 8), child: Muted('PROJETOS', size: 10)),
+          const Padding(padding: EdgeInsets.fromLTRB(8, 0, 8, 8), child: Muted('Projetos', size: 11)),
           Expanded(
             child: visible.isEmpty
                 ? Padding(
@@ -507,7 +507,7 @@ class _CountBadge extends StatelessWidget {
       decoration: BoxDecoration(color: c.warn, borderRadius: BorderRadius.circular(9)),
       child: Text(
         '$count',
-        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: c.canvas),
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: c.canvas),
       ),
     );
   }
@@ -667,7 +667,7 @@ class _OrgActivityTile extends StatelessWidget {
         hoverColor: c.hover,
         onTap: enabled ? () => context.go(orgSessionsLocation(org)) : null,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
           child: Row(
             children: [
               Icon(Icons.hub_outlined, size: 14, color: enabled ? c.textSecondary : c.textMuted),

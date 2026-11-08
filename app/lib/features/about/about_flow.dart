@@ -217,7 +217,7 @@ class _NodeDetail extends StatelessWidget {
             SelectableText(skill.path, style: TextStyle(fontSize: 11, color: c.textMuted)),
           ],
           if (node.agent case final agent?) ...[
-            const SectionTitle('AGENTE'),
+            const SectionTitle('Agente'),
             Text(agent.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             if (agent.error != null) ErrorText(agent.error!) else InlineMarkdown(agent.description),
             SelectableText(agent.path, style: TextStyle(fontSize: 11, color: c.textMuted)),
@@ -277,7 +277,7 @@ class _LadderPanel extends StatelessWidget {
               ],
             ],
           ),
-          const SectionTitle('TIER INICIAL POR COMPLEXIDADE'),
+          const SectionTitle('Tier inicial por complexidade'),
           Wrap(
             spacing: 16,
             children: [for (final MapEntry(:key, :value) in ladder.tier0.entries) Mono('$key → $value')],
@@ -285,9 +285,9 @@ class _LadderPanel extends StatelessWidget {
           const SizedBox(height: 10),
           Text(kRiskRule, style: TextStyle(fontSize: 12, color: c.textSecondary)),
           Mono(kRiskRulePath, color: c.textMuted, size: 11),
-          const SectionTitle('SEVERIDADES QUE REPROVAM'),
+          const SectionTitle('Severidades que reprovam'),
           Mono(ladder.blocking.isEmpty ? 'nenhuma' : ladder.blocking.join(', ')),
-          const SectionTitle('REVIEWERS POR STACK'),
+          const SectionTitle('Reviewers por stack'),
           if (stacks.isEmpty) const Muted('nenhuma stack'),
           for (final stack in stacks)
             Padding(

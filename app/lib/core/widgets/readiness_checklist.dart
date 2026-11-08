@@ -68,7 +68,7 @@ class _ReadinessChecklistState extends State<ReadinessChecklist> {
             children: [
               Row(
                 children: [
-                  const Expanded(child: Muted('ANTES DE COMEÇAR', size: 10)),
+                  const Expanded(child: Muted('Antes de começar', size: 11)),
                   if (r != null)
                     TextButton(
                       style: TextButton.styleFrom(foregroundColor: c.accent, visualDensity: VisualDensity.compact),

@@ -353,7 +353,7 @@ void main() {
       await tester.tap(find.text('nopath').last);
       await tester.pumpAndSettle();
       expect(find.text('sem path'), findsOneWidget);
-      expect(find.text('RULES'), findsNothing);
+      expect(find.text('Rules'), findsNothing);
       expect(find.text('ADRs'), findsNothing);
       expect(find.textContaining('lição de nopath', findRichText: true), findsOneWidget);
       expect(find.text('L:high → nopath-tier'), findsOneWidget);

@@ -78,7 +78,7 @@ void main() {
       final alpha = _project(list, 'alpha');
       expect(alpha.path, '/synthetic/alpha');
       expect(alpha.stack, isNull);
-      expect(alpha.cycle!.tracker, '#1001');
+      expect(alpha.cycle!.tracker, 'AB#1001');
       expect(alpha.cycle!.branch, isNull);
       expect(_project(list, 'legacy').path, isNull);
       expect(_project(list, 'gamma').cycle!.runs.map((r) => r.id), [

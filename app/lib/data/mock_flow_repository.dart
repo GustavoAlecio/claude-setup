@@ -312,7 +312,7 @@ const _projects = <Project>[
     stack: 'go',
     cycle: Cycle(
       feature: 'Retry com backoff',
-      tracker: 'ADO 6731',
+      tracker: 'AB#6731',
       stage: Stage.verify,
       branch: 'feat/3.12.0/6731-retry-backoff',
       stageMinutes: {Stage.specify: 4, Stage.plan: 9, Stage.tasks: 1, Stage.implement: 21, Stage.verify: 5},

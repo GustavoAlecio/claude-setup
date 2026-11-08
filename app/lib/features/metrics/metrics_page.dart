@@ -199,7 +199,7 @@ class _Cards extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        group('RESULTADO', [
+        group('Resultado', [
           _StatCard(id: 'completed', label: 'Ciclos concluídos', value: '${metrics.completedCycles}'),
           _StatCard(id: 'tasks', label: 'Tasks', value: '${metrics.tasks}'),
           _StatCard(
@@ -212,7 +212,7 @@ class _Cards extends StatelessWidget {
           _StatCard(id: 'cost', label: 'Custo das sessões', value: '\$${sessionsCost.toStringAsFixed(2)}'),
         ]),
         const SizedBox(height: 16),
-        group('TOKENS POR PAPEL', [
+        group('Tokens por papel', [
           _StatCard(id: 'tokens-dev', label: 'Implementação', value: tokens('dev')),
           _StatCard(id: 'tokens-g0', label: 'Checagens', value: tokens('g0')),
           _StatCard(id: 'tokens-g1', label: 'Revisão de código', value: tokens('g1')),

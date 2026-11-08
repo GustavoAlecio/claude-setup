@@ -64,7 +64,7 @@ class _SessionArtifactsStripState extends State<SessionArtifactsStrip> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(padding: EdgeInsets.only(top: 6, right: 12), child: Muted('ARTEFATOS DA SESSÃO', size: 10)),
+          const Padding(padding: EdgeInsets.only(top: 6, right: 12), child: Muted('Artefatos da sessão', size: 11)),
           Expanded(
             child: Wrap(
               spacing: 6,

@@ -154,6 +154,7 @@ class _CreateOrgState extends State<_CreateOrg> {
                   permissionMode: org.permissionMode,
                   agent: org.agent,
                   cycleBudget: org.cycleBudget,
+                  tracker: org.tracker,
                 ),
               ),
             ),

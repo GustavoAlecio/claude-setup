@@ -328,8 +328,8 @@ class _PrRow extends StatelessWidget {
               Expanded(
                 child: Row(
                   children: [
-                    if (pr.adoId case final ado?) ...[
-                      Pill(label: 'AB#$ado', color: c.accent, mono: true, dot: false),
+                    if (pr.card case final card?) ...[
+                      Pill(label: card.label, color: c.accent, mono: true, dot: false),
                       const SizedBox(width: 8),
                     ],
                     Flexible(

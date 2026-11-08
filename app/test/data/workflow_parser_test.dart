@@ -68,13 +68,25 @@ void main() {
     });
 
     test('parseCycle maps tracker, feature fallback and nullable branch', () {
-      final c = parseCycle({'status': 'planning', 'ado_id': 1001, 'phases': {}}, projectName: 'p', branch: '');
+      final c = parseCycle(
+        {
+          'status': 'planning',
+          'tracker': {'kind': 'ado', 'id': '1001'},
+          'phases': {},
+        },
+        projectName: 'p',
+        branch: '',
+      );
       expect(c.feature, 'p');
-      expect(c.tracker, '#1001');
+      expect(c.tracker, 'AB#1001');
       expect(c.branch, isNull);
       expect(c.stage, Stage.plan);
       final l = parseCycle(
-        {'status': 'planning', 'linear_key': 'BET-7', 'feature': 'F'},
+        {
+          'status': 'planning',
+          'tracker': {'kind': 'linear', 'id': 'BET-7'},
+          'feature': 'F',
+        },
         projectName: 'p',
         branch: 'main',
       );
@@ -82,7 +94,14 @@ void main() {
       expect(l.feature, 'F');
       expect(l.branch, 'main');
       expect(parseCycle({'status': 'planning'}, projectName: 'p').tracker, isNull);
-      expect(parseCycle({'status': 'planning', 'tracker': 'manual'}, projectName: 'p').tracker, 'manual');
+      expect(
+        parseCycle({
+          'status': 'planning',
+          'tracker': {'kind': 'manual'},
+        }, projectName: 'p').tracker,
+        'manual',
+      );
+      expect(parseCycle({'status': 'planning', 'ado_id': 1001}, projectName: 'p').tracker, isNull);
     });
 
     test('parseCycle keeps the planned tasks in plan order without attempts', () {

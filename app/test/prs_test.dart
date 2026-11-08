@@ -13,6 +13,7 @@ import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/sessions_repository.dart';
+import 'package:claude_flow/data/tracker.dart';
 import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/engine/engine_supervisor.dart';
 import 'package:flutter/material.dart';
@@ -87,12 +88,12 @@ PullRequest _pr({
   bool live = true,
   String? liveError,
   List<ReviewThread> unresolved = const [_thread],
-  String? adoId,
+  CardRef? card,
   PrChecks? checks,
   String? url,
 }) => PullRequest(
   number: number,
-  adoId: adoId,
+  card: card,
   target: 'main',
   title: 'PR $number',
   url: url ?? 'https://github.com/$owner/$repo/pull/$number',
@@ -179,7 +180,11 @@ void main() {
     final docs = MockDocsRepository();
     final github = MockGitHubRepository(
       pullRequests: [
-        _pr(number: 12, adoId: '4821', checks: PrChecks.failing),
+        _pr(
+          number: 12,
+          card: const CardRef(kind: TrackerKind.ado, id: '4821'),
+          checks: PrChecks.failing,
+        ),
         _pr(number: 13, stage: 'approved', unresolved: const [], checks: PrChecks.passing, url: 'file:///etc/passwd'),
       ],
     );

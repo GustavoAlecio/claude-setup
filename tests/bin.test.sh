@@ -595,7 +595,8 @@ got=0; out=$(printf '%s\n' main release/draft release/stable-x release-1.0.0 | "
 echo "- skills: greps de kickoff, adr, pr-open e dev-implementer"
 SK="$(cd "$(dirname "$0")/.." && pwd)"
 grep -q "release-base.sh" "$SK/skills/kickoff/SKILL.md" || fail "kickoff: não chama release-base.sh"
-[ "$(grep -c "for k in ('feature', 'start_date', 'end_date', 'phases')" "$SK/skills/kickoff/SKILL.md")" = 3 ] || fail "kickoff: os 3 seeds devem remover identidade"
+[ "$(grep -c "for k in ('feature', 'start_date', 'end_date', 'phases'" "$SK/skills/kickoff/SKILL.md")" = 2 ] || fail "kickoff: os 2 seeds (card e manual) devem remover identidade"
+! grep -qE "ado_id|linear_key" "$SK/skills/kickoff/SKILL.md" "$SK/skills/pr-open/SKILL.md" "$SK/skills/pr-status/SKILL.md" "$SK/skills/complete/SKILL.md" || fail "skills ainda citam ado_id/linear_key"
 grep -q "rev-parse --show-superproject-working-tree" "$SK/skills/adr/SKILL.md" || fail "adr: sem detecção de submódulo"
 grep -q "adr-candidates.md" "$SK/skills/adr/SKILL.md" || fail "adr: sem adr-candidates.md"
 grep -q "adr-candidates.md" "$SK/skills/complete/SKILL.md" || fail "complete: sem adr-candidates.md"
@@ -648,5 +649,39 @@ kill $SRV; wait $SRV 2>/dev/null || true
 grep -q -- "-b dev.claudesetup.claudeFlow" "$C/opened" || fail "to-app did not bring the app forward"
 case "$OUT" in "sessao 11111111 enviada"*) ;; *) fail "to-app output: $OUT" ;; esac
 env -u CLAUDE_CODE_SESSION_ID CLAUDE_HOME="$C/.claude" python3 "$BIN/to-app.py" 2>/dev/null && fail "to-app without a session must fail"
+
+echo "- tracker: org by root or explicit project, card ref per kind, ado env"
+C=$(tmp); mkdir -p "$C/.claude/workflow" "$C/r10/app" "$C/likin/app" "$C/loose" "$C/other"
+cat > "$C/.claude/workflow/.dashboard.json" <<JSON
+{"orgs": [
+  {"name": "OTG", "roots": ["$C/r10"], "tracker": {"kind": "ado", "org": "Grupo OTG", "project": "R10 Score", "base": "release"}},
+  {"name": "Likin", "roots": ["$C/likin"], "tracker": {"kind": "jira", "site": "x.atlassian.net", "project": "LC", "email": "e"}},
+  {"name": "Bare", "roots": ["$C/other"]}
+ ],
+ "projects": [{"name": "loose", "path": "$C/loose", "org": "Likin"}]}
+JSON
+trk() { CLAUDE_HOME="$C/.claude" python3 "$BIN/tracker.py" "$@"; }
+[ "$(trk resolve "$C/r10/app" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["org"],d["tracker"]["kind"])')" = "OTG ado" ] || fail "resolve by root"
+[ "$(trk resolve "$C/loose" | python3 -c 'import json,sys;print(json.load(sys.stdin)["org"])')" = "Likin" ] || fail "resolve by explicit project"
+[ "$(trk resolve "$C/other")" = '{"org": "Bare", "tracker": null}' ] || fail "org without tracker"
+[ "$(trk resolve /nowhere)" = '{"org": null, "tracker": null}' ] || fail "outside every org"
+[ "$(trk ref '#4821' "$C/r10/app")" = '{"kind": "ado", "id": "4821", "url": "https://dev.azure.com/Grupo%20OTG/R10%20Score/_workitems/edit/4821"}' ] || fail "ado ref"
+trk ref LC-1 "$C/r10/app" >/dev/null 2>&1 && fail "a key is not an ADO card"
+[ "$(trk ref 77 "$C/likin/app")" = '{"kind": "jira", "id": "LC-77", "url": "https://x.atlassian.net/browse/LC-77"}' ] || fail "jira number gets the project key"
+[ "$(trk ref lc-9 "$C/likin/app" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')" = "LC-9" ] || fail "jira key uppercased"
+rc=0; trk ref 1 "$C/other" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no tracker exits 2"
+[ "$(trk env "$C/r10/app")" = "$(printf "export ADO_ORG='Grupo OTG'\nexport ADO_PROJECT='R10 Score'")" ] || fail "ado env"
+[ -z "$(trk env "$C/likin/app")" ] || fail "jira has no env"
+
+echo "- pr-registry: register stores the card as tracker, or null without one"
+H=$(tmp); git -C "$H" init -q demo; mkdir -p "$H/.claude"; ln -s "$BIN" "$H/.claude/bin"
+(cd "$H/demo" && HOME="$H" CLAUDE_HOME="$H/.claude" bash "$BIN/pr-registry.sh" register 7 feat/x main "T" https://github.com/o/demo/pull/7 jira LC-1 https://x/browse/LC-1 >/dev/null)
+(cd "$H/demo" && HOME="$H" CLAUDE_HOME="$H/.claude" bash "$BIN/pr-registry.sh" register 8 feat/y main "U" https://github.com/o/demo/pull/8 >/dev/null)
+python3 -c "
+import json,sys
+prs={p['pr_number']:p for p in json.load(open(sys.argv[1]))['prs']}
+assert prs[7]['tracker']=={'kind':'jira','id':'LC-1','url':'https://x/browse/LC-1'}, prs[7]
+assert prs[8]['tracker'] is None and 'ado_id' not in prs[8], prs[8]
+" "$H/.claude/workflow/demo/prs.json" || fail "registry tracker"
 
 echo "OK"

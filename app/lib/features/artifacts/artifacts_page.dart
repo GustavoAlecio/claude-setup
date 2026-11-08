@@ -168,7 +168,7 @@ class _ArtifactList extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final now = DateTime.now();
-    Widget header(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 6), child: Muted(t, size: 10));
+    Widget header(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 6), child: Muted(t, size: 11));
     return Container(
       width: 260,
       decoration: BoxDecoration(
@@ -177,7 +177,7 @@ class _ArtifactList extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 12),
         children: [
-          if (listing.artifacts.isNotEmpty) header('WORKFLOW'),
+          if (listing.artifacts.isNotEmpty) header('Workflow'),
           for (final e in listing.artifacts)
             _ArtifactTile(
               label: e.rel,
@@ -186,7 +186,7 @@ class _ArtifactList extends StatelessWidget {
               selected: e.rel == selected,
               onSelect: onSelect,
             ),
-          if (listing.details.isNotEmpty) header('DETALHAMENTOS'),
+          if (listing.details.isNotEmpty) header('Detalhamentos'),
           for (final e in listing.details)
             _ArtifactTile(
               label: _detailName(e.rel),

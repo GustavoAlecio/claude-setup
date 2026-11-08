@@ -407,6 +407,79 @@ void main() {
     });
   });
 
+  group('org tracker', () {
+    Map<String, dynamic> first(Map<String, dynamic> out) => (out['orgs'] as List).first as Map<String, dynamic>;
+
+    test('parse: unknown kind is no tracker; blank fields are null and missing names them', () {
+      expect(OrgTracker.fromRaw('x'), isNull);
+      expect(OrgTracker.fromRaw({'kind': 'trello'}), isNull);
+      final jira = OrgTracker.fromRaw({
+        'kind': 'jira',
+        'site': ' x.atlassian.net ',
+        'project': 'LC',
+        'base': 'release',
+      });
+      expect(jira, const OrgTracker(kind: TrackerKind.jira, site: 'x.atlassian.net', project: 'LC', releaseBase: true));
+      expect(jira!.missing, 'informe o site, a chave do projeto e o email do Jira');
+      expect(const OrgTracker(kind: TrackerKind.ado, org: 'o', project: 'P 1').missing, isNull);
+      expect(const OrgTracker(kind: TrackerKind.linear).missing, isNull);
+      expect(
+        const OrgTracker(kind: TrackerKind.jira, site: 's', project: 'l c', email: 'e').missing,
+        'chave do projeto Jira inválida (ex.: LC)',
+      );
+    });
+
+    test('updateOrg writes tracker only when it changes, drops the old kind fields and keeps unknown keys', () {
+      final raw = _raw();
+      first(raw)['tracker'] = {'kind': 'ado', 'org': 'o', 'project': 'p', 'note': 'keep'};
+      final untouched = applyConfigMutation(
+        raw,
+        updateOrg(
+          'r10',
+          OrgConfig(name: 'r10', roots: const ['/dev/r10'], tracker: OrgTracker.fromRaw(first(raw)['tracker'])),
+        ),
+      );
+      expect(untouched, isNull);
+
+      final jira = applyConfigMutation(
+        raw,
+        updateOrg(
+          'r10',
+          const OrgConfig(
+            name: 'r10',
+            roots: ['/dev/r10'],
+            tracker: OrgTracker(kind: TrackerKind.jira, site: 's', project: 'LC', email: 'e', releaseBase: true),
+          ),
+        ),
+      )!;
+      expect(first(jira)['tracker'], {
+        'note': 'keep',
+        'kind': 'jira',
+        'project': 'LC',
+        'site': 's',
+        'email': 'e',
+        'base': 'release',
+      });
+
+      final none = applyConfigMutation(jira, updateOrg('r10', const OrgConfig(name: 'r10', roots: ['/dev/r10'])))!;
+      expect(first(none).containsKey('tracker'), isFalse);
+    });
+
+    test('an invalid raw tracker survives a save without tracker', () {
+      final raw = _raw();
+      first(raw)['tracker'] = {'kind': 'trello'};
+      expect(applyConfigMutation(raw, updateOrg('r10', const OrgConfig(name: 'r10', roots: ['/dev/r10']))), isNull);
+    });
+
+    test('createOrg writes tracker when given', () {
+      final out = applyConfigMutation(
+        _raw(),
+        createOrg('novo', const ['/dev/novo'], tracker: const OrgTracker(kind: TrackerKind.linear, team: 'LC')),
+      )!;
+      expect(((out['orgs'] as List).last as Map)['tracker'], {'kind': 'linear', 'team': 'LC'});
+    });
+  });
+
   group('org agent', () {
     test('parse: unknown provider is Anthropic, an invalid account and a blank model are dropped', () {
       expect(OrgAgent.fromRaw('x'), isNull);

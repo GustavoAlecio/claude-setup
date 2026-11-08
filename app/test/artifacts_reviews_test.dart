@@ -95,8 +95,8 @@ void main() {
       final router = await _open(tester, '/p/demo-app/artifacts');
 
       expect(_at(router), '/p/demo-app/artifacts?doc=plan.md');
-      expect(find.text('WORKFLOW'), findsOneWidget);
-      expect(find.text('DETALHAMENTOS'), findsOneWidget);
+      expect(find.text('Workflow'), findsOneWidget);
+      expect(find.text('Detalhamentos'), findsOneWidget);
       final order = ['plan.md', 'spec.md', 'tasks.md', '2026-03-12-login', '2026-03-10-cache'];
       final ys = [for (final t in order) tester.getTopLeft(find.text(t).first).dy];
       expect(ys, [...ys]..sort());

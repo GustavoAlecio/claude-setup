@@ -410,6 +410,42 @@ void main() {
     });
   });
 
+  group('OrgForm tracker', () {
+    Finder field(String key) => _in('settings-org-form-A', find.byKey(ValueKey('org-tracker-$key')));
+
+    Future<void> pickKind(WidgetTester tester, String label) async {
+      await _tap(tester, field('kind'));
+      await _tap(tester, find.text(label).last);
+    }
+
+    testWidgets('Jira saves site, key and email; an incomplete tracker is refused inline', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+      await pickKind(tester, 'Jira');
+
+      await tester.enterText(field('site'), 'https://likindo.atlassian.net/');
+      await tester.enterText(field('project'), 'lc');
+      await _tap(tester, _save('A'));
+      expect(find.text('informe o site, a chave do projeto e o email do Jira'), findsOneWidget);
+      expect((repo.rawConfig['orgs'][0] as Map).containsKey('tracker'), isFalse);
+
+      await tester.enterText(field('email'), 'me@likin.do');
+      await _tap(tester, field('release'));
+      await _tap(tester, _save('A'));
+      expect(repo.rawConfig['orgs'][0]['tracker'], {
+        'kind': 'jira',
+        'project': 'LC',
+        'site': 'likindo.atlassian.net',
+        'email': 'me@likin.do',
+        'base': 'release',
+      });
+
+      await pickKind(tester, 'nenhum (só kickoff manual)');
+      await _tap(tester, _save('A'));
+      expect((repo.rawConfig['orgs'][0] as Map).containsKey('tracker'), isFalse);
+    });
+  });
+
   group('OrgForm GitHub', () {
     testWidgets('lists the accounts and saves the chosen account with owners from suggestion and typing', (
       tester,

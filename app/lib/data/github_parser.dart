@@ -2,6 +2,7 @@ import 'github_models.dart';
 import 'models.dart';
 import 'orgs.dart';
 import 'project_name.dart';
+import 'tracker.dart';
 
 String? _str(Object? v) => v is String && v.isNotEmpty ? v : null;
 
@@ -23,11 +24,10 @@ ReviewThread parseReviewThread(Object? json) {
 PullRequest parsePullRequest(Object? json) {
   final m = json is Map ? json : const {};
   final number = m['pr_number'];
-  final ado = m['ado_id'];
   final checks = m['checks'];
   return PullRequest(
     number: number is int ? number : null,
-    adoId: ado is int ? '$ado' : _str(ado),
+    card: CardRef.fromRaw(m['tracker']),
     branch: _str(m['branch']),
     target: _str(m['target']),
     title: m['title'] is String ? m['title'] as String : '',

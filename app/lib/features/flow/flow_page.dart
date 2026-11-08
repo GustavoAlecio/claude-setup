@@ -7,7 +7,6 @@ import '../../app/sessions_cubit.dart';
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/ladder.dart';
-import '../../core/widgets/auto_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/budget.dart';
 import '../../data/flow_aggregates.dart';
@@ -319,23 +318,11 @@ class _CycleCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(cycle.feature ?? project.name, style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 12),
           if (cycle.tracker case final tracker?) row('Card', Mono(tracker, color: c.textPrimary)),
           if (cycle.branch case final branch?) row('Branch', Mono(branch)),
           if (project.stack case final stack?) row('Stack', Mono(stack)),
           if (project.path case final path?) row('Repo', Mono(path)),
           _CostRow(project: project, cycle: cycle, row: row),
-          row(
-            'Piloto',
-            Align(
-              alignment: Alignment.centerLeft,
-              child: AutoModeBuilder(
-                builder: (_, on) =>
-                    Pill(label: on == true ? 'on' : 'off', color: on == true ? c.accent : c.idle, dot: false),
-              ),
-            ),
-          ),
           if (run != null) ...[
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 14),

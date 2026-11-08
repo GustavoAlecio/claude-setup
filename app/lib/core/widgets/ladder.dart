@@ -39,7 +39,7 @@ class Ladder extends StatelessWidget {
                         height: 1,
                         fontFamily: monoFamily,
                         color: t == task.tier ? c.tier(t) : c.textMuted,
-                        fontWeight: t == task.tier ? FontWeight.w700 : FontWeight.w400,
+                        fontWeight: t == task.tier ? FontWeight.w600 : FontWeight.w400,
                       ),
                     ),
                   ),

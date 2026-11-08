@@ -528,7 +528,7 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
                             if (_jumps case final jumps when jumps.isNotEmpty) ...[
                               const Padding(
                                 padding: EdgeInsets.fromLTRB(12, 12, 12, 4),
-                                child: Muted('IR PARA', size: 10),
+                                child: Muted('Ir para', size: 11),
                               ),
                               for (final (i, j) in jumps.indexed)
                                 _Item(

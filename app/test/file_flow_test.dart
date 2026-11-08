@@ -89,7 +89,7 @@ void main() {
     await _open(tester, data, '/p/alpha/flow');
 
     expect(find.text('Pagina alpha'), findsWidgets);
-    expect(find.text('#1001'), findsWidgets);
+    expect(find.text('AB#1001'), findsWidgets);
     expect(find.text('em andamento'), findsOneWidget);
 
     await _go(tester, '/p/alpha/runs');

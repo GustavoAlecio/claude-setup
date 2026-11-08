@@ -148,7 +148,7 @@ class _SessionList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    Widget header(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 6), child: Muted(t, size: 10));
+    Widget header(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 6), child: Muted(t, size: 11));
     return Container(
       width: 300,
       decoration: BoxDecoration(
@@ -189,7 +189,7 @@ class _SessionList extends StatelessWidget {
               ),
             ),
           ),
-          header(org == null ? 'ESTE PROJETO' : 'ATIVIDADES DA ORG'),
+          header(org == null ? 'Este projeto' : 'Atividades da org'),
           if (mine.isEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
@@ -210,7 +210,7 @@ class _SessionList extends StatelessWidget {
           if (project case Project(:final name, path: final path?) when query.isEmpty)
             _TerminalSessions(key: ValueKey('terminal-$path'), project: name, cwd: path, header: header),
           if (others.isNotEmpty) ...[
-            header('OUTROS PROJETOS'),
+            header('Outros projetos'),
             for (final s in others)
               LiveSessionSummary(
                 session: s,
@@ -345,7 +345,7 @@ class _SessionTile extends StatelessWidget {
                     decoration: BoxDecoration(color: c.warn, borderRadius: BorderRadius.circular(9)),
                     child: Text(
                       '$pending',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: c.canvas),
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: c.canvas),
                     ),
                   ),
               ],
@@ -423,7 +423,7 @@ class _TerminalSessionsState extends State<_TerminalSessions> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        widget.header('NO TERMINAL'),
+        widget.header('No terminal'),
         for (final t in _items)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),

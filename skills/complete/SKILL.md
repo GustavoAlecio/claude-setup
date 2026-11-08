@@ -93,7 +93,7 @@ python3 ~/.claude/bin/wf-report.py gate pr
 
 - `skip`: trate como Aprovar.
 - `ask`: faça um `AskUserQuestion` ("Abrir o PR deste ciclo?") com as opções:
-  - **Aprovar (Recommended)**: invoque `/pr-open --from-complete` (passe o `ado_id` do `current.json` se houver). A última linha do resultado é a URL do PR; grave-a:
+  - **Aprovar (Recommended)**: invoque `/pr-open --from-complete` (ele lê o card do `tracker` do `current.json`). A última linha do resultado é a URL do PR; grave-a:
     ```bash
     python3 ~/.claude/bin/wf-report.py pr --workflow-dir "$WF_DIR" --url "<URL>" || true
     ```

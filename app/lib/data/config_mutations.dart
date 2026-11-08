@@ -48,6 +48,7 @@ ConfigMutation createOrg(
   PermissionMode? permissionMode,
   OrgAgent? agent,
   double? cycleBudget,
+  OrgTracker? tracker,
 }) => (raw) {
   final current = DashboardConfig.fromMap(raw);
   _check(validateOrgs([...current.orgs, OrgConfig(name: name, roots: roots, github: github)]));
@@ -61,6 +62,7 @@ ConfigMutation createOrg(
       'permissionMode': ?permissionMode?.wire,
       'agent': ?agent?.toRaw(),
       'cycleBudget': ?cycleBudget,
+      'tracker': ?tracker?.toRaw(),
     },
   ];
   out['lastOrg'] = name;
@@ -234,6 +236,7 @@ Map<String, dynamic> _setHidden(
 /// entry (unknown keys and dropped owners included); a rewrite still keeps unknown keys inside `github`.
 /// `permissionMode` follows the same rule: an invalid raw value parses to inherit and survives until the org gets a
 /// mode; inheriting over a valid mode removes the key, never writing `null`. `agent` is rewritten like `github`.
+/// `tracker` too, except that `null` over a valid tracker removes it; switching kinds drops the old kind's fields.
 Map<String, dynamic> _orgEntry(Map<String, dynamic>? previous, OrgConfig org) {
   final entry = {...?previous, 'name': org.name, 'roots': org.roots};
   final github = org.github;
@@ -250,6 +253,20 @@ Map<String, dynamic> _orgEntry(Map<String, dynamic>? previous, OrgConfig org) {
           if (e.key != 'account' && e.key != 'model') e.key: e.value,
       ...agent.toRaw(),
     };
+  }
+  final tracker = org.tracker;
+  final trackerBefore = previous?['tracker'];
+  if (tracker != OrgTracker.fromRaw(trackerBefore)) {
+    if (tracker == null) {
+      entry.remove('tracker');
+    } else {
+      entry['tracker'] = {
+        if (trackerBefore is Map<String, dynamic>)
+          for (final e in trackerBefore.entries)
+            if (!OrgTracker.rawKeys.contains(e.key)) e.key: e.value,
+        ...tracker.toRaw(),
+      };
+    }
   }
   final budget = org.cycleBudget;
   if (budget != parseBudget(previous?['cycleBudget'])) {

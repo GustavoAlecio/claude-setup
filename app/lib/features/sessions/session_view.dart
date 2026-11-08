@@ -510,7 +510,7 @@ class _FeedState extends State<_Feed> {
                 style: FilledButton.styleFrom(
                   backgroundColor: c.accent,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                   visualDensity: VisualDensity.compact,
                 ),
                 onPressed: _jumpToEnd,

@@ -117,7 +117,7 @@ class AboutStart extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 16),
-                const Muted('ATALHOS', size: 10),
+                const Muted('Atalhos', size: 11),
                 const SizedBox(height: 8),
                 for (final (keys, what) in _shortcuts)
                   Padding(
@@ -138,7 +138,7 @@ class AboutStart extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 20),
-                const Muted('GLOSSÁRIO', size: 10),
+                const Muted('Glossário', size: 10),
                 const SizedBox(height: 8),
                 for (final (term, meaning) in _glossary)
                   Padding(

@@ -134,6 +134,112 @@ class OrgAgent {
   String toString() => 'OrgAgent(${provider.wire}, $account, $model)';
 }
 
+/// Where an org's cards live; `bin/tracker.py` reads the same `orgs[].tracker` for `/kickoff` and `/pr-open`.
+enum TrackerKind {
+  ado('ado', 'Azure DevOps'),
+  jira('jira', 'Jira'),
+  linear('linear', 'Linear');
+
+  const TrackerKind(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static TrackerKind? parse(Object? raw) => values.where((k) => k.wire == raw).firstOrNull;
+}
+
+/// Jira project and Linear team key: what prefixes a numeric card ID.
+final kCardKeyPrefix = RegExp(r'^[A-Z][A-Z0-9]*$');
+
+/// `orgs[].tracker`. [project] is the ADO project name or the Jira project key; [team] the Linear team key.
+/// [releaseBase] (`base: "release"`) branches cards off the latest `release/*` instead of the default branch.
+class OrgTracker {
+  const OrgTracker({
+    required this.kind,
+    this.org,
+    this.project,
+    this.site,
+    this.email,
+    this.team,
+    this.workspace,
+    this.releaseBase = false,
+  });
+
+  final TrackerKind kind;
+  final String? org;
+  final String? project;
+  final String? site;
+  final String? email;
+  final String? team;
+  final String? workspace;
+  final bool releaseBase;
+
+  /// Keys this class owns in the raw entry; the others survive a rewrite.
+  static const rawKeys = {'kind', 'org', 'project', 'site', 'email', 'team', 'workspace', 'base'};
+
+  /// `null` when [value] is not a map or has no known `kind`; missing fields stay `null` ([missing] says which).
+  static OrgTracker? fromRaw(Object? value) {
+    if (value is! Map) return null;
+    final kind = TrackerKind.parse(value['kind']);
+    if (kind == null) return null;
+    String? text(String key) =>
+        value[key] is String && (value[key] as String).trim().isNotEmpty ? (value[key] as String).trim() : null;
+    return OrgTracker(
+      kind: kind,
+      org: text('org'),
+      project: text('project'),
+      site: text('site'),
+      email: text('email'),
+      team: text('team'),
+      workspace: text('workspace'),
+      releaseBase: value['base'] == 'release',
+    );
+  }
+
+  Map<String, Object?> toRaw() => {
+    'kind': kind.wire,
+    'org': ?org,
+    'project': ?project,
+    'site': ?site,
+    'email': ?email,
+    'team': ?team,
+    'workspace': ?workspace,
+    if (releaseBase) 'base': 'release',
+  };
+
+  /// Prefix of a numeric card ID (`101` → `LC-101`); ADO IDs are numeric and have none.
+  String? get keyPrefix => switch (kind) {
+    TrackerKind.ado => null,
+    TrackerKind.jira => project,
+    TrackerKind.linear => team,
+  };
+
+  /// What the helpers need and is not set, as the form names it; `null` when complete.
+  String? get missing => switch (kind) {
+    TrackerKind.ado when org == null || project == null => 'informe a org e o projeto do Azure DevOps',
+    TrackerKind.jira when site == null || project == null || email == null =>
+      'informe o site, a chave do projeto e o email do Jira',
+    TrackerKind.jira when !kCardKeyPrefix.hasMatch(project!) => 'chave do projeto Jira inválida (ex.: LC)',
+    TrackerKind.linear when team != null && !kCardKeyPrefix.hasMatch(team!) => 'team key do Linear inválida (ex.: LC)',
+    _ => null,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is OrgTracker &&
+      other.kind == kind &&
+      other.org == org &&
+      other.project == project &&
+      other.site == site &&
+      other.email == email &&
+      other.team == team &&
+      other.workspace == workspace &&
+      other.releaseBase == releaseBase;
+
+  @override
+  int get hashCode => Object.hash(kind, org, project, site, email, team, workspace, releaseBase);
+}
+
 bool sameStrings(List<String> a, List<String> b) =>
     a.length == b.length && Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
 
@@ -145,6 +251,7 @@ class OrgConfig {
     this.permissionMode,
     this.agent,
     this.cycleBudget,
+    this.tracker,
   });
 
   final String name;
@@ -161,6 +268,9 @@ class OrgConfig {
 
   /// US$ a cycle of this org may cost; `null` inherits [DashboardConfig.cycleBudget].
   final double? cycleBudget;
+
+  /// `null`: no tracker, so `/kickoff` only runs in manual mode (key absent or without a known `kind`).
+  final OrgTracker? tracker;
 }
 
 class ProjectEntry {
@@ -232,6 +342,7 @@ class DashboardConfig {
               permissionMode: PermissionMode.parseConfig(o['permissionMode']),
               agent: OrgAgent.fromRaw(o['agent']),
               cycleBudget: parseBudget(o['cycleBudget']),
+              tracker: OrgTracker.fromRaw(o['tracker']),
             ),
       ],
       projects: [

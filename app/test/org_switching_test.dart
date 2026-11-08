@@ -356,7 +356,7 @@ void main() {
       _router(tester).go('/p/alpha/sessions');
       await tester.pumpAndSettle();
       expect(find.text('Sessão alpha'), findsOneWidget);
-      expect(find.text('OUTROS PROJETOS'), findsNothing);
+      expect(find.text('Outros projetos'), findsNothing);
       expect(find.text('Sessão beta'), findsNothing);
       expect(find.text('Sessão hid'), findsNothing);
       expect(find.text('Sessão ghost'), findsNothing);
@@ -369,7 +369,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(_org(tester), 'Sem org');
-      expect(find.text('OUTROS PROJETOS'), findsOneWidget);
+      expect(find.text('Outros projetos'), findsOneWidget);
       expect(find.text('Sessão ghost'), findsOneWidget);
       expect(find.text('Sessão alpha'), findsNothing);
       expect(find.descendant(of: find.byKey(const ValueKey('org-pending')), matching: find.text('8')), findsOneWidget);

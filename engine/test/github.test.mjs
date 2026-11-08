@@ -73,7 +73,7 @@ function writePrs(project, content) {
 
 const entry = (n, repo = "solo", extra = {}) => ({
   pr_number: n,
-  ado_id: 100 + n,
+  tracker: { kind: "ado", id: String(100 + n), url: null },
   branch: `feat/${n}`,
   target: "main",
   title: `PR ${n}`,
@@ -164,7 +164,7 @@ test("query: owner e repo com -f, so pr com -F; mapeia threads abertas, checks e
   assert.deepEqual(pr.unresolved, [{ path: "lib/a.dart", line: 42, author: "rev", body: "conserta" }]);
   assert.equal(pr.updatedAt, "2026-09-30T10:00:00Z");
   assert.equal(pr.mergedAt, null);
-  assert.equal(pr.ado_id, 105);
+  assert.deepEqual(pr.tracker, { kind: "ado", id: "105", url: null });
   assert.equal(pr.repo, "solo");
   assert.equal(pr.nameWithOwner, "me/solo");
 });

@@ -100,6 +100,14 @@ class _OrgFormState extends State<OrgForm> {
   late final _agentAccount = TextEditingController(text: widget.initial?.agent?.account ?? '');
   late final _budget = TextEditingController(text: budgetText(widget.initial?.cycleBudget));
   late String? _agentModel = widget.initial?.agent?.model;
+  late TrackerKind? _trackerKind = widget.initial?.tracker?.kind;
+  late final _trackerOrg = TextEditingController(text: widget.initial?.tracker?.org ?? '');
+  late final _trackerProject = TextEditingController(text: widget.initial?.tracker?.project ?? '');
+  late final _trackerSite = TextEditingController(text: widget.initial?.tracker?.site ?? '');
+  late final _trackerEmail = TextEditingController(text: widget.initial?.tracker?.email ?? '');
+  late final _trackerTeam = TextEditingController(text: widget.initial?.tracker?.team ?? '');
+  late final _trackerWorkspace = TextEditingController(text: widget.initial?.tracker?.workspace ?? '');
+  late bool _releaseBase = widget.initial?.tracker?.releaseBase ?? false;
   bool _agentTouched = false;
   int _agentGeneration = 0;
   AgentAccountStatus? _agentStatus;
@@ -147,6 +155,9 @@ class _OrgFormState extends State<OrgForm> {
     _ownerInput.dispose();
     _agentAccount.dispose();
     _budget.dispose();
+    for (final c in [_trackerOrg, _trackerProject, _trackerSite, _trackerEmail, _trackerTeam, _trackerWorkspace]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -283,6 +294,35 @@ class _OrgFormState extends State<OrgForm> {
     return OrgAgent(provider: _provider, account: account.isEmpty ? null : account, model: _agentModel);
   }
 
+  /// Only the fields of the chosen kind: switching kinds leaves the other kind's text out of the save.
+  OrgTracker? get _trackerDraft {
+    final kind = _trackerKind;
+    if (kind == null) return null;
+    String? text(TextEditingController c) => c.text.trim().isEmpty ? null : c.text.trim();
+    String? key(TextEditingController c) => text(c)?.toUpperCase();
+    return switch (kind) {
+      TrackerKind.ado => OrgTracker(
+        kind: kind,
+        org: text(_trackerOrg),
+        project: text(_trackerProject),
+        releaseBase: _releaseBase,
+      ),
+      TrackerKind.jira => OrgTracker(
+        kind: kind,
+        site: text(_trackerSite)?.replaceFirst(RegExp(r'^https?://'), '').replaceFirst(RegExp(r'/+$'), ''),
+        project: key(_trackerProject),
+        email: text(_trackerEmail),
+        releaseBase: _releaseBase,
+      ),
+      TrackerKind.linear => OrgTracker(
+        kind: kind,
+        team: key(_trackerTeam),
+        workspace: text(_trackerWorkspace),
+        releaseBase: _releaseBase,
+      ),
+    };
+  }
+
   bool? _notifiedDirty;
   bool _advanced = false;
 
@@ -296,6 +336,7 @@ class _OrgFormState extends State<OrgForm> {
         github != initial.github ||
         _permissionMode != initial.permissionMode ||
         _agentDraft != initial.agent ||
+        _trackerDraft != initial.tracker ||
         parseBudgetInput(_budget.text) != initial.cycleBudget;
   }
 
@@ -408,6 +449,7 @@ class _OrgFormState extends State<OrgForm> {
       permissionMode: _permissionMode,
       agent: _agentDraft,
       cycleBudget: parseBudgetInput(_budget.text),
+      tracker: _trackerDraft,
     );
     final agentAccount = draft.agent?.account;
     // Both missing fields at once, each under its own field, name first.
@@ -419,7 +461,7 @@ class _OrgFormState extends State<OrgForm> {
         ? 'conta do Antigravity inválida'
         : draft.cycleBudget?.isNaN ?? false
         ? 'orçamento inválido: use um valor positivo'
-        : validateOrgs([...widget.others, draft]);
+        : draft.tracker?.missing ?? validateOrgs([...widget.others, draft]);
     if (nameError != null || rootsError != null || error != null) {
       setState(() {
         _nameError = nameError;
@@ -473,7 +515,7 @@ class _OrgFormState extends State<OrgForm> {
       children: [
         Row(
           children: [
-            const Expanded(child: Muted('GITHUB', size: 10)),
+            const Expanded(child: Muted('GitHub', size: 11)),
             IconButton(
               key: const ValueKey('org-github-reload'),
               tooltip: 'Recarregar contas',
@@ -512,7 +554,7 @@ class _OrgFormState extends State<OrgForm> {
             child: Text(note, style: TextStyle(fontSize: 12, color: c.warn)),
           ),
         const SizedBox(height: 10),
-        const Muted('ORGS DO GITHUB', size: 10),
+        const Muted('Orgs do GitHub', size: 11),
         const SizedBox(height: 6),
         if (_owners.isEmpty)
           const Padding(
@@ -862,6 +904,89 @@ class _OrgFormState extends State<OrgForm> {
     );
   }
 
+  Widget _trackerField(String key, TextEditingController controller, String label, String hint) => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: TextField(
+      key: ValueKey('org-tracker-$key'),
+      controller: controller,
+      onChanged: (_) => setState(() => _error = null),
+      style: const TextStyle(fontSize: 13),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        hintStyle: TextStyle(fontSize: 13, color: context.colors.textMuted),
+        floatingLabelBehavior: FloatingLabelBehavior.always,
+        isDense: true,
+      ),
+    ),
+  );
+
+  Widget _trackerSection(AppColors c) {
+    final kind = _trackerKind;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InputDecorator(
+          decoration: const InputDecoration(labelText: 'Cards da org', isDense: true),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<TrackerKind?>(
+              key: const ValueKey('org-tracker-kind'),
+              isDense: true,
+              isExpanded: true,
+              value: kind,
+              style: TextStyle(fontSize: 13, color: c.textPrimary),
+              items: [
+                const DropdownMenuItem<TrackerKind?>(value: null, child: Text('nenhum (só kickoff manual)')),
+                for (final k in TrackerKind.values) DropdownMenuItem<TrackerKind?>(value: k, child: Text(k.label)),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (k) => setState(() {
+                      _trackerKind = k;
+                      _error = null;
+                    }),
+            ),
+          ),
+        ),
+        ...switch (kind) {
+          null => const <Widget>[],
+          TrackerKind.ado => [
+            _trackerField('org', _trackerOrg, 'Org', 'ex.: GrupoOTG'),
+            _trackerField('project', _trackerProject, 'Projeto', 'ex.: R10 Score Development'),
+          ],
+          TrackerKind.jira => [
+            _trackerField('site', _trackerSite, 'Site', 'ex.: likindo.atlassian.net'),
+            _trackerField('project', _trackerProject, 'Chave do projeto', 'ex.: LC'),
+            _trackerField('email', _trackerEmail, 'Email da conta', 'quem é dono do API token'),
+          ],
+          TrackerKind.linear => [
+            _trackerField('team', _trackerTeam, 'Team key', 'opcional · ex.: LC'),
+            _trackerField('workspace', _trackerWorkspace, 'Workspace', 'opcional · slug em linear.app/<slug>'),
+          ],
+        },
+        if (kind != null) ...[
+          const SizedBox(height: 6),
+          CheckboxListTile(
+            key: const ValueKey('org-tracker-release'),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: _releaseBase,
+            onChanged: _busy ? null : (v) => setState(() => _releaseBase = v ?? false),
+            title: const Text('Branch a partir da última release/*', style: TextStyle(fontSize: 13)),
+            subtitle: const Muted('desmarcado: a branch padrão do remoto', size: 11),
+          ),
+          Muted(switch (kind) {
+            TrackerKind.ado => 'PAT em ~/.claude/.ado_pat ou AZURE_DEVOPS_EXT_PAT',
+            TrackerKind.jira => 'API token em ~/.claude/.jira_token ou JIRA_API_TOKEN',
+            TrackerKind.linear => 'via MCP linear: autentique com /mcp',
+          }, size: 11),
+        ],
+      ],
+    );
+  }
+
   Widget _generalSection(AppColors c) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -884,7 +1009,7 @@ class _OrgFormState extends State<OrgForm> {
           ),
         ),
         const SizedBox(height: 14),
-        const Muted('PASTAS', size: 10),
+        const Muted('Pastas', size: 11),
         const SizedBox(height: 6),
         if (_roots.isEmpty)
           _rootsError == null
@@ -957,6 +1082,7 @@ class _OrgFormState extends State<OrgForm> {
       ),
     );
     final github = _FormSection(child: _githubSection(c));
+    final tracker = _FormSection(title: 'TRACKER', child: _trackerSection(c));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -978,7 +1104,7 @@ class _OrgFormState extends State<OrgForm> {
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Muted(
-                      'padrão: aceitar edições · Claude · conta ativa do gh — dá para mudar depois em Configurações',
+                      'padrão: aceitar edições · Claude · conta ativa do gh · sem tracker — dá para mudar depois em Configurações',
                       size: 11,
                     ),
                   ),
@@ -992,6 +1118,8 @@ class _OrgFormState extends State<OrgForm> {
             agent,
             const SizedBox(height: 12),
             github,
+            const SizedBox(height: 12),
+            tracker,
             const SizedBox(height: 12),
             budget,
           ],
@@ -1017,7 +1145,7 @@ class _OrgFormState extends State<OrgForm> {
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [github, const SizedBox(height: 12), budget],
+                          children: [github, const SizedBox(height: 12), tracker, const SizedBox(height: 12), budget],
                         ),
                       ),
                     ],
@@ -1032,6 +1160,8 @@ class _OrgFormState extends State<OrgForm> {
                       agent,
                       const SizedBox(height: 12),
                       github,
+                      const SizedBox(height: 12),
+                      tracker,
                       const SizedBox(height: 12),
                       budget,
                     ],

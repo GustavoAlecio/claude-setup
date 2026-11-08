@@ -88,7 +88,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       const SizedBox(height: 28),
                       _ProjectsSection(config: config, projects: projects),
                       const SizedBox(height: 28),
-                      const _SectionTitle('AVANÇADO'),
+                      const _SectionTitle('Avançado'),
                       AdvancedSection(config: config),
                     ],
                   ),
@@ -147,7 +147,7 @@ class _PermissionsSectionState extends State<_PermissionsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _SectionTitle('PADRÕES GLOBAIS'),
+        const _SectionTitle('Padrões globais'),
         Panel(
           key: const ValueKey('settings-permissions'),
           child: Column(
@@ -392,7 +392,7 @@ class _OrgsSectionState extends State<_OrgsSection> {
       children: [
         Row(
           children: [
-            const Expanded(child: _SectionTitle('ORGS')),
+            const Expanded(child: _SectionTitle('Orgs')),
             TextButton.icon(
               key: const ValueKey('settings-new-org-button'),
               style: TextButton.styleFrom(foregroundColor: c.accent),
@@ -798,7 +798,7 @@ class _ProjectsSectionState extends State<_ProjectsSection> {
       children: [
         Row(
           children: [
-            const Expanded(child: _SectionTitle('PROJETOS')),
+            const Expanded(child: _SectionTitle('Projetos')),
             TextButton.icon(
               style: TextButton.styleFrom(foregroundColor: c.accent),
               onPressed: _picking ? null : _addProject,
@@ -854,7 +854,7 @@ class _ProjectsSectionState extends State<_ProjectsSection> {
               ),
             ),
         const SizedBox(height: 16),
-        const _SectionTitle('OCULTOS'),
+        const _SectionTitle('Ocultos'),
         Panel(
           key: const ValueKey('settings-hidden'),
           child: hidden.isEmpty

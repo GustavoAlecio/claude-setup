@@ -438,7 +438,7 @@ void main() {
     GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/demo-app/sessions');
     await tester.pumpAndSettle();
 
-    expect(find.text('NO TERMINAL'), findsOneWidget);
+    expect(find.text('No terminal'), findsOneWidget);
     expect(find.textContaining('packages/core · aberta no terminal'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('terminal-session-aaa')));
     await tester.pumpAndSettle();
@@ -448,7 +448,7 @@ void main() {
     expect(sessions.importCalls.single.$3, 'demo-app');
     expect(find.text('trazida do terminal'), findsOneWidget);
     expect(find.textContaining('Sessão trazida do terminal. Retomar continua'), findsOneWidget);
-    expect(find.text('NO TERMINAL'), findsNothing);
+    expect(find.text('No terminal'), findsNothing);
   });
 
   testWidgets('the terminal /app imports the session into its project and opens it; outside projects it explains', (
@@ -734,11 +734,11 @@ void main() {
       await tester.pumpAndSettle();
       final jump = find.byKey(const ValueKey('palette-jump-/p/demo-app/sessions/s-status'));
       expect(jump, findsOneWidget);
-      expect(find.text('IR PARA'), findsOneWidget);
+      expect(find.text('Ir para'), findsOneWidget);
 
       await tester.tap(jump);
       await tester.pumpAndSettle();
-      expect(find.text('IR PARA'), findsNothing);
+      expect(find.text('Ir para'), findsNothing);
       expect(
         GoRouter.of(tester.element(find.byType(Scaffold).first)).routerDelegate.currentConfiguration.uri.path,
         '/p/demo-app/sessions/s-status',
@@ -747,7 +747,7 @@ void main() {
       await openPalette(tester);
       await tester.enterText(find.byType(TextField).last, 'x');
       await tester.pumpAndSettle();
-      expect(find.text('IR PARA'), findsNothing);
+      expect(find.text('Ir para'), findsNothing);
     });
 
     testWidgets('arrows move the selection, enter picks the skill and runs it with arguments', (tester) async {

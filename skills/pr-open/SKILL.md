@@ -1,20 +1,18 @@
 ---
 name: pr-open
 model: opus
-description: Abre um PR no GitHub a partir da branch atual, grava a spine ADO<->GitHub (link nativo AB#<id> no corpo + indice prs.json) e comenta de volta no work item do Azure DevOps.
+description: Abre um PR no GitHub a partir da branch atual, grava a spine card<->GitHub (referência ao card no corpo — AB#<id> no Azure DevOps, chave no Jira/Linear — + indice prs.json) e comenta de volta no card.
 ---
 
 Materializa o vínculo card↔PR no momento em que o PR nasce. Isso é o que permite o `/pr-status` acompanhar tudo depois sem poll manual.
-
-## Defaults ADO
-- **Org:** `<your-org>` · **Project:** `<your-project>`
-- Sobrescritos por `--org=` / `--project=`.
 
 ## 1. Pré-condições
 
 ```bash
 source ~/.claude/bin/get-project.sh
+PROJECT_PATH=$(git rev-parse --show-toplevel)
 PROJECT_NAME="$(get-project-name)"
+WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 ```
 
@@ -22,33 +20,39 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 - Garanta que não há mudanças não commitadas: `git status --porcelain`. Se houver, **pare** e avise — não commite por conta própria.
 - Garanta que a branch está pushada: `git push -u origin "$BRANCH"` (ok rodar; é ação de rotina).
 
-## 2. Resolver o work item (ado_id)
+## 2. Resolver o card
 
 Ordem de resolução:
-1. Primeiro argumento numérico → `ADO_ID`.
-2. Senão, leia `~/.claude/workflow/$PROJECT_NAME/current.json` e use `.ado_id` se presente.
-3. Senão, `ADO_ID` fica vazio — PR sem vínculo. Avise: "Abrindo PR sem card ADO vinculado. Passe `/pr-open <id>` se quiser vincular."
+1. Primeiro argumento que não é flag → `REF=$(python3 ~/.claude/bin/tracker.py ref "<arg>" "$PROJECT_PATH")`. Saída 2 → **pare** repassando o stderr (org sem tracker ou ID que não é desse tracker).
+2. Senão, o `tracker` do `$WF_DIR/current.json`, se for um card (`kind` `ado`, `jira` ou `linear`, com `id`).
+3. Senão, sem card — PR sem vínculo. Avise: "Abrindo PR sem card vinculado. Passe `/pr-open <id>` se quiser vincular." (`tracker.kind` `manual` também cai aqui, sem o aviso.)
+
+Daqui em diante, `<KIND>`, `<ID>` e `<CARD_URL>` são os campos do card (`url` pode ser `null`).
 
 ## 3. Resolver a base
 
-- Default: se existir uma branch `release/*` ativa (veja os últimos PRs com `gh pr list --limit 5 --json baseRefName`), use a mais recente como base; senão `main`.
+- Default: se existir uma branch `release/*` ativa (veja os últimos PRs com `gh pr list --limit 5 --json baseRefName`), use a mais recente como base; senão a branch padrão do remoto.
 - Apresente a base escolhida e **confirme com o usuário** antes de criar (a base errada é custosa de corrigir).
 
 ## 4. Montar título e corpo
 
-- **Título:** conventional commit refletindo a mudança (`feat(scope): ...`, `fix(scope): ...`). Derive dos commits da branch (`git log origin/<base>..HEAD --oneline`). Não invente escopo — use o do código tocado.
-- **Corpo:** quando houver `ADO_ID`, a **primeira linha** deve ser o link nativo Azure Boards (dispara o auto-vínculo PR↔work item da integração ADO↔GitHub):
+- **Título:** conventional commit refletindo a mudança (`feat(scope): ...`, `fix(scope): ...`). Derive dos commits da branch (`git log origin/<base>..HEAD --oneline`). Não invente escopo — use o do código tocado. Com card Jira ou Linear, termine o título com ` [<ID>]`: as integrações de GitHub dos dois vinculam o PR pela chave no título.
+- **Corpo:** com card, a **primeira linha** é a referência que dispara o auto-vínculo do tracker:
 
-  ```
-  [AB#<ADO_ID>](https://dev.azure.com/<your-org>/<your-project>/_workitems/edit/<ADO_ID>)
-  ```
+  | kind | Primeira linha |
+  |---|---|
+  | `ado` | `[AB#<ID>](<CARD_URL>)` — a syntax `AB#<id>` liga o PR ao work item pela integração Azure Boards↔GitHub |
+  | `jira` | `[<ID>](<CARD_URL>)` |
+  | `linear` | `[<ID>](<CARD_URL>)` (sem URL: só `<ID>`) |
 
-  Depois: resumo do que muda + seção de teste. Com `--from-complete`, se `$WF_DIR/adr-candidates.md` existir, anexe o conteúdo numa seção `## ADRs propostas` do corpo. A syntax `AB#<id>` é a fonte durável da spine — o `prs.json` é só índice.
+  Depois: resumo do que muda + seção de teste. Com `--from-complete`, se `$WF_DIR/adr-candidates.md` existir, anexe o conteúdo numa seção `## ADRs propostas` do corpo. A referência no corpo é a fonte durável da spine — o `prs.json` é só índice.
 
 ## 5. Criar o PR
 
+Escreva o corpo com **Write** em `$WF_DIR/.pr-body.md` (nunca interpole o texto em shell) e rode:
+
 ```bash
-gh pr create --base "<BASE>" --head "$BRANCH" --title "<TITULO>" --body-file <(printf '%s\n' "<CORPO>")
+gh pr create --base "<BASE>" --head "$BRANCH" --title "<TITULO>" --body-file "$WF_DIR/.pr-body.md"
 ```
 
 Capture o número e a URL do PR do output (`gh pr view --json number,url`).
@@ -56,16 +60,23 @@ Capture o número e a URL do PR do output (`gh pr view --json number,url`).
 ## 6. Gravar no índice
 
 ```bash
-~/.claude/bin/pr-registry.sh register "<PR_NUMBER>" "<ADO_ID>" "$BRANCH" "<BASE>" "<TITULO>" "<PR_URL>"
+~/.claude/bin/pr-registry.sh register "<PR_NUMBER>" "$BRANCH" "<BASE>" "<TITULO>" "<PR_URL>" "<KIND>" "<ID>" "<CARD_URL>"
 ```
 
-## 7. Comentar de volta no card (só se houver ADO_ID)
+Sem card, omita os três últimos argumentos.
 
-O vínculo em si é automático: a syntax `AB#<id>` no corpo faz a integração Azure Boards↔GitHub linkar o PR ao work item sem ação manual. Não refaça o link.
+## 7. Comentar de volta no card (só com card)
 
-Opcional (default: fazer) — sinal explícito via MCP `azure-devops`: `wit_add_work_item_comment` no work item `<ADO_ID>` com texto curto `PR aberto: <PR_URL> (base: <BASE>). Aguardando review.` Se o MCP falhar, não trave — o auto-vínculo já cobre a rastreabilidade.
+O vínculo em si é automático pela referência no corpo/título. Não refaça o link.
 
-Não mude estado/assignee do card — isso é do `/ado-close`.
+Opcional (default: fazer) — sinal explícito no card com o texto curto `PR aberto: <PR_URL> (base: <BASE>). Aguardando review.`:
+- ADO: `~/.claude/bin/ado.sh comment <ID> "<texto>"`.
+- Jira: escreva o texto com **Write** em `$WF_DIR/.card-comment.md` e rode `~/.claude/bin/jira.py comment <ID> "$WF_DIR/.card-comment.md"`.
+- Linear: comentário via MCP `linear`.
+
+Se falhar, não trave — o auto-vínculo já cobre a rastreabilidade.
+
+Não mude estado/assignee do card — no ADO isso é do `/ado-close`; no Jira/Linear, decisão do usuário.
 
 ## 8. Finalizar
 
