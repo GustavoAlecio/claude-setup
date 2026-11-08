@@ -347,7 +347,7 @@ class _AdrTile extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Pill(label: entry.status, color: adrStatusColor(c, entry.status), dot: false),
+                  Pill(label: adrStatusLabel(entry.status), color: adrStatusColor(c, entry.status), dot: false),
                 ],
               ),
               if (error != null)
@@ -411,7 +411,7 @@ class _AdrDetail extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Pill(label: entry.status, color: adrStatusColor(c, entry.status), dot: false),
+              Pill(label: adrStatusLabel(entry.status), color: adrStatusColor(c, entry.status), dot: false),
             ],
           ),
           const SizedBox(height: 8),
@@ -430,7 +430,7 @@ class _AdrDetail extends StatelessWidget {
               spacing: 10,
               runSpacing: 4,
               crossAxisAlignment: WrapCrossAlignment.center,
-              children: [const Muted('affects'), for (final a in entry.affects) Mono(a)],
+              children: [const Muted('afeta'), for (final a in entry.affects) Mono(a)],
             ),
           ],
           if (entry.supersedes.isNotEmpty || entry.supersededBy.isNotEmpty) ...[
@@ -544,7 +544,7 @@ class _ChainItem extends StatelessWidget {
       ),
       child: Text(
         item.id,
-        style: TextStyle(fontSize: 12, fontWeight: selected ? FontWeight.w700 : FontWeight.w400, color: color),
+        style: TextStyle(fontSize: 12, fontWeight: selected ? FontWeight.w600 : FontWeight.w400, color: color),
       ),
     );
     if (selected || !exists) return label;

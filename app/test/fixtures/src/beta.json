@@ -18,7 +18,10 @@
     "feature": "Fluxo beta",
     "project": "beta",
     "project_path": "/synthetic/beta",
-    "linear_key": "BET-7",
+    "tracker": {
+      "kind": "linear",
+      "id": "BET-7"
+    },
     "start_date": "2026-03-10T13:00:00Z",
     "end_date": null,
     "blockers": [],

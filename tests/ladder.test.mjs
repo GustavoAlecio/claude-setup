@@ -68,8 +68,8 @@ test('verify maps findings to the owning task, creates a task for orphans and re
     if (o.label.startsWith('g1')) return pass('G1')
     qa++
     return qa === 1
-      ? { gate: 'G2', verdict: 'fail', criteria: [], findings: [{ id: 'Q1', severity: 'major', file: 'lib/b.dart', message: 'm' }, { id: 'Q2', severity: 'major', file: 'lib/z.dart', message: 'm' }] }
-      : { gate: 'G2', verdict: 'pass', criteria: [], findings: [] }
+      ? { gate: 'G2', verdict: 'fail', criteria: [{ criterion: 'c1', status: 'FAIL', evidence: 'e' }], findings: [{ id: 'Q1', severity: 'major', file: 'lib/b.dart', message: 'm' }, { id: 'Q2', severity: 'major', file: 'lib/z.dart', message: 'm' }] }
+      : { gate: 'G2', verdict: 'pass', criteria: [{ criterion: 'c1', status: 'PASS', evidence: 'test/a_test.dart' }], findings: [] }
   }
   let reentry
   const workflow = async (_name, a) => {
@@ -77,10 +77,11 @@ test('verify maps findings to the owning task, creates a task for orphans and re
     return { status: 'done', checkpoint: 'cp2', tasks: a.tasks.map(t => ({ id: t.id, status: 'done' })), trace: [] }
   }
   const tasks = [{ id: 'T1', tier: 'haiku', files_changed: ['lib/a.dart'] }, { id: 'T2', tier: 'sonnet', files_changed: ['lib/b.dart'] }]
-  const r = await verify({ args: { ...baseArgs(tasks), base_checkpoint: 'cp0' }, agent, workflow })
+  const r = await verify({ args: { ...baseArgs(tasks), base_checkpoint: 'cp0', revision_start: '@/d/rev.tree' }, agent, workflow })
   assert.equal(r.status, 'verified')
   assert.deepEqual(reentry, ['T2', 'V1'])
   assert.equal(r.checkpoint, 'cp2')
+  assert.equal(r.decision.revision_start, 'cp2')
 })
 
 test('trace entries carry blocking findings ≤300', async () => {
@@ -114,10 +115,10 @@ test('trace entries carry blocking findings ≤300', async () => {
     vbudget.spend(o.label.startsWith('g2') ? 7 : 3)
     return o.label.startsWith('g1')
       ? pass('G1')
-      : { gate: 'G2', verdict: 'fail', criteria: [], findings: [{ id: 'Q1', severity: 'critical', file: 'lib/a.dart', message: long }] }
+      : { gate: 'G2', verdict: 'fail', criteria: [{ criterion: 'c1', status: 'FAIL', evidence: 'e' }], findings: [{ id: 'Q1', severity: 'critical', file: 'lib/a.dart', message: long }] }
   }
   const v = await verify({ args: { ...baseArgs([{ id: 'T1', tier: 'haiku', files_changed: ['lib/a.dart'] }]), base_checkpoint: 'cp0' }, agent: vagent, budget: vbudget })
-  assert.equal(v.reason, 'reentry_failed_to_run')
+  assert.equal(v.reason, 'REENTRY_FAILED_TO_RUN')
   const g2 = v.trace.find(e => e.role === 'g2')
   assert.equal(g2.findings.length, 1)
   assert.equal(g2.findings[0].message.length, 300)
@@ -181,7 +182,8 @@ test('verify with skip_g2 never spawns the QA agent', async () => {
   const labels = []
   const agent = async (_p, o) => { labels.push(o.label); return { gate: 'G1', verdict: 'pass', findings: [] } }
   const r = await verify({ args: { ...baseArgs([{ id: 'T1', tier: 'sonnet', files_changed: ['lib/a.dart'] }]), base_checkpoint: 'cp0', skip_g2: true }, agent })
-  assert.equal(r.status, 'verified')
+  assert.equal(r.status, 'unverified')
+  assert.equal(r.reason, 'QA_SKIPPED')
   assert.ok(!labels.some(l => l.startsWith('g2')))
 })
 

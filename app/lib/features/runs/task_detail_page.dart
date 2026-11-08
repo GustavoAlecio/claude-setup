@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/widgets/inline_markdown.dart';
 import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
@@ -261,7 +262,14 @@ class _AttemptCard extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Mono(attempt.label, color: c.textPrimary, size: 13),
+                Flexible(
+                  child: Text(
+                    attempt.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontFamily: monoFamily, fontSize: 13, color: c.textPrimary),
+                  ),
+                ),
                 const SizedBox(width: 10),
                 TierChip(attempt.tier),
                 const Spacer(),
@@ -366,7 +374,7 @@ class _EscalationArrow extends StatelessWidget {
           children: [
             Icon(Icons.trending_up, color: c.tier(to), size: 20),
             const SizedBox(height: 4),
-            Mono('rollback', size: 10, color: c.textMuted),
+            Mono('desfez e escalou', size: 10, color: c.textMuted),
             Mono('→ ${to.name}', size: 11, color: c.tier(to)),
           ],
         ),
@@ -389,7 +397,7 @@ class _RetryArrow extends StatelessWidget {
           children: [
             Icon(Icons.redo, color: c.textMuted, size: 18),
             const SizedBox(height: 4),
-            Mono('fix in place', size: 10, color: c.textMuted),
+            Mono('mesmo modelo', size: 10, color: c.textMuted),
           ],
         ),
       ),

@@ -27,7 +27,7 @@ void main() {
         'prs': [
           {
             'pr_number': 12,
-            'ado_id': 4821,
+            'tracker': {'kind': 'ado', 'id': '4821', 'url': 'https://dev.azure.com/o/p/_workitems/edit/4821'},
             'branch': 'feat/x',
             'target': 'main',
             'title': 'T',
@@ -51,7 +51,8 @@ void main() {
       });
       final pr = prs.single;
       expect(pr.number, 12);
-      expect(pr.adoId, '4821');
+      expect(pr.card?.label, 'AB#4821');
+      expect(pr.card?.url, 'https://dev.azure.com/o/p/_workitems/edit/4821');
       expect(pr.checks, PrChecks.failing);
       expect(pr.cwdCandidates, ['/tmp/r']);
       expect(pr.live, isTrue);
@@ -66,7 +67,7 @@ void main() {
         'prs': [
           {
             'pr_number': '7',
-            'ado_id': [],
+            'tracker': [],
             'title': 5,
             'stage': null,
             'checks': 'weird',
@@ -82,7 +83,7 @@ void main() {
       expect(prs, hasLength(2));
       final pr = prs.first;
       expect(pr.number, isNull);
-      expect(pr.adoId, isNull);
+      expect(pr.card, isNull);
       expect(pr.title, '');
       expect(pr.stage, '');
       expect(pr.checks, isNull);
@@ -253,13 +254,16 @@ void main() {
     });
   });
 
-  test('adoId: int or non-empty string; empty, double and others are null', () {
-    String? ado(Object? v) => parsePullRequest({'ado_id': v}).adoId;
-    expect(ado(4821), '4821');
-    expect(ado('4821'), '4821');
-    expect(ado(''), isNull);
-    expect(ado(4821.0), isNull);
-    expect(ado(null), isNull);
+  test('card: known kind and an int or non-empty string id; anything else is null', () {
+    String? card(Object? v) => parsePullRequest({'tracker': v}).card?.label;
+    expect(card({'kind': 'ado', 'id': 4821}), 'AB#4821');
+    expect(card({'kind': 'jira', 'id': 'LC-101'}), 'LC-101');
+    expect(card({'kind': 'linear', 'id': 'BET-7', 'url': ''}), 'BET-7');
+    expect(card({'kind': 'ado', 'id': ''}), isNull);
+    expect(card({'kind': 'ado', 'id': 4821.0}), isNull);
+    expect(card({'kind': 'trello', 'id': '1'}), isNull);
+    expect(card({'kind': 'manual'}), isNull);
+    expect(card(null), isNull);
   });
 
   group('repoLabel', () {

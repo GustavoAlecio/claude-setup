@@ -102,6 +102,8 @@ class _SessionPendingState extends State<_SessionPending> with SessionLauncher<_
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  _Source(session: s, stage: stage?.stage),
+                  const SizedBox(height: 8),
                   if (stage != null) ...[_StageReportBlock(stage, onLink: openLink), const SizedBox(height: 10)],
                   QuestionCard(q, onAnswer: _answer),
                 ],
@@ -114,6 +116,42 @@ class _SessionPendingState extends State<_SessionPending> with SessionLauncher<_
               session: s,
             ),
           },
+      ],
+    );
+  }
+}
+
+/// Which session asks: the stage (or the command) and its title, with the way to the full conversation.
+class _Source extends StatelessWidget {
+  const _Source({required this.session, required this.stage});
+
+  final SessionSummary session;
+  final Stage? stage;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      key: ValueKey('awaiting-source-${session.id}'),
+      children: [
+        Icon(Icons.help_outline, size: 15, color: c.awaiting),
+        const SizedBox(width: 8),
+        Mono(stage?.label ?? session.command.split(' ').first, size: 12, color: c.textPrimary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Tooltip(
+            message: session.title,
+            child: Text(
+              session.title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: c.textSecondary),
+            ),
+          ),
+        ),
+        TextButton(
+          onPressed: () => context.go('/p/${session.project}/sessions/${session.id}'),
+          child: Text('abrir sessão', style: TextStyle(color: c.accent, fontSize: 12)),
+        ),
       ],
     );
   }

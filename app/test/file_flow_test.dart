@@ -89,7 +89,7 @@ void main() {
     await _open(tester, data, '/p/alpha/flow');
 
     expect(find.text('Pagina alpha'), findsWidgets);
-    expect(find.text('#1001'), findsWidgets);
+    expect(find.text('AB#1001'), findsWidgets);
     expect(find.text('em andamento'), findsOneWidget);
 
     await _go(tester, '/p/alpha/runs');
@@ -111,7 +111,7 @@ void main() {
     expect(find.text('→ sonnet'), findsOneWidget);
 
     final xs = [
-      for (final lens in ['escopo', 'arquitetura', 'contrato']) tester.getTopLeft(find.text('lente: $lens')).dx,
+      for (final lens in ['escopo', 'arquitetura', 'contrato']) tester.getTopLeft(find.text('ângulo: $lens')).dx,
     ];
     expect(xs[0] < xs[1] && xs[1] < xs[2], isTrue, reason: 'hypotheses ranked by confidence: $xs');
     expect(tester.takeException(), isNull);
@@ -130,7 +130,7 @@ void main() {
     expect(find.text('#2'), findsOneWidget);
     final first = find.ancestor(of: find.text('#1'), matching: find.byType(Column)).first;
     expect(find.descendant(of: first, matching: find.text('G0')), findsOneWidget);
-    expect(find.descendant(of: first, matching: find.text('fail')), findsWidgets);
+    expect(find.descendant(of: first, matching: find.text('reprovou')), findsWidgets);
     expect(find.text('→ sonnet'), findsOneWidget);
     expect(find.text('—'), findsNWidgets(2));
     expect(tester.takeException(), isNull);
@@ -185,7 +185,7 @@ void main() {
     for (final gate in ['g1:flutter-architecture', 'g1:flutter-correctness', 'g1:dart-correctness', 'g2']) {
       final chip = find.ancestor(of: find.text(gate).last, matching: find.byType(Row)).first;
       expect(
-        find.descendant(of: chip, matching: find.text('pass')),
+        find.descendant(of: chip, matching: find.text('passou')),
         findsOneWidget,
         reason: gate,
       );

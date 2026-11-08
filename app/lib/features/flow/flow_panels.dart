@@ -38,7 +38,8 @@ class StageBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Etapa em andamento: ${session.command} (${sessionStatusLabel(session)})',
+              '${_isSupport(session.command) ? 'Sessão de apoio' : 'Etapa'} em andamento: '
+              '${session.command} (${sessionStatusLabel(session)})',
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 12.5, color: c.textPrimary),
             ),
@@ -54,11 +55,14 @@ class StageBanner extends StatelessWidget {
   }
 }
 
+/// `/fix` corrects a blocked stage; it is not a stage of the timeline itself.
+bool _isSupport(String command) => command.trimLeft().startsWith('/fix');
+
 const _taskColumns = <(String, double?)>[
   ('Task', 48),
   ('Título', null),
   ('Compl.', 64),
-  ('Tier0 → final', 210),
+  ('Modelo inicial → final', 210),
   ('Tentativas', 80),
   ('Escaladas', 76),
   ('Status', 110),

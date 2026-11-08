@@ -1,15 +1,36 @@
 import { randomUUID } from "node:crypto";
-import { HttpError } from "./data.mjs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { CLAUDE_HOME, HttpError } from "./data.mjs";
 import { redact, redactDeep, sessionEnv } from "./gh_env.mjs";
+import { liveTerminalSessions } from "./terminal.mjs";
 
 const TITLE_MAX = 60;
 
 /** O que o app oferece; `plan` e `dontAsk` ficam de fora. */
-export const PERMISSION_MODES = new Set(["default", "acceptEdits", "auto", "bypassPermissions"]);
+export const PERMISSION_MODES = new Set(["default", "acceptEdits", "auto", "bypassPermissions", "plan"]);
+
+export const PROVIDERS = new Set(["anthropic", "antigravity"]);
+
+export const IMAGE_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 
 function titleFor(command) {
   const line = command.replace(/\s+/g, " ").trim();
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1).trimEnd()}…` : line;
+}
+
+/** Last `/skill` the user sent: a free conversation turns into a pipeline session when it runs `/kickoff`. */
+function skillOf(text) {
+  const first = text.trimStart().split(/\s/, 1)[0];
+  return first.startsWith("/") && first.length > 1 ? first : null;
+}
+
+function lastSkill(events) {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const skill = events[i].kind === "user_text" ? skillOf(events[i].text ?? "") : null;
+    if (skill) return skill;
+  }
+  return null;
 }
 
 function initModel(events) {
@@ -53,16 +74,23 @@ class Session {
       project,
       org = null,
       githubAccount = null,
+      provider = "anthropic",
+      account = null,
       cwd,
       additionalDirectories = [],
       command,
+      images = [],
       model,
       permissionMode = "default",
+      forkFrom = null,
+      asideOf = null,
       restored,
     },
-    { query, store, changed, tokens }
+    { query, agyQuery, store, changed, tokens, attachmentsDir, liveElsewhere }
   ) {
-    this.queryFn = query;
+    this.attachmentsDir = attachmentsDir;
+    this.queryFn = provider === "antigravity" ? agyQuery : query;
+    this.liveElsewhere = liveElsewhere;
     this.store = store;
     this.tokens = tokens;
     this.changed = () => changed(this);
@@ -70,16 +98,24 @@ class Session {
     this.project = project;
     this.org = org;
     this.githubAccount = githubAccount;
+    this.provider = provider;
+    this.account = account;
     this.cwd = cwd;
     this.additionalDirectories = additionalDirectories;
     this.command = command;
+    // So vao na primeira mensagem; depois disso ficam em attachments, como as de qualquer send.
+    this.initialImages = images;
     this.title = titleFor(command);
     this.requestedModel = model ?? null;
     // Lido pelo `attach`: uma troca durante o `attaching` ja vale para o resume em curso.
     this.permissionMode = permissionMode;
+    // Pergunta lateral: nasce de um fork do transcript de [asideOf] e nunca grava nele.
+    this.forkFrom = forkFrom;
+    this.asideOf = asideOf;
     this.createdAt = restored?.createdAt ?? new Date().toISOString();
     this.events = restored?.events ?? [];
     this.model = initModel(this.events) ?? this.requestedModel;
+    this.skill = lastSkill(this.events) ?? skillOf(command);
     this.sdkSessionId = restored?.sdkSessionId ?? null;
     this.cost = restored?.cost ?? 0;
     // Uma sessao vinda do disco nao tem processo por tras: so volta a viver via resume().
@@ -101,15 +137,42 @@ class Session {
       project: this.project,
       org: this.org,
       githubAccount: this.githubAccount,
+      provider: this.provider,
+      account: this.account,
       cwd: this.cwd,
       additionalDirectories: this.additionalDirectories,
       command: this.command,
       permissionMode: this.permissionMode,
+      ...(this.asideOf ? { asideOf: this.asideOf, forkFrom: this.forkFrom } : {}),
+      requestedModel: this.requestedModel,
       createdAt: this.createdAt,
       sdkSessionId: this.sdkSessionId,
       cost: this.cost,
       events: this.events,
     };
+  }
+
+  /**
+   * Reimport do terminal: traz os turnos que o terminal teve depois do ultimo import, pelo timestamp de cada linha do
+   * transcript. So enquanto o app nao conversou na sessao; depois disso o transcript tambem tem os turnos do app e
+   * copiar duplicaria. Um processo ja retomado partiu do ponto antigo do transcript: para, e o proximo Retomar parte
+   * do ponto atual.
+   */
+  async catchUp(events) {
+    const since = this.events.findLastIndex((e) => e.kind === "imported");
+    if (since < 0 || this.events.slice(since + 1).some((e) => e.kind === "user_text")) return;
+    const last = this.events.slice(0, since).findLast((e) => e.at)?.at ?? "";
+    const fresh = events.filter((e) => e.at && e.at > last);
+    if (!fresh.length) return;
+    if (this.query) {
+      const consuming = this.consuming;
+      this.stop();
+      await consuming;
+      // `stopped` nao oferece Retomar no app; para ele e a mesma sessao vinda do terminal, sem processo.
+      this.setStatus("detached");
+    }
+    for (const event of fresh) this.emit(event);
+    this.emit({ kind: "imported", dropped: 0 });
   }
 
   save() {
@@ -149,15 +212,19 @@ class Session {
       project: this.project,
       org: this.org,
       githubAccount: this.githubAccount,
+      provider: this.provider,
+      account: this.account,
       cwd: this.cwd,
       additionalDirectories: this.additionalDirectories,
       command: this.command,
+      skill: this.skill,
       title: this.title,
       status: this.status,
       createdAt: this.createdAt,
       cost: this.cost,
       model: this.model,
       permissionMode: this.permissionMode,
+      asideOf: this.asideOf,
       events: this.events.length,
       pendingPermissions: this.pending.size,
       resumable: Boolean(this.sdkSessionId),
@@ -201,14 +268,40 @@ class Session {
     return true;
   }
 
-  send(text) {
+  /**
+   * [images] `{mediaType, data}` (base64, ja validados) ficam em disco para o app mostrar no historico. O Claude os
+   * recebe como blocos de imagem; o `agy` so aceita texto no stream-json, entao recebe os caminhos e os abre com
+   * `view_file`, uma leitura que o gate libera.
+   */
+  send(text, images = []) {
+    const names = [];
+    if (images.length) {
+      const dir = path.join(this.attachmentsDir, this.id);
+      mkdirSync(dir, { recursive: true });
+      for (const image of images) {
+        const name = `${randomUUID()}.${IMAGE_TYPES[image.mediaType]}`;
+        writeFileSync(path.join(dir, name), Buffer.from(image.data, "base64"));
+        names.push(name);
+      }
+    }
+    let content = text;
+    if (images.length && this.provider === "antigravity") {
+      const paths = names.map((name) => `- ${path.join(this.attachmentsDir, this.id, name)}`);
+      content = `${text}\n\nImagens anexadas pelo usuário (abra cada uma com view_file):\n${paths.join("\n")}`;
+    } else if (images.length) {
+      content = [
+        { type: "text", text },
+        ...images.map((image) => ({ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } })),
+      ];
+    }
     this.input.push({
       type: "user",
-      message: { role: "user", content: text },
+      message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: this.sdkSessionId ?? this.id,
     });
-    this.emit({ kind: "user_text", text });
+    this.skill = skillOf(text) ?? this.skill;
+    this.emit({ kind: "user_text", text, ...(names.length ? { images: names } : {}) });
     this.setStatus("running");
   }
 
@@ -275,6 +368,9 @@ class Session {
 
   /** Liga (ou religa) um processo a esta sessao. `resume` reaproveita o transcript no disco. */
   attach({ resume = false, token = null } = {}) {
+    const forked = resume && Boolean(this.sdkSessionId) && this.liveElsewhere(this.sdkSessionId);
+    // Antes do primeiro init a lateral ainda nao tem transcript proprio: parte de um fork do da sessao de origem.
+    const asideStart = !resume && !this.sdkSessionId && this.forkFrom;
     this.input = createInputStream();
     this.abort = new AbortController();
     this.token = token;
@@ -295,15 +391,20 @@ class Session {
         skills: "all",
         systemPrompt: { type: "preset", preset: "claude_code" },
         ...(resume && this.sdkSessionId ? { resume: this.sdkSessionId } : {}),
+        ...(asideStart ? { resume: this.forkFrom } : {}),
+        // Com o transcript aberto num terminal, dois processos gravariam nele: o app segue num ramo proprio.
+        ...(forked || asideStart ? { forkSession: true } : {}),
         ...(this.requestedModel ? { model: this.requestedModel } : {}),
+        ...(this.provider === "antigravity" ? { account: this.account } : {}),
       },
     });
 
     if (resume) {
-      this.emit({ kind: "reattached" });
+      this.emit({ kind: "reattached", ...(forked ? { forked: true } : {}) });
       this.setStatus("idle");
     } else {
-      this.send(this.command);
+      this.send(this.command, this.initialImages);
+      this.initialImages = [];
       this.setStatus("running");
     }
 
@@ -378,6 +479,23 @@ class Session {
     this.emit({ kind: "permission_mode", mode });
   }
 
+  /**
+   * Vale da proxima chamada ao modelo em diante; recusa (no `agy`, troca no meio de um turno) e 409 sem gravar.
+   * Sem processo, so grava e vale no proximo `attach`.
+   */
+  async setModel(model) {
+    if (this.query) {
+      try {
+        await this.query.setModel(model);
+      } catch (err) {
+        throw new HttpError(409, String(err?.message ?? err));
+      }
+    }
+    this.requestedModel = model;
+    this.model = model;
+    this.emit({ kind: "model", model });
+  }
+
   async interrupt() {
     try {
       await this.query?.interrupt();
@@ -400,9 +518,16 @@ class Session {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref());
 
-const changeKey = (s) => JSON.stringify([s.status, s.pendingPermissions, s.cost, s.model, s.permissionMode]);
+const changeKey = (s) => JSON.stringify([s.status, s.pendingPermissions, s.cost, s.model, s.permissionMode, s.skill]);
 
-export function createSessions({ query, store, tokens }) {
+export function createSessions({
+  query,
+  agyQuery,
+  store,
+  tokens,
+  attachmentsDir,
+  liveElsewhere = (sdkSessionId) => liveTerminalSessions(CLAUDE_HOME).has(sdkSessionId),
+}) {
   const sessions = new Map();
   const listeners = new Set();
   const lastKeys = new Map();
@@ -421,7 +546,7 @@ export function createSessions({ query, store, tokens }) {
     publish({ type: "summary", summary });
   }
 
-  const deps = { query, store, changed, tokens };
+  const deps = { query, agyQuery, store, changed, tokens, attachmentsDir, liveElsewhere };
 
   function flushAll() {
     return Promise.all([...sessions.values()].map((s) => store.flush(s.id, s.snapshot())));
@@ -439,6 +564,36 @@ export function createSessions({ query, store, tokens }) {
 
     get(id) {
       return sessions.get(id);
+    },
+
+    /** Transcripts que ja tem sessao aqui, para a lista do terminal nao repetir nem as do proprio engine. */
+    sdkSessionIds() {
+      return new Set([...sessions.values()].map((s) => s.sdkSessionId).filter(Boolean));
+    },
+
+    /**
+     * Sessao do terminal trazida para o app: nasce `detached` com o historico do transcript e volta a viver pelo
+     * `resume()` de sempre. Importar de novo o mesmo transcript devolve a sessao que ja existe.
+     */
+    async adopt(params, { sdkSessionId, createdAt, events, dropped }) {
+      const existing = [...sessions.values()].find((s) => s.sdkSessionId === sdkSessionId);
+      if (existing) {
+        await existing.catchUp(events);
+        return existing;
+      }
+      const note = { at: new Date().toISOString(), kind: "imported", dropped };
+      const restored = {
+        id: randomUUID(),
+        createdAt: createdAt ?? new Date().toISOString(),
+        sdkSessionId,
+        cost: 0,
+        events: [...events, note].map((e, i) => ({ seq: i + 1, ...e })),
+      };
+      const session = new Session({ ...params, restored }, deps);
+      sessions.set(session.id, session);
+      session.save();
+      session.changed();
+      return session;
     },
 
     /** `listener({type: "summary", summary} | {type: "removed", id})`; devolve o cancelamento. */
@@ -460,6 +615,7 @@ export function createSessions({ query, store, tokens }) {
       // `remove` marca o id como encerrado, entao o `flush` que o `stop` provoca ja nasce inerte.
       store.remove(id);
       session.stop();
+      rmSync(path.join(attachmentsDir, id), { recursive: true, force: true });
       return true;
     },
 
@@ -472,10 +628,15 @@ export function createSessions({ query, store, tokens }) {
             project: snapshot.project,
             org: snapshot.org ?? null,
             githubAccount: typeof snapshot.githubAccount === "string" ? snapshot.githubAccount : null,
+            provider: PROVIDERS.has(snapshot.provider) ? snapshot.provider : "anthropic",
+            account: typeof snapshot.account === "string" ? snapshot.account : null,
             cwd: snapshot.cwd,
             additionalDirectories: snapshot.additionalDirectories ?? [],
             command: snapshot.command,
+            model: typeof snapshot.requestedModel === "string" ? snapshot.requestedModel : undefined,
             permissionMode: PERMISSION_MODES.has(snapshot.permissionMode) ? snapshot.permissionMode : "default",
+            forkFrom: snapshot.forkFrom ?? null,
+            asideOf: snapshot.asideOf ?? null,
             restored: snapshot,
           },
           deps

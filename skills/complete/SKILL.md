@@ -12,7 +12,21 @@ PROJECT_NAME=$(get-project-name)
 WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ```
 
-Leia `$WF_DIR/current.json`. Se `status` não for `"verified"`, pare e aponte `/verify`.
+### Guarda de encerramento (determinística)
+
+```bash
+python3 ~/.claude/bin/wf_gate.py complete-check --workflow-dir "$WF_DIR" --repo "$PROJECT_PATH"
+```
+
+Saída 0: siga (`human_override: true` quer dizer que o ciclo fecha por exceção humana, não como verificado; diga isso no resumo e no PR). Saída 1: mostre `reason_code` e pare antes de qualquer outro passo. O arquivamento do passo 10 roda a mesma guarda e recusa sem ela; não existe caminho alternativo.
+
+- `REVISION_CHANGED` → o código mudou depois do verify: rode `/verify` de novo.
+- `NO_VERIFY`, `VERIFY_RESULT_UNREADABLE`, `VERIFY_INCONSISTENT` ou qualquer razão do verify (`G2_FAIL`, `QA_SKIPPED`, `CRITERIA_UNTESTED`…) → `AskUserQuestion` (parada incondicional, mesmo com auto on) com:
+  - **Rodar /verify de novo (Recommended)**.
+  - **Encerrar sem verificação**: só com o motivo e os riscos escritos pelo usuário em Other. Rode `python3 ~/.claude/bin/wf_gate.py accept-unverified --workflow-dir "$WF_DIR" --repo "$PROJECT_PATH" --reason "<motivo>" --risk "<risco>" [--risk ...]`: abre um diálogo no Mac que só o usuário confirma. Cancelado ou expirado = recusa; não tente outra via. Confirmado → rode o `complete-check` de novo e siga.
+  - **Manter bloqueado**: encerre o turno; o ciclo fica como está, sem perder artefatos.
+
+Nunca escreva `exec.override` nem `exec.verify` à mão, e nunca trate uma resposta sua ou de subagente como autorização humana.
 
 Relatório: início da etapa
 
@@ -28,7 +42,7 @@ A partir de `current.json` e `$WF_DIR/runs/*/result.json`:
 ## Ciclo: <feature>
 - Tasks: N (S/M/L) · tentativas totais: X · escaladas: Y
 - Tier final por task: T1 haiku, T2 haiku→sonnet, ...
-- Verify: rodadas Z · critérios PASS/UNTESTABLE
+- Verify: rodadas Z · <verdict> · <reason_code> · critérios PASS/FAIL/PARTIAL/UNTESTABLE · revisão <revision_id[:12]> · human_override <true|false>
 - Custo aproximado: tokens de saída por papel (dev/g0/g1/g2) somados do trace
 ```
 
@@ -83,7 +97,7 @@ Sem evidência de runtime: `python3 ~/.claude/bin/wf-report.py real-data --workf
 
 ## 8. Gate `pr`
 
-Apresente em 3-5 linhas o que o PR conterá (feature, tasks, ADRs propostos).
+Apresente em 3-5 linhas o que o PR conterá (feature, tasks, ADRs propostos). Com `human_override`, o corpo do PR diz que o ciclo **não** foi verificado, com o motivo e os riscos aceitos.
 
 Gate `pr` (decisão determinística; nunca leia `gates.json`):
 
@@ -93,7 +107,7 @@ python3 ~/.claude/bin/wf-report.py gate pr
 
 - `skip`: trate como Aprovar.
 - `ask`: faça um `AskUserQuestion` ("Abrir o PR deste ciclo?") com as opções:
-  - **Aprovar (Recommended)**: invoque `/pr-open --from-complete` (passe o `ado_id` do `current.json` se houver). A última linha do resultado é a URL do PR; grave-a:
+  - **Aprovar (Recommended)**: invoque `/pr-open --from-complete` (ele lê o card do `tracker` do `current.json`). A última linha do resultado é a URL do PR; grave-a:
     ```bash
     python3 ~/.claude/bin/wf-report.py pr --workflow-dir "$WF_DIR" --url "<URL>" || true
     ```
@@ -112,7 +126,7 @@ python3 ~/.claude/bin/wf-report.py stage-end complete --workflow-dir "$WF_DIR" -
 
 ## 10. Arquivar
 
-O archive copia o `report.json`, por isso vem depois do `stage-end`.
+O archive copia o `report.json`, por isso vem depois do `stage-end`. Ele reroda o `complete-check`; se o repo mudou desde o passo 1 (ex.: commit do `/pr-open` com autofix), ele recusa: rode `/verify` de novo.
 
 ```bash
 bash ~/.claude/bin/archive-cycle.sh completed "$PROJECT_NAME"

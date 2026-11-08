@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'models.dart';
 import 'report_models.dart';
+import 'tracker.dart';
 
 final runIdPattern = RegExp(r'^(?:impl|verify)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$');
 
@@ -199,27 +200,27 @@ Cycle parseCycle(
   Map<String, dynamic> current, {
   required String projectName,
   String? branch,
-  bool autoMode = false,
   List<Run> runs = const [],
   List<TaskMeta> plan = const [],
   ReportDoc? report,
 }) {
   final phasesRaw = current['phases'];
   final phases = phasesRaw is Map<String, dynamic> ? phasesRaw : <String, dynamic>{};
-  final ado = current['ado_id'];
-  final linear = current['linear_key'];
   final feature = current['feature'];
   return Cycle(
     feature: feature is String && feature.isNotEmpty ? feature : projectName,
-    tracker: ado != null
-        ? '#$ado'
-        : (linear is String && linear.isNotEmpty ? linear : (current['tracker'] == 'manual' ? 'manual' : null)),
+    tracker: cycleTrackerLabel(current['tracker']),
     stage: cycleStage(stageOf(current['status'] as String?, current['challenge'] != null, phases), report, current),
     branch: branch == null || branch.isEmpty ? null : branch,
     runs: runs,
-    autoMode: autoMode,
     stageMinutes: stageMinutes(phases),
     report: report,
+    startedAt: current['start_date'] is String ? DateTime.tryParse(current['start_date'] as String) : null,
+    // A paused cycle without a readable date still reads as paused: the flag is what the CLI sets.
+    pausedAt: current['paused'] == true
+        ? (current['paused_at'] is String ? DateTime.tryParse(current['paused_at'] as String) : null) ??
+              DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
+        : null,
     plan: [
       for (final m in plan)
         TaskRun(

@@ -36,7 +36,7 @@ Guarde o output como `STEP_START_TS`.
 
 Antes de gerar a spec, entenda o ponto de partida:
 
-1. **Ler convencoes do projeto:** verifique se existe `CLAUDE.md` na raiz do projeto e `DESIGN.md`. Se existirem, leia-os para entender padroes e restricoes.
+1. **Ler convencoes do projeto:** verifique se existe `CLAUDE.md` na raiz do projeto e `DESIGN.md`. Se existirem, leia-os para entender padroes e restricoes. **Mapa da org:** se existir `.map/index.md` no repo ou numa pasta acima (nunca procure abaixo), leia o índice e as notas/gerados relevantes antes de grep/`Explore`. Nota marcada STALE não é confiável: confira as âncoras. O mapa descreve `origin/development`; confira o diff da branch por cima.
 2. **Estrutura relevante:** faca um `ls` dos diretorios mais provaveis de serem impactados pela feature descrita pelo usuario. Entenda o que ja existe.
 3. **Estado atual:** se a feature envolve modificar algo existente, leia o codigo atual para entender o ponto de partida. Se e nova, identifique onde ela se encaixaria na arquitetura.
 

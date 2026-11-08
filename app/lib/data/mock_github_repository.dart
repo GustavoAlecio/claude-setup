@@ -1,5 +1,7 @@
+import '../engine/engine_config.dart';
 import 'github_models.dart';
 import 'github_repository.dart';
+import 'tracker.dart';
 
 /// [prsCalls] and [inboxCalls] record each call's arguments, in order. [prsError], [inboxError], [orgsError] and
 /// [sshError] make the next calls throw until cleared.
@@ -20,7 +22,7 @@ class MockGitHubRepository implements GitHubRepository {
         pullRequests: [
           PullRequest(
             number: 12,
-            adoId: '4821',
+            card: const CardRef(kind: TrackerKind.ado, id: '4821'),
             branch: 'feat/x',
             target: 'main',
             title: 'Adiciona filtro de partidas',

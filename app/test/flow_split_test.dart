@@ -31,7 +31,6 @@ class _Sessions extends MockSessionsRepository {
   final List<SessionSummary> list;
   final Map<String, List<Map<String, Object?>>> logs;
   final answerCalls = <(String id, String requestId, PermissionDecision decision, Map<String, String>? answers)>[];
-  final sendCalls = <(String id, String text)>[];
 
   @override
   Stream<List<SessionSummary>> watchSessions() => Stream.value(list);
@@ -51,7 +50,8 @@ class _Sessions extends MockSessionsRepository {
       answerCalls.add((id, requestId, decision, answers));
 
   @override
-  Future<void> send(String id, String text) async => sendCalls.add((id, text));
+  Future<void> send(String id, String text, {List<ImageAttachment> images = const []}) async =>
+      sendCalls.add((id, text, images));
 }
 
 class _LiveSessions extends _Sessions {
@@ -125,7 +125,7 @@ final _twoStages = _report([
 Project _withCycle(ReportDoc report) => Project(
   name: _project,
   path: '/synthetic/$_project',
-  cycle: Cycle(stage: Stage.challenge, autoMode: false, stageMinutes: const {}, runs: const [], report: report),
+  cycle: Cycle(stage: Stage.challenge, stageMinutes: const {}, runs: const [], report: report),
 );
 
 Future<_Sessions> _open(
@@ -417,7 +417,7 @@ void main() {
     await tester.tap(_inSide(find.byIcon(Icons.arrow_upward)));
     await tester.pumpAndSettle();
 
-    expect(sessions.sendCalls, [('s-chal', 'pode seguir')]);
+    expect(sessions.sendCalls.map((c) => (c.$1, c.$2)), [('s-chal', 'pode seguir')]);
   });
 
   testWidgets('o card Aguardando você fica no topo do painel', (tester) async {

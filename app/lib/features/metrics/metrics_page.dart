@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../app/projects_cubit.dart';
+import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
 import '../../core/widgets/refresh_loop.dart';
@@ -10,6 +11,7 @@ import '../../data/inventory_repository.dart';
 import '../../data/metrics_models.dart';
 import '../../data/metrics_repository.dart';
 import '../../data/models.dart';
+import '../../data/session_reducer.dart';
 import '../flow/cycle_report_dialog.dart';
 
 class MetricsPage extends StatefulWidget {
@@ -108,7 +110,15 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
           ),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-          sliver: SliverToBoxAdapter(child: _Cards(metrics: metrics)),
+          sliver: SliverToBoxAdapter(
+            child: _Cards(
+              metrics: metrics,
+              sessionsCost: projectSessionsCost(
+                context.watch<SessionsCubit>().state.data ?? const [],
+                widget.projectName,
+              ),
+            ),
+          ),
         ),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
@@ -165,34 +175,51 @@ const _cycleColumns = <(String, double?)>[
 ];
 
 class _Cards extends StatelessWidget {
-  const _Cards({required this.metrics});
+  const _Cards({required this.metrics, required this.sessionsCost});
 
   final ProjectMetrics metrics;
+
+  /// What the engine's sessions of this project cost so far (the trace carries tokens, not dollars).
+  final double sessionsCost;
 
   @override
   Widget build(BuildContext context) {
     final percent = metrics.passTier0Percent;
     String tokens(String role) => metrics.hasTokens ? formatTokens(metrics.tokensByRole[role] ?? 0) : '—';
     final otherTokens = metrics.tokensByRole['outros'] ?? 0;
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
+    Widget group(String title, List<Widget> cards) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _StatCard(id: 'completed', label: 'Ciclos concluídos', value: '${metrics.completedCycles}'),
-        _StatCard(id: 'tasks', label: 'Tasks', value: '${metrics.tasks}'),
-        _StatCard(
-          id: 'pass-tier0',
-          label: 'Passaram no tier0',
-          value: percent == null ? '—' : '${percent.round()}%',
-          detail: '${metrics.passedTier0}/${metrics.tasks}',
-        ),
-        _StatCard(id: 'escalations', label: 'Escaladas', value: '${metrics.escalations}'),
-        _StatCard(id: 'tokens-dev', label: 'Tokens dev', value: tokens('dev')),
-        _StatCard(id: 'tokens-g0', label: 'Tokens g0', value: tokens('g0')),
-        _StatCard(id: 'tokens-g1', label: 'Tokens g1', value: tokens('g1')),
-        _StatCard(id: 'tokens-g2', label: 'Tokens g2', value: tokens('g2')),
-        if (metrics.hasTokens && otherTokens > 0)
-          _StatCard(id: 'tokens-outros', label: 'Tokens outros', value: formatTokens(otherTokens)),
+        Muted(title, size: 10),
+        const SizedBox(height: 8),
+        Wrap(spacing: 12, runSpacing: 12, children: cards),
+      ],
+    );
+    // Outcomes and consumption in separate rows: one flowing Wrap left a lone card on the last line.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        group('Resultado', [
+          _StatCard(id: 'completed', label: 'Ciclos concluídos', value: '${metrics.completedCycles}'),
+          _StatCard(id: 'tasks', label: 'Tasks', value: '${metrics.tasks}'),
+          _StatCard(
+            id: 'pass-tier0',
+            label: 'Aprovadas no 1º modelo',
+            value: percent == null ? '—' : '${percent.round()}%',
+            detail: '${metrics.passedTier0}/${metrics.tasks}',
+          ),
+          _StatCard(id: 'escalations', label: 'Escaladas', value: '${metrics.escalations}'),
+          _StatCard(id: 'cost', label: 'Custo das sessões', value: '\$${sessionsCost.toStringAsFixed(2)}'),
+        ]),
+        const SizedBox(height: 16),
+        group('Tokens por papel', [
+          _StatCard(id: 'tokens-dev', label: 'Implementação', value: tokens('dev')),
+          _StatCard(id: 'tokens-g0', label: 'Checagens', value: tokens('g0')),
+          _StatCard(id: 'tokens-g1', label: 'Revisão de código', value: tokens('g1')),
+          _StatCard(id: 'tokens-g2', label: 'QA', value: tokens('g2')),
+          if (metrics.hasTokens && otherTokens > 0)
+            _StatCard(id: 'tokens-outros', label: 'Outros', value: formatTokens(otherTokens)),
+        ]),
       ],
     );
   }
@@ -211,7 +238,8 @@ class _StatCard extends StatelessWidget {
     final c = context.colors;
     return Container(
       key: ValueKey('metrics-card-$id'),
-      width: 150,
+      width: 168,
+      height: 92,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: c.surface,
@@ -221,13 +249,24 @@ class _StatCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Muted(label, size: 11),
-          const SizedBox(height: 6),
           Text(
-            value,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: c.textPrimary),
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: c.textMuted),
           ),
-          if (detail != null) Muted(detail!, size: 11),
+          const Spacer(),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                value,
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: c.textPrimary),
+              ),
+              if (detail != null) ...[const SizedBox(width: 8), Muted(detail!, size: 11)],
+            ],
+          ),
         ],
       ),
     );
@@ -250,8 +289,8 @@ class _CycleRow extends StatelessWidget {
     Widget text(String s) => Text(s, style: TextStyle(fontSize: 12, color: c.textSecondary));
     final notes = [
       if (!traced) 'sem trace',
-      if (cycle.ignoredLines > 0) '${cycle.ignoredLines} linha(s) ignorada(s)',
-      if (cycle.runsWithoutTrace > 0) '${cycle.runsWithoutTrace} run(s) sem trace',
+      if (cycle.ignoredLines > 0) countLabel(cycle.ignoredLines, 'linha ignorada', 'linhas ignoradas'),
+      if (cycle.runsWithoutTrace > 0) '${countLabel(cycle.runsWithoutTrace, 'run')} sem trace',
       ...cycle.warnings,
     ];
     return Container(
@@ -285,7 +324,7 @@ class _CycleRow extends StatelessWidget {
                   cell(text(cycle.hasTokens ? formatTokens(cycle.tokensTotal) : '—'), 64),
                   cell(
                     Text(
-                      cycle.status,
+                      cycle.status == 'completed' ? 'concluído' : cycle.status,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontSize: 12, color: cycle.status == 'completed' ? c.pass : c.textSecondary),
@@ -348,7 +387,7 @@ class _TaskRows extends StatelessWidget {
                   ),
                   _TierPill(t.tierFinal),
                   const SizedBox(width: 16),
-                  Muted('${t.attempts} tentativa(s)'),
+                  Muted(countLabel(t.attempts, 'tentativa')),
                   const SizedBox(width: 16),
                   Muted('${formatTokens(t.tokens)} tokens'),
                   if (t.blocked) ...[const SizedBox(width: 16), Pill(label: 'bloqueada', color: c.fail, dot: false)],
@@ -386,7 +425,7 @@ class _Bands extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Faixas', style: Theme.of(context).textTheme.titleSmall),
+        Text('Por tamanho e risco da task', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 4),
         if (error != null)
           Padding(
@@ -398,11 +437,11 @@ class _Bands extends StatelessWidget {
         else ...[
           const TableHeaderRow([
             ('Faixa', 80),
-            ('Pass no tier0', 130),
+            ('Aprovadas no 1º modelo', 130),
             ('Escaladas', 80),
             ('Bloqueios', 80),
             ('Tentativas/task', 110),
-            ('Tier final', null),
+            ('Modelo final', null),
           ]),
           for (final b in routing.bands) _BandRow(band: b),
         ],
@@ -414,7 +453,7 @@ class _Bands extends StatelessWidget {
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Muted('overrides ativos'),
+              const Muted('ajustes manuais da escada de modelos'),
               for (final o in routing.overrides.entries)
                 Pill(label: '${o.key} → ${o.value}', color: c.accent, mono: true, dot: false),
             ],

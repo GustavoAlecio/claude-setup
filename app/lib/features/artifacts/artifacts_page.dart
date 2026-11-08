@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
@@ -12,6 +13,7 @@ import '../../core/widgets/refresh_loop.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/docs_parser.dart';
 import '../../data/docs_repository.dart';
+import '../../data/github_parser.dart';
 import '../../data/models.dart';
 
 class ArtifactsPage extends StatefulWidget {
@@ -134,11 +136,19 @@ class _ArtifactsPageState extends State<ArtifactsPage> with RefreshLoop<Artifact
         Expanded(
           child: switch (selected) {
             null => const SizedBox.shrink(),
-            (:final entry, :final text) => DocBody(
-              text,
-              storageKey: PageStorageKey('artifact-${entry.rel}'),
-              padding: const EdgeInsets.fromLTRB(28, 20, 28, 40),
-              onLink: _onLink,
+            (:final entry, :final text) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _DocToolbar(project: widget.projectName, rel: entry.rel, text: text.text),
+                Expanded(
+                  child: DocBody(
+                    text,
+                    storageKey: PageStorageKey('artifact-${entry.rel}'),
+                    padding: const EdgeInsets.fromLTRB(28, 16, 28, 40),
+                    onLink: _onLink,
+                  ),
+                ),
+              ],
             ),
           },
         ),
@@ -157,7 +167,8 @@ class _ArtifactList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    Widget header(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 6), child: Muted(t, size: 10));
+    final now = DateTime.now();
+    Widget header(String t) => Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 6), child: Muted(t, size: 11));
     return Container(
       width: 260,
       decoration: BoxDecoration(
@@ -166,12 +177,24 @@ class _ArtifactList extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 12),
         children: [
-          if (listing.artifacts.isNotEmpty) header('WORKFLOW'),
+          if (listing.artifacts.isNotEmpty) header('Workflow'),
           for (final e in listing.artifacts)
-            _ArtifactTile(label: e.rel, rel: e.rel, selected: e.rel == selected, onSelect: onSelect),
-          if (listing.details.isNotEmpty) header('DETALHAMENTOS'),
+            _ArtifactTile(
+              label: e.rel,
+              rel: e.rel,
+              meta: [?artifactStage(e.rel), relativeAge(e.modified, now)].join(' · '),
+              selected: e.rel == selected,
+              onSelect: onSelect,
+            ),
+          if (listing.details.isNotEmpty) header('Detalhamentos'),
           for (final e in listing.details)
-            _ArtifactTile(label: _detailName(e.rel), rel: e.rel, selected: e.rel == selected, onSelect: onSelect),
+            _ArtifactTile(
+              label: _detailName(e.rel),
+              rel: e.rel,
+              meta: relativeAge(e.modified, now),
+              selected: e.rel == selected,
+              onSelect: onSelect,
+            ),
         ],
       ),
     );
@@ -184,10 +207,19 @@ class _ArtifactList extends StatelessWidget {
 }
 
 class _ArtifactTile extends StatelessWidget {
-  const _ArtifactTile({required this.label, required this.rel, required this.selected, required this.onSelect});
+  const _ArtifactTile({
+    required this.label,
+    required this.rel,
+    required this.meta,
+    required this.selected,
+    required this.onSelect,
+  });
 
   final String label;
   final String rel;
+
+  /// Stage that wrote it (when known) and how long ago.
+  final String meta;
   final bool selected;
   final void Function(String rel) onSelect;
 
@@ -208,20 +240,78 @@ class _ArtifactTile extends StatelessWidget {
             child: Tooltip(
               message: label,
               waitDuration: const Duration(milliseconds: 500),
-              child: Text(
-                label,
-                maxLines: 1,
-                softWrap: false,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  color: selected ? c.textPrimary : c.textSecondary,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected ? c.textPrimary : c.textSecondary,
+                    ),
+                  ),
+                  if (meta.isNotEmpty) ...[const SizedBox(height: 2), Muted(meta, size: 10.5)],
+                ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DocToolbar extends StatelessWidget {
+  const _DocToolbar({required this.project, required this.rel, required this.text});
+
+  final String project;
+  final String rel;
+
+  /// `null` when the file could not be read: nothing to copy.
+  final String? text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final docs = DocsScope.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final text = this.text;
+    final style = TextButton.styleFrom(foregroundColor: c.textSecondary, minimumSize: const Size(0, 30));
+    return Container(
+      padding: const EdgeInsets.fromLTRB(28, 8, 16, 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: Mono(rel, color: c.textMuted, size: 12)),
+          if (text != null)
+            TextButton.icon(
+              key: const ValueKey('artifact-copy'),
+              style: style,
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: text));
+                messenger?.showSnackBar(const SnackBar(content: Text('conteúdo copiado')));
+              },
+              icon: const Icon(Icons.copy_rounded, size: 15),
+              label: const Text('Copiar', style: TextStyle(fontSize: 12)),
+            ),
+          TextButton.icon(
+            key: const ValueKey('artifact-reveal'),
+            style: style,
+            onPressed: () async {
+              if (!await docs.reveal(project, rel)) {
+                messenger?.showSnackBar(SnackBar(content: Text('não foi possível mostrar $rel no Finder')));
+              }
+            },
+            icon: const Icon(Icons.folder_open_outlined, size: 15),
+            label: const Text('Mostrar no Finder', style: TextStyle(fontSize: 12)),
+          ),
+        ],
       ),
     );
   }

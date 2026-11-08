@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
@@ -11,7 +12,9 @@ import 'package:claude_flow/data/mock_github_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
@@ -40,11 +43,12 @@ Future<void> _openSettings(
   FlowRepository repo, {
   FolderPicker? picker,
   GitHubRepository? github,
+  MockSessionsRepository? sessions,
 }) async {
   await tester.pumpWidget(
     ClaudeFlowApp(
       repository: repo,
-      sessions: MockSessionsRepository(),
+      sessions: sessions ?? MockSessionsRepository(),
       engine: const MockEngineController(),
       pickDirectory: picker ?? () async => null,
       github: github,
@@ -240,7 +244,14 @@ void main() {
       expect(repo.config.lastOrg, 'Alfa');
       expect(repo.config.projects.map((p) => p.org), ['Alfa', 'B']);
 
+      expect(find.byKey(const ValueKey('settings-org-form-Alfa')), findsOneWidget, reason: 'rename keeps it selected');
+      expect(find.byKey(const ValueKey('settings-org-form-B')), findsNothing);
+
+      await _tap(tester, find.byKey(const ValueKey('settings-org-card-B')));
       await _tap(tester, _in('settings-org-form-B', find.text('Remover org')));
+      expect(find.text('Remover B?'), findsOneWidget);
+      expect(find.textContaining('2 projetos ficam sem org'), findsOneWidget);
+      await _tap(tester, find.widgetWithText(FilledButton, 'Remover org'));
 
       expect(repo.config.orgs.map((o) => o.name), ['Alfa']);
       expect(repo.config.projects.map((p) => p.org), ['Alfa', null]);
@@ -248,11 +259,93 @@ void main() {
       expect(_in('settings-projects-Sem org', find.text('beta')), findsOneWidget);
     });
 
+    testWidgets('global budget per cycle saves a positive value and an org can override it', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+
+      await tester.enterText(find.byKey(const ValueKey('settings-cycle-budget')), '7,5');
+      await tester.pumpAndSettle();
+      await _tap(tester, find.byKey(const ValueKey('settings-cycle-budget-save')));
+      expect(repo.config.cycleBudget, 7.5);
+
+      final orgBudget = _in('settings-org-form-A', find.byKey(const ValueKey('org-form-budget')));
+      await tester.ensureVisible(orgBudget);
+      expect(find.text('herdar global (\$7.50)'), findsOneWidget);
+      await tester.enterText(orgBudget, '2');
+      await tester.pumpAndSettle();
+      final save = _in('settings-org-form-A', find.text('Salvar'));
+      await tester.ensureVisible(save);
+      await _tap(tester, save);
+      expect(repo.config.orgs.firstWhere((o) => o.name == 'A').cycleBudget, 2);
+    });
+
+    testWidgets('Avançado writes nodePath and paletteSkills; blank removes the key; engineDir is required', (
+      tester,
+    ) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+      final toggle = find.byKey(const ValueKey('settings-advanced-toggle'));
+      await tester.scrollUntilVisible(toggle, 200, scrollable: find.byType(Scrollable).first);
+      await _tap(tester, toggle);
+
+      final save = find.byKey(const ValueKey('settings-advanced-save'));
+      await tester.enterText(find.byKey(const ValueKey('settings-advanced-engine-dir')), '');
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(save);
+      await _tap(tester, save);
+      expect(find.text('informe a pasta da engine: sem ela a engine não sobe'), findsOneWidget);
+      expect(repo.config.engineDir, '/engine');
+
+      await tester.enterText(find.byKey(const ValueKey('settings-advanced-engine-dir')), '/engine2');
+      await tester.enterText(find.byKey(const ValueKey('settings-advanced-node-path')), '/opt/node');
+      await tester.enterText(find.byKey(const ValueKey('settings-advanced-palette-skills')), '/fix, status');
+      await tester.pumpAndSettle();
+      await _tap(tester, save);
+
+      expect(repo.config.paletteSkills, ['fix', 'status']);
+      expect((repo.config.engineDir, repo.config.nodePath), ('/engine2', '/opt/node'));
+      expect(find.text('Reiniciar engine'), findsOneWidget);
+    });
+
+    testWidgets('each project shows how its sessions run, from its org and the global defaults', (tester) async {
+      final config = _config();
+      (config['orgs'] as List)[0]['agent'] = {'provider': 'antigravity', 'account': 'likin.do'};
+      await _openSettings(tester, MockFlowRepository(data: _data, config: config));
+
+      final setup = find.byKey(const ValueKey('settings-project-setup-gamma'));
+      await tester.scrollUntilVisible(setup, 200, scrollable: find.byType(Scrollable).first);
+      expect(
+        tester.widget<Text>(setup).data,
+        'conversas: Antigravity · likin.do · modo: aceitar edições · GitHub: conta ativa',
+      );
+    });
+
+    testWidgets('Duplicar starts a new org with the same permissions and agent, asking only name and folder', (
+      tester,
+    ) async {
+      final config = _config();
+      (config['orgs'] as List)[0]['permissionMode'] = 'default';
+      (config['orgs'] as List)[0]['agent'] = {'provider': 'antigravity', 'account': 'likin.do'};
+      final repo = MockFlowRepository(data: _data, config: config);
+      await _openSettings(tester, repo, picker: () async => '/dev/c');
+
+      await _tap(tester, find.byKey(const ValueKey('settings-org-duplicate')));
+      expect(find.text('Nova org (cópia das configurações)'), findsOneWidget);
+      await tester.enterText(_in('settings-new-org', find.widgetWithText(TextField, 'Nome')), 'C');
+      await _tap(tester, _in('settings-new-org', find.text('escolher pasta')));
+      await _tap(tester, _in('settings-new-org', find.text('Criar org')));
+
+      final created = repo.config.orgs.firstWhere((o) => o.name == 'C');
+      expect(created.roots, ['/dev/c']);
+      expect(created.permissionMode, PermissionMode.defaultMode);
+      expect((created.agent?.provider, created.agent?.account), (AgentProvider.antigravity, 'likin.do'));
+    });
+
     testWidgets('a new org overlapping another root or reusing a name is rejected inline', (tester) async {
       final repo = MockFlowRepository(data: _data, config: _config());
       await _openSettings(tester, repo, picker: () async => '/dev/a/sub');
 
-      await _tap(tester, find.text('Nova org'));
+      await _tap(tester, find.byKey(const ValueKey('settings-new-org-button')));
       await tester.enterText(_in('settings-new-org', find.widgetWithText(TextField, 'Nome')), 'C');
       await _tap(tester, _in('settings-new-org', find.text('escolher pasta')));
       await _tap(tester, _in('settings-new-org', find.text('Criar org')));
@@ -278,37 +371,78 @@ void main() {
       await _tap(tester, find.text(label).last);
     }
 
-    testWidgets('Configurações writes the global mode and warns only in bypass', (tester) async {
+    testWidgets('the global mode starts at aceitar edições; bypass asks first and then warns', (tester) async {
       final repo = MockFlowRepository(data: _data, config: _config());
       await _openSettings(tester, repo);
       final menu = find.byKey(const ValueKey('settings-permission-mode'));
       await scrollTo(tester, menu);
 
-      expect(find.descendant(of: menu, matching: find.text('bypass')), findsOneWidget);
-      expect(_in('settings-permissions', find.text('as sessões rodam sem pedir confirmação')), findsOneWidget);
-
-      await pick(tester, menu, 'aceitar edições');
-
-      expect(repo.rawConfig['permissionMode'], 'acceptEdits');
       expect(find.descendant(of: menu, matching: find.text('aceitar edições')), findsOneWidget);
       expect(_in('settings-permissions', find.text('as sessões rodam sem pedir confirmação')), findsNothing);
+
+      await pick(tester, menu, 'bypass');
+      expect(find.text('Usar bypass?'), findsOneWidget);
+      await _tap(tester, find.text('Cancelar'));
+      expect(repo.rawConfig['permissionMode'], isNull);
+
+      await pick(tester, menu, 'bypass');
+      await _tap(tester, find.text('Usar bypass'));
+      expect(repo.rawConfig['permissionMode'], 'bypassPermissions');
+      expect(_in('settings-permissions', find.text('as sessões rodam sem pedir confirmação')), findsOneWidget);
     });
 
     testWidgets('OrgForm writes the org mode and "herdar global" removes the key', (tester) async {
       final repo = MockFlowRepository(data: _data, config: _config());
       await _openSettings(tester, repo);
       final dropdown = _in('settings-org-form-A', find.byKey(const ValueKey('org-permission-mode')));
-      expect(_in('settings-org-form-A', find.text('herdar global')), findsOneWidget);
+      expect(_in('settings-org-form-A', find.text('herdar global (aceitar edições)')), findsOneWidget);
 
-      await pick(tester, dropdown, 'auto (classificador)');
+      await _tap(tester, dropdown);
+      await _tap(tester, find.textContaining('auto (classificador)').last);
       await _tap(tester, _save('A'));
       expect(repo.rawConfig['orgs'][0]['permissionMode'], 'auto');
       expect((repo.rawConfig['orgs'][1] as Map).containsKey('permissionMode'), isFalse);
 
-      await pick(tester, dropdown, 'herdar global');
+      await pick(tester, dropdown, 'herdar global (aceitar edições)');
       await _tap(tester, _save('A'));
       expect((repo.rawConfig['orgs'][0] as Map).containsKey('permissionMode'), isFalse);
       expect(repo.config.orgs.first.name, 'A');
+    });
+  });
+
+  group('OrgForm tracker', () {
+    Finder field(String key) => _in('settings-org-form-A', find.byKey(ValueKey('org-tracker-$key')));
+
+    Future<void> pickKind(WidgetTester tester, String label) async {
+      await _tap(tester, field('kind'));
+      await _tap(tester, find.text(label).last);
+    }
+
+    testWidgets('Jira saves site, key and email; an incomplete tracker is refused inline', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+      await pickKind(tester, 'Jira');
+
+      await tester.enterText(field('site'), 'https://likindo.atlassian.net/');
+      await tester.enterText(field('project'), 'lc');
+      await _tap(tester, _save('A'));
+      expect(find.text('informe o site, a chave do projeto e o email do Jira'), findsOneWidget);
+      expect((repo.rawConfig['orgs'][0] as Map).containsKey('tracker'), isFalse);
+
+      await tester.enterText(field('email'), 'me@likin.do');
+      await _tap(tester, field('release'));
+      await _tap(tester, _save('A'));
+      expect(repo.rawConfig['orgs'][0]['tracker'], {
+        'kind': 'jira',
+        'project': 'LC',
+        'site': 'likindo.atlassian.net',
+        'email': 'me@likin.do',
+        'base': 'release',
+      });
+
+      await pickKind(tester, 'nenhum (só kickoff manual)');
+      await _tap(tester, _save('A'));
+      expect((repo.rawConfig['orgs'][0] as Map).containsKey('tracker'), isFalse);
     });
   });
 
@@ -326,7 +460,7 @@ void main() {
       final repo = MockFlowRepository(data: _data, config: _config());
       await _openSettings(tester, repo, github: gh);
 
-      expect(find.text('git_protocol do gh: https (recomendado: ssh)'), findsWidgets);
+      expect(find.byKey(const ValueKey('org-github-https')), findsWidgets);
       await _tap(tester, _in('settings-org-form-A', find.byKey(const ValueKey('org-github-account'))));
       await _tap(tester, find.text('acct-a').last);
       expect(gh.orgsCalls, contains('acct-a'));
@@ -391,6 +525,8 @@ void main() {
       await _openSettings(tester, repo, github: gh);
 
       expect(find.text('SSH não verificado'), findsOneWidget);
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
+      await tester.pump();
       expect(tester.widget<FilledButton>(_save('A')).onPressed, isNotNull);
       await _tap(tester, _save('A'));
       expect(repo.rawConfig['orgs'][0]['github'], {
@@ -399,18 +535,33 @@ void main() {
       });
     });
 
-    testWidgets('a pending SSH check disables saving for at most 10 s', (tester) async {
-      final gh = _SshHangs();
+    testWidgets('a pending SSH check of a saved owner does not block other edits', (tester) async {
       final repo = MockFlowRepository(
         data: _data,
         config: _configWithOwner('org-x', account: 'acct-a'),
       );
-      await _openSettings(tester, repo, github: gh);
+      await _openSettings(tester, repo, github: _SshHangs());
 
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
+      await tester.pump();
+      expect(tester.widget<FilledButton>(_save('A')).onPressed, isNotNull);
+      expect(find.byKey(const ValueKey('org-form-blocked')), findsNothing);
+      await tester.pump(const Duration(seconds: 11));
+    });
+
+    testWidgets('a new owner with a pending SSH check disables saving with the reason, for at most 10 s', (
+      tester,
+    ) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo, github: _SshHangs());
+
+      await tester.enterText(_in('settings-org-form-A', find.byKey(const ValueKey('org-github-owner-input'))), 'org-y');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
       expect(tester.widget<FilledButton>(_save('A')).onPressed, isNull);
+      expect(find.text('verificando o SSH de org-y…'), findsOneWidget);
 
       await tester.pump(const Duration(seconds: 11));
-
       expect(find.text('SSH não verificado'), findsOneWidget);
       expect(tester.widget<FilledButton>(_save('A')).onPressed, isNotNull);
     });
@@ -464,6 +615,233 @@ void main() {
       await _openSettings(tester, repo, github: MockGitHubRepository(accountList: _accts)..orgsFailFor = {'gone'});
 
       expect(find.text('não logada'), findsOneWidget);
+    });
+  });
+
+  group('OrgForm Agente', () {
+    Finder inA(Finder f) => _in('settings-org-form-A', f);
+
+    Future<void> pick(WidgetTester tester, Finder menu, String label) async {
+      await _tap(tester, menu);
+      await _tap(tester, find.text(label).last);
+    }
+
+    testWidgets('Antigravity with the default account lists the models and saves provider and model', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+
+      await pick(tester, inA(find.byKey(const ValueKey('org-agent-provider'))), 'Antigravity');
+      expect(inA(find.text('logada')), findsOneWidget);
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-model'))));
+      expect(
+        find.textContaining('Gemini 3.1 Pro (High)  esgotado · renova em'),
+        findsWidgets,
+        reason: 'quota beside the name',
+      );
+      await _tap(tester, find.textContaining('Gemini 3.1 Pro (High)').last);
+      await _tap(tester, _save('A'));
+
+      expect(repo.rawConfig['orgs'][0]['agent'], {'provider': 'antigravity', 'model': 'gemini-3.1-pro-high'});
+      expect(find.text('Antigravity · default'), findsOneWidget, reason: 'the card shows the agent');
+    });
+
+    testWidgets('an account without login shows the terminal command and no models', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+
+      await pick(tester, inA(find.byKey(const ValueKey('org-agent-provider'))), 'Antigravity');
+      await tester.enterText(inA(find.byKey(const ValueKey('org-agent-account'))), 'likin.do');
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-check'))));
+
+      expect(inA(find.textContaining('sem login')), findsOneWidget);
+      expect(inA(find.text('HOME="~/.claude-flow/accounts/antigravity/likin.do" agy')), findsOneWidget);
+      await _tap(tester, _save('A'));
+      expect(repo.rawConfig['orgs'][0]['agent'], {'provider': 'antigravity', 'account': 'likin.do'});
+    });
+
+    testWidgets('Fazer login opens the account in Terminal and the form picks the login up', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      final sessions = MockSessionsRepository();
+      await _openSettings(tester, repo, sessions: sessions);
+
+      await pick(tester, inA(find.byKey(const ValueKey('org-agent-provider'))), 'Antigravity');
+      await tester.enterText(inA(find.byKey(const ValueKey('org-agent-account'))), 'likin.do');
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-check'))));
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-login'))));
+
+      expect(sessions.agentLoginCalls, ['likin.do']);
+      expect(inA(find.text('aguardando o login no Terminal…')), findsOneWidget);
+
+      sessions.loggedInAccounts.add('likin.do');
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(inA(find.text('logada')), findsOneWidget);
+    });
+
+    testWidgets('an invalid account blocks saving inline', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+
+      await pick(tester, inA(find.byKey(const ValueKey('org-agent-provider'))), 'Antigravity');
+      await tester.enterText(inA(find.byKey(const ValueKey('org-agent-account'))), '../x');
+      await _tap(tester, _save('A'));
+
+      expect(inA(find.text('conta do Antigravity inválida')), findsOneWidget);
+      expect(repo.rawConfig['orgs'][0]['agent'], isNull);
+    });
+  });
+
+  group('unsaved changes', () {
+    testWidgets('an edited org shows it, and Voltar or another card asks before discarding', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('org-form-dirty')), findsOneWidget);
+
+      await _tap(tester, find.widgetWithText(TextButton, 'Voltar'));
+      expect(find.text('Descartar alterações?'), findsOneWidget);
+      await _tap(tester, find.text('Continuar editando'));
+      expect(find.byKey(const ValueKey('settings-org-form-A')), findsOneWidget);
+
+      await _tap(tester, find.byKey(const ValueKey('settings-org-card-B')));
+      await _tap(tester, find.text('Descartar'));
+      expect(find.byKey(const ValueKey('settings-org-form-B')), findsOneWidget);
+      expect(repo.config.orgs.map((o) => o.name), ['A', 'B']);
+      expect(find.byKey(const ValueKey('org-form-dirty')), findsNothing);
+    });
+
+    testWidgets('a global shortcut (⌘I) also asks before leaving with unsaved edits', (tester) async {
+      await _openSettings(tester, MockFlowRepository(data: _data, config: _config()));
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
+      await tester.pumpAndSettle();
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+
+      Future<void> metaI() async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyI);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pumpAndSettle();
+      }
+
+      await metaI();
+      expect(find.text('Descartar alterações?'), findsOneWidget);
+      await _tap(tester, find.text('Continuar editando'));
+      expect(find.byKey(const ValueKey('settings-org-form-A')), findsOneWidget);
+
+      await metaI();
+      await _tap(tester, find.text('Descartar'));
+      expect(find.byKey(const ValueKey('settings-org-form-A')), findsNothing);
+    });
+
+    testWidgets('quitting (⌘Q or closing the window) with unsaved edits asks; keep editing cancels the quit', (
+      tester,
+    ) async {
+      await _openSettings(tester, MockFlowRepository(data: _data, config: _config()));
+      await tester.enterText(_in('settings-org-form-A', find.widgetWithText(TextField, 'Nome')), 'Alfa');
+      await tester.pumpAndSettle();
+
+      final keep = tester.binding.handleRequestAppExit();
+      await tester.pumpAndSettle();
+      expect(find.text('Descartar alterações?'), findsOneWidget);
+      await _tap(tester, find.text('Continuar editando'));
+      expect(await keep, AppExitResponse.cancel);
+
+      final discard = tester.binding.handleRequestAppExit();
+      await tester.pumpAndSettle();
+      await _tap(tester, find.text('Descartar'));
+      expect(await discard, AppExitResponse.exit);
+    });
+
+    testWidgets('an untouched org leaves without asking', (tester) async {
+      await _openSettings(tester, MockFlowRepository(data: _data, config: _config()));
+      await _tap(tester, find.byKey(const ValueKey('settings-org-card-B')));
+      expect(find.text('Descartar alterações?'), findsNothing);
+      expect(find.byKey(const ValueKey('settings-org-form-B')), findsOneWidget);
+    });
+  });
+
+  group('projects', () {
+    testWidgets('moving a project that changes its agent asks first and can be undone', (tester) async {
+      final config = _config();
+      (config['orgs'] as List)[1]['agent'] = {'provider': 'antigravity', 'account': 'likin.do'};
+      final repo = MockFlowRepository(data: _data, config: config);
+      await _openSettings(tester, repo);
+
+      await _tap(tester, find.byTooltip('Trocar org de gamma'));
+      await _tap(tester, find.text('B').last);
+      expect(find.text('Mover gamma para B?'), findsOneWidget);
+      expect(find.textContaining('Agente: Claude → Antigravity · likin.do'), findsOneWidget);
+      await _tap(tester, find.text('Mover'));
+      expect(repo.config.projects.firstWhere((p) => p.name == 'gamma').org, 'B');
+
+      await _tap(tester, find.text('Desfazer'));
+      expect(repo.config.projects.firstWhere((p) => p.name == 'gamma').org, 'A');
+    });
+
+    testWidgets('the add button of an org pins the picked folder to it', (tester) async {
+      final tmp = Directory.systemTemp.createTempSync('settings-add-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo, picker: () async => tmp.path);
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-add-project-B')));
+      await tester.pumpAndSettle();
+
+      await _tapAndWait(
+        tester,
+        find.byKey(const ValueKey('settings-add-project-B')),
+        () => repo.config.projects.any((p) => p.path == tmp.path),
+      );
+      final added = repo.config.projects.firstWhere((p) => p.path == tmp.path);
+      expect(added.org, 'B');
+    });
+  });
+
+  group('org form details', () {
+    Finder inA(Finder f) => _in('settings-org-form-A', f);
+
+    testWidgets('a new org shows both missing fields at once, and picking a folder fills the name', (tester) async {
+      await _openSettings(
+        tester,
+        MockFlowRepository(data: _data, config: _config()),
+        picker: () async => '/dev/zeta',
+      );
+      await _tap(tester, find.byKey(const ValueKey('settings-org-card-new')));
+
+      await _tap(tester, _in('settings-new-org', find.text('Criar org')));
+      expect(_in('settings-new-org', find.text('informe um nome para a org')), findsOneWidget);
+      expect(_in('settings-new-org', find.text('escolha uma pasta para a org')), findsOneWidget);
+
+      await _tap(tester, _in('settings-new-org', find.text('escolher pasta')));
+      expect(
+        tester.widget<TextField>(_in('settings-new-org', find.widgetWithText(TextField, 'Nome'))).controller!.text,
+        'zeta',
+      );
+    });
+
+    testWidgets('an exhausted model warns that free prompts will fail', (tester) async {
+      await _openSettings(tester, MockFlowRepository(data: _data, config: _config()));
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-provider'))));
+      await _tap(tester, find.text('Antigravity').last);
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-model'))));
+      await _tap(tester, find.textContaining('Gemini 3.1 Pro (High)').last);
+      expect(inA(find.byKey(const ValueKey('org-agent-model-exhausted'))), findsOneWidget);
+    });
+
+    testWidgets('waiting for the Antigravity login can be cancelled', (tester) async {
+      await _openSettings(tester, MockFlowRepository(data: _data, config: _config()));
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-provider'))));
+      await _tap(tester, find.text('Antigravity').last);
+      await tester.enterText(inA(find.byKey(const ValueKey('org-agent-account'))), 'likin.do');
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-check'))));
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-login'))));
+      expect(inA(find.text('aguardando o login no Terminal…')), findsOneWidget);
+
+      await _tap(tester, inA(find.byKey(const ValueKey('org-agent-login-cancel'))));
+      expect(inA(find.byKey(const ValueKey('org-agent-login'))), findsOneWidget);
+      await tester.pump(const Duration(seconds: 4));
     });
   });
 }

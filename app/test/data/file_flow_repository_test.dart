@@ -72,14 +72,13 @@ void main() {
       expect(list.map((p) => p.name), ['broken', 'beta', 'alpha', 'gamma', 'legacy']);
     });
 
-    test('path from project_path, auto mode from flag, runs newest first', () async {
+    test('path from project_path, runs newest first', () async {
       final list = await loaded();
 
       final alpha = _project(list, 'alpha');
       expect(alpha.path, '/synthetic/alpha');
       expect(alpha.stack, isNull);
-      expect(alpha.cycle!.autoMode, isTrue);
-      expect(alpha.cycle!.tracker, '#1001');
+      expect(alpha.cycle!.tracker, 'AB#1001');
       expect(alpha.cycle!.branch, isNull);
       expect(_project(list, 'legacy').path, isNull);
       expect(_project(list, 'gamma').cycle!.runs.map((r) => r.id), [
@@ -89,12 +88,21 @@ void main() {
       expect(_project(list, 'beta').cycle!.runs.single.status, Verdict.running);
     });
 
-    test('auto mode off when flag is not "on"', () async {
+    test('auto mode is the global flag: on only when it says "on"; setAutoMode writes and removes it', () async {
+      await loaded();
+      expect(await repo.watchAutoMode().first, isTrue);
+
+      await repo.setAutoMode(false);
+      expect(File('$root/auto_mode.flag').existsSync(), isFalse);
+      expect(await repo.watchAutoMode().first, isFalse);
+
+      await repo.setAutoMode(true);
+      expect(File('$root/auto_mode.flag').readAsStringSync(), 'on');
+      expect(await repo.watchAutoMode().first, isTrue);
+
       File('$root/auto_mode.flag').writeAsStringSync('off\n');
-
-      final list = await loaded();
-
-      expect(list.every((p) => p.cycle == null || !p.cycle!.autoMode), isTrue);
+      await repo.reload();
+      expect(await repo.watchAutoMode().first, isFalse);
     });
 
     test('path from .dashboard.json, stack by detect in path/app, branch from git', () async {

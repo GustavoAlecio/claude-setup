@@ -66,6 +66,19 @@ async function removePidFileIfOurs(pidFile) {
   } catch {}
 }
 
+/** Para quem esta fora do app achar o engine (`bin/to-app.py`): a porta muda a cada boot. */
+async function writeEndpointFile(file, port) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify({ pid: process.pid, port }));
+  await fs.rename(tmp, file);
+}
+
+async function removeEndpointFileIfOurs(file) {
+  try {
+    if (JSON.parse(await fs.readFile(file, "utf8")).pid === process.pid) await fs.rm(file, { force: true });
+  } catch {}
+}
+
 /** /dev/null e TTY nunca chegam a um EOF que signifique "o pai morreu"; so pipe e socket. */
 function watchesParent(stdin) {
   try {
@@ -92,6 +105,7 @@ export async function main({ argv, query, stdin = process.stdin, stdout = proces
   }
   const sessionsDir = path.resolve(values["sessions-dir"]);
   const pidFile = path.join(sessionsDir, "engine.pid");
+  const endpointFile = path.join(sessionsDir, "engine.json");
 
   query ??= (await import("@anthropic-ai/claude-agent-sdk")).query;
 
@@ -119,7 +133,8 @@ export async function main({ argv, query, stdin = process.stdin, stdout = proces
     setTimeout(() => process.exit(1), HARD_EXIT_MS).unref();
     server.close();
     try {
-      await engine.sessions.shutdown({ waitMs: CONSUME_WAIT_MS });
+      await Promise.all([engine.sessions.shutdown({ waitMs: CONSUME_WAIT_MS }), engine.mermaid.close()]);
+      await removeEndpointFileIfOurs(endpointFile);
       await removePidFileIfOurs(pidFile);
     } catch (err) {
       log("falha no encerramento", err);
@@ -137,6 +152,8 @@ export async function main({ argv, query, stdin = process.stdin, stdout = proces
   }
 
   const { port: bound } = server.address();
+  engine.listening(bound);
+  await writeEndpointFile(endpointFile, bound);
   log(`engine pronto port=${bound} pid=${process.pid} sessions=${restored} dir=${sessionsDir}`);
   out.write(`ENGINE_READY ${JSON.stringify({ port: bound, pid: process.pid })}\n`);
   return { port: bound, shutdown };

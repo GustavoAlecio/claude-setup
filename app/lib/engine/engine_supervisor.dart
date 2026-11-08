@@ -65,19 +65,24 @@ typedef IsEngineProcess = Future<bool> Function(int pid);
 const _logName = 'EngineSupervisor';
 
 /// Finder-launched apps get a minimal env; `-i` is required because nvm is loaded from `.zshrc`.
+///
+/// Detached because an interactive zsh grabs the controlling terminal (`tcsetpgrp`): with the app started from a
+/// terminal (`flutter run`, a Claude Code session) whoever owned that terminal gets SIGTTIN on its next read and is
+/// suspended. The detached modes call `setsid()`, so this zsh has no terminal to take.
 Future<Map<String, String>> captureLoginEnv({Duration timeout = const Duration(seconds: 5)}) async {
   Process? process;
   try {
-    process = await Process.start('/bin/zsh', ['-ilc', r"printf '\0__ENV__\0'; env -0"]);
+    process = await Process.start(
+      '/bin/zsh',
+      ['-ilc', r"printf '\0__ENV__\0'; env -0"],
+      mode: ProcessStartMode.detachedWithStdio,
+    );
     unawaited(process.stdin.close().then((_) {}, onError: (_) {}));
     unawaited(process.stderr.drain<void>());
-    final output = await Future.wait([
-      process.stdout.transform(const Utf8Decoder(allowMalformed: true)).join(),
-      process.exitCode,
-    ]).timeout(timeout);
-    final env = parseEnv0(output[0] as String);
+    final output = await process.stdout.transform(const Utf8Decoder(allowMalformed: true)).join().timeout(timeout);
+    final env = parseEnv0(output);
     if (env != null && env.isNotEmpty) return env;
-    log('zsh env sem sentinela (exit ${output[1]}); usando o ambiente do app', name: _logName);
+    log('zsh env sem sentinela; usando o ambiente do app', name: _logName);
   } on TimeoutException {
     process?.kill(ProcessSignal.sigkill);
     log('zsh env excedeu ${timeout.inSeconds} s; usando o ambiente do app', name: _logName);

@@ -57,6 +57,7 @@ class _StageTimelineState extends State<StageTimeline> with SessionLauncher<Stag
     final c = context.colors;
     return Panel(
       title: 'Linha do tempo',
+      trailing: widget.report == null ? const Muted('sem relatório deste ciclo', size: 11) : null,
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -98,7 +99,9 @@ class _StageTimelineState extends State<StageTimeline> with SessionLauncher<Stag
           if (entry != null && entry.attempt > 1) Pill(label: 'tentativa ${entry.attempt}', color: c.warn, dot: false),
           const Spacer(),
           if (entry == null)
-            const Muted('sem relatório desta etapa', size: 11)
+            state == StageState.pending || widget.report == null
+                ? const SizedBox.shrink()
+                : const Muted('sem relatório desta etapa', size: 11)
           else if (widget.onSelect == null)
             Icon(expanded ? Icons.expand_more : Icons.chevron_right, size: 16, color: c.textMuted),
         ],
@@ -164,7 +167,10 @@ class _StageTimelineState extends State<StageTimeline> with SessionLauncher<Stag
             const Muted('sem resumo')
           else
             MarkdownView(entry.summaryMd, onLink: openLink),
-          Padding(padding: const EdgeInsets.only(top: 10), child: Muted('${entry.attempt} tentativa(s)', size: 11)),
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Muted(countLabel(entry.attempt, 'tentativa'), size: 11),
+          ),
           for (final f in entry.findings)
             if (f.accepted.isNotEmpty || f.rejected.isNotEmpty)
               section('Achados · ${f.source}', [

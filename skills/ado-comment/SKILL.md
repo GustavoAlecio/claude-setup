@@ -8,8 +8,7 @@ Atalho para comentar em um work item sem abrir o navegador.
 
 ## Defaults
 
-- **Org:** `<your-org>`
-- **Project:** `<your-project>`
+- **Org / Project:** os do tracker da org do repo (`orgs[].tracker` no `.dashboard.json`, configurado no app; `python3 ~/.claude/bin/tracker.py resolve`). Passe-os às tools do MCP.
 
 Sobrescritos por `--org=...` / `--project=...`. Primeiro argumento numerico = ID. Resto = texto do comentario.
 

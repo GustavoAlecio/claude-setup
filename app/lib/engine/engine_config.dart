@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 /// Must match `version` in `engine/package.json`; a mismatch only raises a non-blocking warning.
-const kEngineVersion = '0.5.0';
+const kEngineVersion = '0.8.0';
 
 const kEnvSentinel = '\x00__ENV__\x00';
 
@@ -49,7 +49,8 @@ enum PermissionMode {
   defaultMode('default'),
   acceptEdits('acceptEdits'),
   auto('auto'),
-  bypassPermissions('bypassPermissions');
+  bypassPermissions('bypassPermissions'),
+  plan('plan');
 
   const PermissionMode(this.wire);
 
@@ -57,16 +58,201 @@ enum PermissionMode {
 
   /// `null` for anything that is not one of the accepted spellings, so the next level applies.
   static PermissionMode? parse(Object? raw) => values.where((m) => m.wire == raw).firstOrNull;
+
+  /// A mode `.dashboard.json` may hold: [plan] only applies to one session, since as a default it would leave the
+  /// whole pipeline unable to edit.
+  static PermissionMode? parseConfig(Object? raw) => kConfigPermissionModes.where((m) => m.wire == raw).firstOrNull;
 }
 
-/// Global mode when `.dashboard.json` has no valid `permissionMode`.
-const kDefaultPermissionMode = PermissionMode.bypassPermissions;
+/// Modes the global and org pickers offer and the config accepts.
+const kConfigPermissionModes = [
+  PermissionMode.defaultMode,
+  PermissionMode.acceptEdits,
+  PermissionMode.auto,
+  PermissionMode.bypassPermissions,
+];
+
+/// Global mode when `.dashboard.json` has no valid `permissionMode`: edits run, commands ask. Bypass is opt-in and
+/// confirmed in the pickers ([confirmBypass]).
+const kDefaultPermissionMode = PermissionMode.acceptEdits;
+
+/// Who runs a session: the Claude Agent SDK or the Antigravity CLI (`agy`), ADR 0023.
+enum AgentProvider {
+  anthropic('anthropic', 'Anthropic'),
+  antigravity('antigravity', 'Antigravity');
+
+  const AgentProvider(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static AgentProvider? parse(Object? raw) => values.where((p) => p.wire == raw).firstOrNull;
+}
+
+/// Antigravity account label: also the directory of its shadow HOME in the engine.
+final kAgentAccount = RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$');
+
+/// Antigravity account that uses the IDE login (macOS Keychain).
+const kDefaultAgentAccount = 'default';
+
+/// `orgs[].agent`. [account] only applies to Antigravity (`null` = [kDefaultAgentAccount]); [model] `null` is the
+/// provider's default.
+class OrgAgent {
+  const OrgAgent({this.provider = AgentProvider.anthropic, this.account, this.model});
+
+  static const anthropic = OrgAgent();
+
+  final AgentProvider provider;
+  final String? account;
+  final String? model;
+
+  /// `null` when [value] is not a map; an unknown provider is Anthropic, an invalid account `null`.
+  static OrgAgent? fromRaw(Object? value) {
+    if (value is! Map) return null;
+    final account = value['account'];
+    final model = value['model'];
+    return OrgAgent(
+      provider: AgentProvider.parse(value['provider']) ?? AgentProvider.anthropic,
+      account: account is String && kAgentAccount.hasMatch(account) ? account : null,
+      model: model is String && model.trim().isNotEmpty ? model.trim() : null,
+    );
+  }
+
+  Map<String, Object?> toRaw() => {'provider': provider.wire, 'account': ?account, 'model': ?model};
+
+  /// Same agent with [model]; `null` is the provider default.
+  OrgAgent withModel(String? model) => OrgAgent(provider: provider, account: account, model: model);
+
+  @override
+  bool operator ==(Object other) =>
+      other is OrgAgent && other.provider == provider && other.account == account && other.model == model;
+
+  @override
+  int get hashCode => Object.hash(provider, account, model);
+
+  @override
+  String toString() => 'OrgAgent(${provider.wire}, $account, $model)';
+}
+
+/// Where an org's cards live; `bin/tracker.py` reads the same `orgs[].tracker` for `/kickoff` and `/pr-open`.
+enum TrackerKind {
+  ado('ado', 'Azure DevOps'),
+  jira('jira', 'Jira'),
+  linear('linear', 'Linear');
+
+  const TrackerKind(this.wire, this.label);
+
+  final String wire;
+  final String label;
+
+  static TrackerKind? parse(Object? raw) => values.where((k) => k.wire == raw).firstOrNull;
+}
+
+/// Jira project and Linear team key: what prefixes a numeric card ID.
+final kCardKeyPrefix = RegExp(r'^[A-Z][A-Z0-9]*$');
+
+/// `orgs[].tracker`. [project] is the ADO project name or the Jira project key; [team] the Linear team key.
+/// [releaseBase] (`base: "release"`) branches cards off the latest `release/*` instead of the default branch.
+class OrgTracker {
+  const OrgTracker({
+    required this.kind,
+    this.org,
+    this.project,
+    this.site,
+    this.email,
+    this.team,
+    this.workspace,
+    this.releaseBase = false,
+  });
+
+  final TrackerKind kind;
+  final String? org;
+  final String? project;
+  final String? site;
+  final String? email;
+  final String? team;
+  final String? workspace;
+  final bool releaseBase;
+
+  /// Keys this class owns in the raw entry; the others survive a rewrite.
+  static const rawKeys = {'kind', 'org', 'project', 'site', 'email', 'team', 'workspace', 'base'};
+
+  /// `null` when [value] is not a map or has no known `kind`; missing fields stay `null` ([missing] says which).
+  static OrgTracker? fromRaw(Object? value) {
+    if (value is! Map) return null;
+    final kind = TrackerKind.parse(value['kind']);
+    if (kind == null) return null;
+    String? text(String key) =>
+        value[key] is String && (value[key] as String).trim().isNotEmpty ? (value[key] as String).trim() : null;
+    return OrgTracker(
+      kind: kind,
+      org: text('org'),
+      project: text('project'),
+      site: text('site'),
+      email: text('email'),
+      team: text('team'),
+      workspace: text('workspace'),
+      releaseBase: value['base'] == 'release',
+    );
+  }
+
+  Map<String, Object?> toRaw() => {
+    'kind': kind.wire,
+    'org': ?org,
+    'project': ?project,
+    'site': ?site,
+    'email': ?email,
+    'team': ?team,
+    'workspace': ?workspace,
+    if (releaseBase) 'base': 'release',
+  };
+
+  /// Prefix of a numeric card ID (`101` → `LC-101`); ADO IDs are numeric and have none.
+  String? get keyPrefix => switch (kind) {
+    TrackerKind.ado => null,
+    TrackerKind.jira => project,
+    TrackerKind.linear => team,
+  };
+
+  /// What the helpers need and is not set, as the form names it; `null` when complete.
+  String? get missing => switch (kind) {
+    TrackerKind.ado when org == null || project == null => 'informe a org e o projeto do Azure DevOps',
+    TrackerKind.jira when site == null || project == null || email == null =>
+      'informe o site, a chave do projeto e o email do Jira',
+    TrackerKind.jira when !kCardKeyPrefix.hasMatch(project!) => 'chave do projeto Jira inválida (ex.: LC)',
+    TrackerKind.linear when team != null && !kCardKeyPrefix.hasMatch(team!) => 'team key do Linear inválida (ex.: LC)',
+    _ => null,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is OrgTracker &&
+      other.kind == kind &&
+      other.org == org &&
+      other.project == project &&
+      other.site == site &&
+      other.email == email &&
+      other.team == team &&
+      other.workspace == workspace &&
+      other.releaseBase == releaseBase;
+
+  @override
+  int get hashCode => Object.hash(kind, org, project, site, email, team, workspace, releaseBase);
+}
 
 bool sameStrings(List<String> a, List<String> b) =>
     a.length == b.length && Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
 
 class OrgConfig {
-  const OrgConfig({required this.name, this.roots = const [], this.github, this.permissionMode});
+  const OrgConfig({
+    required this.name,
+    this.roots = const [],
+    this.github,
+    this.permissionMode,
+    this.agent,
+    this.cycleBudget,
+    this.tracker,
+  });
 
   final String name;
   final List<String> roots;
@@ -76,6 +262,15 @@ class OrgConfig {
 
   /// `null`: inherits [DashboardConfig.permissionMode] (key absent or not an accepted mode).
   final PermissionMode? permissionMode;
+
+  /// `null` when the key is absent: sessions run on Anthropic and writes keep whatever the file has.
+  final OrgAgent? agent;
+
+  /// US$ a cycle of this org may cost; `null` inherits [DashboardConfig.cycleBudget].
+  final double? cycleBudget;
+
+  /// `null`: no tracker, so `/kickoff` only runs in manual mode (key absent or without a known `kind`).
+  final OrgTracker? tracker;
 }
 
 class ProjectEntry {
@@ -98,6 +293,7 @@ class DashboardConfig {
     this.hidden = const [],
     this.lastOrg,
     this.permissionMode = kDefaultPermissionMode,
+    this.cycleBudget,
   });
 
   static const empty = DashboardConfig();
@@ -113,6 +309,9 @@ class DashboardConfig {
   final List<String> hidden;
   final String? lastOrg;
   final PermissionMode permissionMode;
+
+  /// US$ a cycle may cost before the Fluxo warns; `null` (absent, zero or invalid) means no budget.
+  final double? cycleBudget;
 
   /// Throws [FormatException] on invalid JSON; a non-object document yields [empty].
   static DashboardConfig parse(String source) {
@@ -140,7 +339,10 @@ class DashboardConfig {
               name: o['name'] as String,
               roots: _strings(o['roots']),
               github: OrgGithub.fromRaw(o['github']),
-              permissionMode: PermissionMode.parse(o['permissionMode']),
+              permissionMode: PermissionMode.parseConfig(o['permissionMode']),
+              agent: OrgAgent.fromRaw(o['agent']),
+              cycleBudget: parseBudget(o['cycleBudget']),
+              tracker: OrgTracker.fromRaw(o['tracker']),
             ),
       ],
       projects: [
@@ -150,7 +352,8 @@ class DashboardConfig {
       ],
       hidden: _strings(decoded['hidden']),
       lastOrg: _nonEmpty(decoded['lastOrg']),
-      permissionMode: PermissionMode.parse(decoded['permissionMode']) ?? kDefaultPermissionMode,
+      permissionMode: PermissionMode.parseConfig(decoded['permissionMode']) ?? kDefaultPermissionMode,
+      cycleBudget: parseBudget(decoded['cycleBudget']),
     );
   }
 
@@ -261,3 +464,6 @@ String? _resolveNode(String? nodePath, String? path, bool Function(String) fileE
 }
 
 String _trimSlash(String path) => path.length > 1 && path.endsWith('/') ? path.substring(0, path.length - 1) : path;
+
+/// A positive amount of US$; anything else is no budget.
+double? parseBudget(Object? value) => value is num && value > 0 ? value.toDouble() : null;

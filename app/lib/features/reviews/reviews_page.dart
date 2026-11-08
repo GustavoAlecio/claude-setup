@@ -4,16 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/config_cubit.dart';
 import '../../app/projects_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/doc_body.dart';
 import '../../core/widgets/primitives.dart';
 import '../../core/widgets/refresh_loop.dart';
+import '../../core/widgets/session_launcher.dart';
 import '../../data/docs_models.dart';
 import '../../data/docs_parser.dart';
 import '../../data/docs_repository.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
 import 'reviews_diff.dart';
 
 class ReviewsPage extends StatefulWidget {
@@ -63,7 +66,42 @@ class _Review {
 bool _sameStamps(ReviewEntry a, ReviewEntry b) =>
     a.report == b.report && a.diff == b.diff && a.comments == b.comments && a.meta == b.meta;
 
-class _ReviewsPageState extends State<ReviewsPage> with RefreshLoop<ReviewsPage> {
+class _ReviewsPageState extends State<ReviewsPage> with RefreshLoop<ReviewsPage>, SessionLauncher<ReviewsPage> {
+  /// `/approve-review` and `/post-review` run in the project folder with its org's gh account and mode. Publishing
+  /// writes to the PR on GitHub, so it asks first.
+  Future<void> _reviewAction(int number, {required bool publish}) async {
+    final projects = context.read<ProjectsCubit>().state.data ?? const <Project>[];
+    final config = context.read<ConfigCubit>().state.data;
+    final project = projects.where((p) => p.name == widget.projectName).firstOrNull;
+    final cwd = project?.path;
+    if (cwd == null) return;
+    if (publish) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Publicar a revisão no PR #$number?'),
+          content: const Text(
+            'Os comentários e o veredicto vão para o PR no GitHub, com a conta do gh desta org. '
+            'Só é possível publicar um rascunho já aprovado.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Publicar')),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    await launchSession(
+      '${publish ? 'post' : 'approve'}-$number',
+      widget.projectName,
+      '${publish ? '/post-review' : '/approve-review'} $number',
+      cwd: cwd,
+      githubAccount: githubFor(project!.org, config).account,
+      permissionMode: launchOrg(cwd, projects, config).mode,
+    );
+  }
+
   DocsListing? _listing;
   _Review? _review;
   List<DiffRow> _rows = const [];
@@ -228,7 +266,16 @@ class _ReviewsPageState extends State<ReviewsPage> with RefreshLoop<ReviewsPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _Header(review: review),
+        _Header(
+          review: review,
+          canAct: context.select<ProjectsCubit, bool>(
+            (c) => c.state.data?.any((p) => p.name == widget.projectName && p.path != null) ?? false,
+          ),
+          busy: isCreating('approve-${review.entry.number}') || isCreating('post-${review.entry.number}'),
+          error: createError('approve-${review.entry.number}') ?? createError('post-${review.entry.number}'),
+          onApprove: () => _reviewAction(review.entry.number, publish: false),
+          onPublish: () => _reviewAction(review.entry.number, publish: true),
+        ),
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
           child: Align(
@@ -274,9 +321,23 @@ class _ReviewsPageState extends State<ReviewsPage> with RefreshLoop<ReviewsPage>
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.review});
+  const _Header({
+    required this.review,
+    required this.canAct,
+    required this.busy,
+    required this.error,
+    required this.onApprove,
+    required this.onPublish,
+  });
 
   final _Review review;
+
+  /// The project has a folder to run the review skills in.
+  final bool canAct;
+  final bool busy;
+  final String? error;
+  final VoidCallback onApprove;
+  final VoidCallback onPublish;
 
   @override
   Widget build(BuildContext context) {
@@ -334,6 +395,37 @@ class _Header extends StatelessWidget {
             Wrap(spacing: 12, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: details),
           ],
           if (issues.isNotEmpty) ...[const SizedBox(height: 6), Muted(issues.join(' · '), size: 11)],
+          const SizedBox(height: 10),
+          Tooltip(
+            message: canAct ? '' : 'repositório fora das suas orgs: adicione a pasta em Configurações para agir aqui',
+            child: Row(
+              children: [
+                OutlinedButton.icon(
+                  key: const ValueKey('review-approve'),
+                  onPressed: canAct && !busy ? onApprove : null,
+                  icon: const Icon(Icons.check, size: 15),
+                  label: const Text('Aprovar rascunho', style: TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  key: const ValueKey('review-publish'),
+                  style: FilledButton.styleFrom(backgroundColor: c.accent, foregroundColor: Colors.white),
+                  onPressed: canAct && !busy ? onPublish : null,
+                  icon: const Icon(Icons.send, size: 14),
+                  label: const Text('Publicar no GitHub', style: TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Muted('aprovar marca o rascunho como pronto; publicar envia os comentários ao PR', size: 11),
+                ),
+              ],
+            ),
+          ),
+          if (error case final error?)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
+            ),
         ],
       ),
     );

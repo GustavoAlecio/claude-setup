@@ -138,6 +138,30 @@ void main() {
       expect(p.routing.error, isNull);
     });
 
+    test('project workflows override by meta.name; the ladder comes from the smart-implement override', () async {
+      _write(
+        '$projectDir/.claude/workflows/impl.js',
+        "export const meta = { name: 'smart-implement', description: 'local' }\n"
+            "const LADDER = ['sonnet', 'opus']\nconst TIER0 = { S: 'sonnet' }\nconst BLOCKING = ['critical']\n",
+      );
+      _write('$projectDir/.claude/workflows/audit.js', "export const meta = { name: 'audit', description: 'a' }\n");
+
+      final p = await repo.loadProject(project(path: projectDir));
+
+      expect(p.workflows.map((w) => w.meta.name), ['audit', 'smart-implement']);
+      expect(p.ladder!.tiers, ['sonnet', 'opus']);
+    });
+
+    test('without a smart-implement override the project has no ladder', () async {
+      _write('$projectDir/.claude/workflows/audit.js', "export const meta = { name: 'audit', description: 'a' }\n");
+
+      final p = await repo.loadProject(project(path: projectDir));
+
+      expect(p.workflows.single.meta.name, 'audit');
+      expect(p.ladder, isNull);
+      expect((await repo.loadProject(project())).workflows, isEmpty);
+    });
+
     test('invalid routing.json surfaces as an error without throwing', () async {
       _write('$home/projects/proj/routing.json', 'not json');
 
@@ -150,20 +174,23 @@ void main() {
   group('loadAdr', () {
     const project = Project(name: 'proj', path: null);
 
-    test('returns the body after the closing --- and null for an unknown id', () async {
-      _write(
-        '$projectDir/docs/adr/0001-x.md',
-        '---\nid: "0001"\ntitle: X\nstatus: accepted\nsupersedes: [0000]\n---\n# X\n\ncorpo\n---\nfim\n',
-      );
-      final p = Project(name: 'proj', path: projectDir);
+    test(
+      'returns the body after the closing --- (without the H1 the header shows) and null for an unknown id',
+      () async {
+        _write(
+          '$projectDir/docs/adr/0001-x.md',
+          '---\nid: "0001"\ntitle: X\nstatus: accepted\nsupersedes: [0000]\n---\n# X\n\ncorpo\n---\nfim\n',
+        );
+        final p = Project(name: 'proj', path: projectDir);
 
-      final r = await repo.loadAdr(p, '0001');
+        final r = await repo.loadAdr(p, '0001');
 
-      expect(r!.entry.title, 'X');
-      expect(r.entry.supersedes, ['0000']);
-      expect(r.body, '# X\n\ncorpo\n---\nfim\n');
-      expect(await repo.loadAdr(p, '0042'), isNull);
-    });
+        expect(r!.entry.title, 'X');
+        expect(r.entry.supersedes, ['0000']);
+        expect(r.body, 'corpo\n---\nfim\n');
+        expect(await repo.loadAdr(p, '0042'), isNull);
+      },
+    );
 
     test('an ADR without frontmatter is found by the filename digits with the raw body', () async {
       _write('$projectDir/docs/adr/0002-bad.md', 'sem frontmatter\nlinha');

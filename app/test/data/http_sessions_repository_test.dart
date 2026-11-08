@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:claude_flow/data/http_sessions_repository.dart';
@@ -93,6 +94,62 @@ class _FakeEngine {
     requests.add(req);
     final res = request.response;
     final segments = request.uri.pathSegments;
+
+    if (request.method == 'GET' && req.path == '/api/agy/models') {
+      return _json(res, 200, {
+        'models': [
+          {
+            'id': 'gemini-x',
+            'label': 'Gemini X',
+            'quota': {'remaining': 0, 'resetsAt': '2026-10-13T12:03:43.000Z'},
+          },
+          {'label': 'sem id'},
+        ],
+      });
+    }
+    if (request.method == 'GET' && req.path == '/api/terminal-sessions') {
+      return _json(res, 200, [
+        {
+          'sdkSessionId': 'aaa',
+          'title': 'Greet com idioma',
+          'firstPrompt': 'como funciona o greet?',
+          'updatedAt': '2026-10-16T10:00:00.000Z',
+          'live': 'busy',
+          'cwd': request.uri.queryParameters['cwd'],
+        },
+        {'sdkSessionId': 'bbb', 'cwd': '/dev/sand box/pkg', 'updatedAt': '2026-10-15T10:00:00.000Z', 'firstPrompt': 'antiga'},
+        {'sdkSessionId': 'ccc', 'updatedAt': '2026-10-15T10:00:00.000Z', 'firstPrompt': 'sem cwd'},
+        {'title': 'sem id', 'updatedAt': '2026-10-15T10:00:00.000Z'},
+      ]);
+    }
+    if (request.method == 'POST' && segments.length == 4 && segments[3] == 'aside') {
+      return _json(res, 200, {
+        'id': 'aside-1',
+        'project': 'demo',
+        'command': (req.body as Map)['text'],
+        'title': (req.body as Map)['text'],
+        'status': 'running',
+        'createdAt': '2026-10-16T10:00:00.000Z',
+        'permissionMode': 'plan',
+        'asideOf': segments[2],
+      });
+    }
+    if (request.method == 'POST' && req.path == '/api/sessions/import') {
+      final body = req.body as Map;
+      return _json(res, 200, {
+        'id': 'imp-1',
+        'project': body['project'],
+        'command': 'como funciona o greet?',
+        'title': 'como funciona o greet?',
+        'status': 'detached',
+        'createdAt': '2026-10-16T10:00:00.000Z',
+        'resumable': true,
+        'skill': '/kickoff',
+      });
+    }
+    if (request.method == 'POST' && req.path == '/api/agy/accounts/likin.do/login') {
+      return _json(res, 200, {'opened': true});
+    }
 
     if (req.path == '/api/sessions/stream') {
       _openSse(res);
@@ -442,6 +499,60 @@ void main() {
     });
   });
 
+  test('terminalSessions sends the cwd and drops entries without an id; import posts and lists the session', () async {
+    await repo.watchSessions().first.timeout(_timeout);
+    final list = await repo.terminalSessions('/dev/sand box');
+    expect(engine.requests.where((r) => r.path == '/api/terminal-sessions').single.query['cwd'], '/dev/sand box');
+    expect([for (final t in list) (t.sdkSessionId, t.title, t.live)], [
+      ('aaa', 'Greet com idioma', 'busy'),
+      ('bbb', 'antiga', null),
+    ]);
+
+    final imported = await repo.importTerminalSession(
+      sdkSessionId: 'aaa',
+      cwd: '/dev/sandbox',
+      project: 'sandbox',
+      permissionMode: PermissionMode.acceptEdits,
+    );
+    expect(imported.status, SessionStatus.detached);
+    expect(imported.skill, '/kickoff');
+    expect(engine.posts('/api/sessions/import').single.body, {
+      'sdkSessionId': 'aaa',
+      'cwd': '/dev/sandbox',
+      'project': 'sandbox',
+      'permissionMode': 'acceptEdits',
+    });
+    expect((await repo.watchSessions().first.timeout(_timeout)).map((s) => s.id), contains('imp-1'));
+  });
+
+  test('an open-terminal frame on the global stream becomes a handoff and leaves the list alone', () async {
+    // Like the SessionsCubit: the global stream is only open while someone watches the list.
+    final lists = <List<SessionSummary>>[];
+    final sub = repo.watchSessions().listen(lists.add);
+    addTearDown(sub.cancel);
+    while (lists.isEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    final handoff = repo.terminalHandoffs().first.timeout(_timeout);
+    await engine.pushGlobal('open-terminal', {'sdkSessionId': 'aaa', 'cwd': '/dev/sandbox/pkg'});
+    expect(await handoff, (sdkSessionId: 'aaa', cwd: '/dev/sandbox/pkg'));
+    expect(lists, hasLength(1), reason: 'the frame is not a list update');
+  });
+
+  test('askAside posts the question and lists the new session', () async {
+    final lists = <List<SessionSummary>>[];
+    final sub = repo.watchSessions().listen(lists.add);
+    addTearDown(sub.cancel);
+    while (lists.isEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    final aside = await repo.askAside('s 1', 'por quê?');
+    expect(engine.posts('/api/sessions/s%201/aside').single.body, {'text': 'por quê?'});
+    expect((aside.asideOf, aside.permissionMode), ('s 1', PermissionMode.plan));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(lists.last.map((s) => s.id), contains('aside-1'));
+  });
+
   test('create sends cwd only when given', () async {
     await repo.watchSessions().first.timeout(_timeout);
     await expectLater(
@@ -497,6 +608,99 @@ void main() {
       },
     ]);
   });
+
+  test('send carries images as base64 with their media type', () async {
+    await repo.watchSessions().first.timeout(_timeout);
+    engine.known['s1'] = _summary('s1');
+    await repo.send(
+      's1',
+      'veja',
+      images: [
+        ImageAttachment('image/png', Uint8List.fromList([1, 2, 3])),
+      ],
+    );
+    expect(engine.posts('/api/sessions/s1/input').single.body, {
+      'text': 'veja',
+      'images': [
+        {'mediaType': 'image/png', 'data': 'AQID'},
+      ],
+    });
+  });
+
+  test('create carries the first message images; without them the body has no images key', () async {
+    await repo.watchSessions().first.timeout(_timeout);
+    final png = ImageAttachment('image/png', Uint8List.fromList([1, 2, 3]));
+    await expectLater(
+      repo.create('demo', 'veja', permissionMode: PermissionMode.acceptEdits, images: [png]),
+      throwsA(isA<Exception>()),
+    );
+    await expectLater(
+      repo.createInOrg('o', 'veja', cwd: '/r', permissionMode: PermissionMode.acceptEdits, images: [png]),
+      throwsA(isA<Exception>()),
+    );
+    final bodies = engine.posts('/api/sessions').map((r) => r.body as Map).toList();
+    for (final body in bodies) {
+      expect(body['images'], [
+        {'mediaType': 'image/png', 'data': 'AQID'},
+      ]);
+    }
+    expect(bodies, hasLength(2));
+  });
+
+  test('cycleAction posts the action to the project cycle route', () async {
+    await repo.watchSessions().first.timeout(_timeout);
+    await expectLater(repo.cycleAction('demo app', CycleAction.archive), throwsA(isA<Exception>()));
+    expect(engine.posts('/api/projects/demo%20app/cycle').single.body, {'action': 'archive'});
+  });
+
+  test('agentModels sends the account as a query parameter; agentLogin posts to the account route', () async {
+    await repo.watchSessions().first.timeout(_timeout);
+    final models = await repo.agentModels('likin.do');
+    expect(models.map((m) => (m.id, m.label)), [('gemini-x', 'Gemini X')]);
+    expect(
+      (models.single.quota!.exhausted, models.single.quota!.resetsAt),
+      (true, DateTime.utc(2026, 10, 13, 12, 3, 43)),
+    );
+    expect(engine.requests.last.query, {'account': 'likin.do'});
+
+    await repo.agentLogin('likin.do');
+    expect(engine.posts('/api/agy/accounts/likin.do/login'), hasLength(1));
+  });
+
+  test(
+    'an Antigravity agent sends provider, account (default when unset) and model; Anthropic sends only a model',
+    () async {
+      await repo.watchSessions().first.timeout(_timeout);
+      for (final agent in const [
+        OrgAgent(provider: AgentProvider.antigravity, account: 'likin.do', model: 'gemini-x'),
+        OrgAgent(provider: AgentProvider.antigravity),
+        OrgAgent(model: 'opus'),
+      ]) {
+        await expectLater(
+          repo.create('demo', 'a', permissionMode: PermissionMode.bypassPermissions, agent: agent),
+          throwsA(isA<Exception>()),
+        );
+      }
+      expect(engine.posts('/api/sessions').map((r) => r.body), [
+        {
+          'project': 'demo',
+          'command': 'a',
+          'permissionMode': 'bypassPermissions',
+          'provider': 'antigravity',
+          'account': 'likin.do',
+          'model': 'gemini-x',
+        },
+        {
+          'project': 'demo',
+          'command': 'a',
+          'permissionMode': 'bypassPermissions',
+          'provider': 'antigravity',
+          'account': 'default',
+        },
+        {'project': 'demo', 'command': 'a', 'permissionMode': 'bypassPermissions', 'model': 'opus'},
+      ]);
+    },
+  );
 
   group('permission mode', () {
     test('create and createInOrg send permissionMode always', () async {

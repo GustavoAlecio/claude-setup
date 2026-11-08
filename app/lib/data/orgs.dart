@@ -50,8 +50,18 @@ String? routeOrg(String location, List<Project> projects) {
 }
 
 /// `/o/<org>/sessions[/<session>]`, encoded segment by segment: org names may carry spaces and accents.
+String orgQueueLocation(String org) => Uri(pathSegments: ['', 'o', org, 'fila']).toString();
+
+String orgInboxLocation(String org) => Uri(pathSegments: ['', 'o', org, 'revisar']).toString();
+
 String orgSessionsLocation(String org, {String? session}) =>
     Uri(pathSegments: ['', 'o', org, 'sessions', ?session]).toString();
+
+/// Where session [s] opens: its org's activities for an org session, else its project's Sessões tab.
+String sessionLocation(SessionSummary s) => switch (s.org) {
+  final org? => orgSessionsLocation(org, session: s.id),
+  null => Uri(pathSegments: ['', 'p', s.project, 'sessions', s.id]).toString(),
+};
 
 /// Where an org opens: its first visible project, else its activities when it has roots; `null` when it has
 /// neither, so the caller keeps the landing.
@@ -236,6 +246,18 @@ int pendingInOrg(List<SessionSummary> sessions, List<Project> projects, Dashboar
   return total;
 }
 
+/// The project [cwd] belongs to: the one whose path is [cwd] or its nearest ancestor; `null` outside all of them.
+Project? projectOfCwd(String cwd, List<Project> projects) {
+  final here = normalizePath(cwd);
+  Project? best;
+  for (final p in projects) {
+    final path = p.path == null ? null : normalizePath(p.path!);
+    if (path == null || !(here == path || here.startsWith('$path/'))) continue;
+    if (best == null || path.length > best.path!.length) best = p;
+  }
+  return best;
+}
+
 /// `cwd` and `additionalDirectories` of an org session: the first root and the others, in config order;
 /// `null` when the org has no roots.
 (String, List<String>)? orgSessionDirs(OrgConfig org) =>
@@ -245,7 +267,34 @@ const _pipelineCommands = {
   '/kickoff', '/specify', '/challenge-spec', '/plan', '/tasks', '/implement', '/verify', '/complete', '/fix', //
 };
 
-/// Newest live session of [project] (not an org session) whose command starts with a pipeline skill; it is the
+bool isPipelineCommand(String command) => _pipelineCommands.contains(command.trimLeft().split(RegExp(r'\s')).first);
+
+/// The session is running the pipeline: it began with a pipeline skill or ran one later, like a conversation that
+/// turned into a cycle with `/kickoff`.
+bool isPipelineSession(SessionSummary s) => isPipelineCommand(s.skill ?? s.command);
+
+/// Why [text] can't be sent to [s], or `null`. The engine forwards anything, and these fail far from the composer:
+/// the `agy` has no skills (ADR 0023) and an org session's cwd is no repo for the Fluxo Smart to run in.
+String? skillBlockedReason(SessionSummary s, String text) {
+  final skill = skillOf(text);
+  if (skill == null) return null;
+  if (s.provider == AgentProvider.antigravity) {
+    return 'Sessões Antigravity não rodam skills. Comece uma sessão nova com $skill: ela roda em Anthropic.';
+  }
+  if (s.isOrgSession && isPipelineCommand(skill)) {
+    return 'O Fluxo Smart roda num repositório. Comece $skill numa sessão do projeto, não da org.';
+  }
+  return null;
+}
+
+/// Agent of a new session in [orgName]: the org's `agent`, else Anthropic. A `/skill` command always runs on
+/// Anthropic: the skills live in `~/.claude` and the Fluxo Smart depends on Claude Code's Workflow tool (ADR 0023).
+OrgAgent agentFor(String? orgName, DashboardConfig? config, String command) {
+  if (command.trimLeft().startsWith('/')) return OrgAgent.anthropic;
+  return (orgName == null ? null : orgConfigOf(config, orgName)?.agent) ?? OrgAgent.anthropic;
+}
+
+/// Newest live session of [project] (not an org session) running a pipeline skill ([isPipelineSession]); it is the
 /// stage in progress when the project has no cycle yet.
 SessionSummary? runningStageSession(List<SessionSummary> sessions, Project project) {
   SessionSummary? best;
@@ -257,8 +306,7 @@ SessionSummary? runningStageSession(List<SessionSummary> sessions, Project proje
         s.status != SessionStatus.waitingPermission) {
       continue;
     }
-    final command = s.command.trimLeft().split(RegExp(r'\s'));
-    if (!_pipelineCommands.contains(command.first)) continue;
+    if (!isPipelineSession(s)) continue;
     final at = DateTime.tryParse(s.createdAt);
     if (best == null || (at != null && (bestAt == null || at.isAfter(bestAt)))) {
       best = s;

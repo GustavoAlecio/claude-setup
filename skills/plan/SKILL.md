@@ -36,7 +36,7 @@ python3 ~/.claude/bin/wf-report.py stage-start plan --workflow-dir "$WF_DIR" ${C
 
 Antes de planejar, explore o codigo real. Nao planeje no vacuo.
 
-1. **Convencoes do projeto:** leia `CLAUDE.md` do projeto (se existir) e `DESIGN.md` (se existir). Esses documentos definem padroes obrigatorios.
+1. **Convencoes do projeto:** leia `CLAUDE.md` do projeto (se existir) e `DESIGN.md` (se existir). Esses documentos definem padroes obrigatorios. **Mapa da org:** se existir `.map/index.md` no repo ou numa pasta acima (nunca procure abaixo), leia o índice e as notas/gerados relevantes antes de grep/`Explore`. Nota marcada STALE não é confiável: confira as âncoras. O mapa descreve `origin/development`; confira o diff da branch por cima.
 2. **Arquitetura existente:** explore os diretorios e arquivos mencionados na secao "Estado atual" da spec. Leia os arquivos-chave para entender patterns, abstracoes e convencoes do codebase.
 3. **Componentes reutilizaveis:** antes de propor criar algo novo, busque se ja existe componente similar no projeto (grep por nomes, patterns, widgets, services). Liste o que pode ser reutilizado.
 4. **Contratos existentes:** se a feature toca APIs, models, ou interfaces existentes, leia-os para entender os contratos atuais.

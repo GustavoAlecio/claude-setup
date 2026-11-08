@@ -200,7 +200,7 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
                     if (waiting > 0)
                       Pill(
                         key: const ValueKey('prs-waiting'),
-                        label: '$waiting PR(s) com comentários esperando você',
+                        label: '${countLabel(waiting, 'PR')} com comentários esperando você',
                         color: c.accent,
                       ),
                   ],
@@ -244,8 +244,8 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
           ('#PR', _wNumber),
           ('Título', null),
           ('Repo', _wRepo),
-          ('Target', _wTarget),
-          ('Stage', _wStage),
+          ('Destino', _wTarget),
+          ('Situação', _wStage),
           ('CI', _wCi),
           ('Atualizado', _wUpdated),
           ('', _wAction),
@@ -281,7 +281,7 @@ const _wNumber = 64.0;
 const _wRepo = 170.0;
 const _wTarget = 110.0;
 const _wStage = 200.0;
-const _wCi = 90.0;
+const _wCi = 104.0;
 const _wUpdated = 100.0;
 const _wAction = 110.0;
 
@@ -328,8 +328,8 @@ class _PrRow extends StatelessWidget {
               Expanded(
                 child: Row(
                   children: [
-                    if (pr.adoId case final ado?) ...[
-                      Pill(label: 'AB#$ado', color: c.accent, mono: true, dot: false),
+                    if (pr.card case final card?) ...[
+                      Pill(label: card.label, color: c.accent, mono: true, dot: false),
                       const SizedBox(width: 8),
                     ],
                     Flexible(
@@ -346,7 +346,13 @@ class _PrRow extends StatelessWidget {
               SizedBox(width: _wRepo, child: Mono(repoLabel)),
               SizedBox(width: _wTarget, child: Mono(pr.target ?? '—')),
               SizedBox(width: _wStage, child: _stage(c)),
-              SizedBox(width: _wCi, child: _checks(c)),
+              SizedBox(
+                width: _wCi,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Align(alignment: Alignment.centerLeft, child: _checks(c)),
+                ),
+              ),
               SizedBox(width: _wUpdated, child: Muted(relativeAge(pr.mergedAt ?? pr.updatedAt ?? pr.openedAt, now))),
               SizedBox(width: _wAction, child: _action(c)),
             ],
@@ -361,7 +367,7 @@ class _PrRow extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 2),
                     child: Text(
-                      '${expanded ? '▾' : '▸'} $threads comentário(s)',
+                      '${expanded ? '▾' : '▸'} ${countLabel(threads, 'comentário')}',
                       style: TextStyle(fontSize: 12, color: c.textSecondary),
                     ),
                   ),

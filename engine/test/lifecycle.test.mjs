@@ -1,7 +1,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,13 +96,15 @@ test("ENGINE_READY e a unica linha do stdout, com porta 0; health responde e nao
 
   const health = await api(port, "GET", "/api/health");
   assert.equal(health.status, 200);
-  assert.deepEqual(health.body, { ok: true, version: "0.5.0" });
+  assert.deepEqual(health.body, { ok: true, version: "0.8.0" });
   assert.equal((await api(port, "GET", "/")).status, 404);
   assert.equal((await api(port, "GET", "/api/projects/demo/artifact?path=spec.md")).status, 404);
   assert.equal(readFileSync(path.join(dir, "engine.pid"), "utf8"), String(pid));
+  assert.deepEqual(JSON.parse(readFileSync(path.join(dir, "engine.json"), "utf8")), { pid, port });
 
   const { code } = await stopAndTime(engine, () => engine.child.kill("SIGTERM"));
   assert.equal(code, 0);
+  assert.equal(existsSync(path.join(dir, "engine.json")), false, "sai sem deixar a porta velha para o to-app");
   const lines = engine.io.stdout.split("\n").filter(Boolean);
   assert.equal(lines.length, 1, engine.io.stdout);
   assert.match(lines[0], READY);

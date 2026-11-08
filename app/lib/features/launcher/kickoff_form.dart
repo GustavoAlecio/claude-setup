@@ -31,6 +31,7 @@ Future<void> showKickoffForm(BuildContext context, Project? project) async {
       project: project,
       sessions: sessions,
       githubAccount: githubAccount,
+      tracker: orgConfigOf(config, project.org)?.tracker,
       permissionMode: effectivePermissionMode(null, project.org, config),
       onCreated: (s) => router.go('/p/${s.project}/sessions/${s.id}'),
     ),
@@ -42,6 +43,7 @@ class _KickoffForm extends StatefulWidget {
     required this.project,
     required this.sessions,
     required this.githubAccount,
+    required this.tracker,
     required this.permissionMode,
     required this.onCreated,
   });
@@ -51,6 +53,9 @@ class _KickoffForm extends StatefulWidget {
 
   /// Of the project's org; `null` keeps the `gh` active account.
   final String? githubAccount;
+
+  /// Of the project's org; `null` leaves only the manual mode, since `/kickoff` has nowhere to pull an ID from.
+  final OrgTracker? tracker;
 
   /// Effective mode of the project's org; changing it in the form applies to this session only.
   final PermissionMode permissionMode;
@@ -70,7 +75,7 @@ class _KickoffFormState extends State<_KickoffForm> {
   bool _creating = false;
   late PermissionMode _permissionMode = widget.permissionMode;
 
-  bool get _hasId => _id.text.trim().isNotEmpty;
+  bool get _hasId => widget.tracker != null && _id.text.trim().isNotEmpty;
 
   bool get _tooLong => _description.text.length > kKickoffMaxChars;
 
@@ -85,10 +90,10 @@ class _KickoffFormState extends State<_KickoffForm> {
     if (_creating) return;
     final project = widget.project;
     String? id;
-    if (_hasId) {
-      id = normalizeCardId(_id.text);
+    if (widget.tracker case final tracker? when _hasId) {
+      id = normalizeCardId(_id.text, tracker);
       if (id == null) {
-        setState(() => _idError = 'ID inválido');
+        setState(() => _idError = 'não é um ID do ${tracker.kind.label}');
         return;
       }
     } else if (_description.text.trim().isEmpty) {
@@ -160,33 +165,69 @@ class _KickoffFormState extends State<_KickoffForm> {
                 children: [
                   Text('Novo kickoff em ${widget.project.name}', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 14),
-                  CallbackShortcuts(
-                    bindings: {
-                      const SingleActivator(LogicalKeyboardKey.enter): _submit,
-                      const SingleActivator(LogicalKeyboardKey.numpadEnter): _submit,
-                    },
-                    child: TextField(
-                      key: const ValueKey('kickoff-id'),
-                      controller: _id,
-                      autofocus: true,
-                      readOnly: _creating,
-                      onChanged: (_) => setState(() {
-                        _idError = null;
-                        _error = null;
-                      }),
-                      style: const TextStyle(fontSize: 13),
-                      decoration: InputDecoration(
-                        labelText: 'ID do card',
-                        hintText: 'opcional · 123 ou LC-101',
-                        hintStyle: TextStyle(color: c.textMuted),
-                        errorText: _idError,
+                  if (widget.project.cycle case final cycle? when cycle.stage != Stage.complete) ...[
+                    Container(
+                      key: const ValueKey('kickoff-active-cycle'),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: c.warn.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: c.warn.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.warning_amber_rounded, size: 16, color: c.warn),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Este projeto já tem o ciclo «${cycle.feature ?? widget.project.name}» em '
+                              '${cycle.stage.label}. Um card diferente faz o /kickoff perguntar se você quer '
+                              'resetar esse ciclo antes de começar o novo.',
+                              style: TextStyle(fontSize: 12, color: c.textPrimary),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (widget.tracker case final tracker?)
+                    CallbackShortcuts(
+                      bindings: {
+                        const SingleActivator(LogicalKeyboardKey.enter): _submit,
+                        const SingleActivator(LogicalKeyboardKey.numpadEnter): _submit,
+                      },
+                      child: TextField(
+                        key: const ValueKey('kickoff-id'),
+                        controller: _id,
+                        autofocus: true,
+                        readOnly: _creating,
+                        onChanged: (_) => setState(() {
+                          _idError = null;
+                          _error = null;
+                        }),
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          labelText: 'ID do card no ${tracker.kind.label}',
+                          hintText: 'opcional · ${cardIdHint(tracker)}',
+                          hintStyle: TextStyle(color: c.textMuted),
+                          errorText: _idError,
+                        ),
+                      ),
+                    )
+                  else
+                    const Muted(
+                      'Org sem tracker: descreva o trabalho. Configure o tracker da org em Configurações para '
+                      'puxar cards por ID.',
+                      key: ValueKey('kickoff-no-tracker'),
+                      size: 12,
+                    ),
                   const SizedBox(height: 12),
                   TextField(
                     key: const ValueKey('kickoff-description'),
                     controller: _description,
+                    autofocus: widget.tracker == null,
                     enabled: !hasId,
                     readOnly: _creating,
                     minLines: 5,

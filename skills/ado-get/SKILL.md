@@ -8,8 +8,7 @@ Resumo rapido de um work item.
 
 ## Defaults
 
-- **Org:** `<your-org>`
-- **Project:** `<your-project>`
+- **Org / Project:** os do tracker da org do repo (`orgs[].tracker` no `.dashboard.json`, configurado no app; `python3 ~/.claude/bin/tracker.py resolve`). Passe-os às tools do MCP.
 
 Se o usuario passar `--org=...` ou `--project=...` nos args, sobrescreva. Se passar so um numero, e o ID.
 

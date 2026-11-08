@@ -4,6 +4,7 @@ import 'package:markdown/markdown.dart' as md;
 
 import '../theme/app_colors.dart';
 import '../theme/app_theme.dart';
+import 'mermaid_block.dart';
 import 'wiki_link_syntax.dart';
 
 /// Renders GitHub-flavored markdown as selectable widgets. Raw HTML and unknown nodes render as literal
@@ -191,6 +192,7 @@ class _Builder {
     final code = pre.children?.whereType<md.Element>().firstOrNull;
     final lang = (code?.attributes['class'] ?? '').replaceFirst('language-', '').trim();
     final text = pre.textContent.replaceFirst(RegExp(r'\n$'), '');
+    if (lang == 'mermaid') return MermaidBlock(text);
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -201,14 +203,6 @@ class _Builder {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (lang == 'mermaid')
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
-              child: Text(
-                'mermaid',
-                style: TextStyle(fontFamily: monoFamily, fontSize: 11, color: c.textMuted),
-              ),
-            ),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.all(10),

@@ -17,7 +17,7 @@ class FileInventoryRepository implements InventoryRepository {
 
   @override
   Future<Inventory> loadInventory() async {
-    final workflows = await _workflows();
+    final workflows = await _workflows('$claudeHome/workflows');
     final ladderFile = '$claudeHome/workflows/smart-implement.js';
     final ladderSource = await _read(ladderFile);
     return Inventory(
@@ -43,7 +43,20 @@ class FileInventoryRepository implements InventoryRepository {
     final lessons = await _read('$stateDir/lessons.md');
     final routing = await _read('$stateDir/routing.json');
     final modules = path == null ? null : await readCapped('${normalizePath(path)}/.gitmodules', _gitmodulesLimit);
+    final workflows = path == null
+        ? const <WorkflowEntry>[]
+        : await _workflows('${normalizePath(path)}/.claude/workflows');
+    final implement = workflows.where((w) => w.meta.name == 'smart-implement').firstOrNull;
+    final ladderSource = implement == null ? null : await _read(implement.path);
     return ProjectInventory(
+      workflows: workflows,
+      ladder: switch (ladderSource) {
+        null => null,
+        (text: final text?, error: _, missing: _) => parseLadder(text),
+        (text: null, :final error, missing: _) => Ladder(
+          error: 'não foi possível ler ${_basename(implement!.path)}: $error',
+        ),
+      },
       adrSubmodule: modules?.text == null ? null : adrSubmoduleFor(adrDir, parseGitmodules(modules!.text!)),
       rules: path == null ? const [] : await _rules('${normalizePath(path)}/$rulesDir'),
       adrs: path == null ? const [] : sortAdrs(await _adrs('${normalizePath(path)}/$adrDir')),
@@ -96,9 +109,9 @@ class FileInventoryRepository implements InventoryRepository {
     return parseInventoryItem(read.text!, path: file, fallbackName: fallbackName);
   }
 
-  Future<List<WorkflowEntry>> _workflows() async {
+  Future<List<WorkflowEntry>> _workflows(String dir) async {
     final out = <WorkflowEntry>[];
-    for (final file in await _files('$claudeHome/workflows', '.js')) {
+    for (final file in await _files(dir, '.js')) {
       final name = _basename(file).replaceFirst(RegExp(r'\.js$'), '');
       final read = await _read(file);
       out.add(

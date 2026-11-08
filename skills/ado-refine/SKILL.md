@@ -8,8 +8,7 @@ Skill que orquestra: buscar work item do Azure DevOps → entender contexto → 
 
 ## Defaults
 
-- **Org:** `<your-org>`
-- **Project:** `<your-project>`
+- **Org / Project:** os do tracker da org do repo (`orgs[].tracker` no `.dashboard.json`, configurado no app; `python3 ~/.claude/bin/tracker.py resolve`). O `ado.sh` já os lê sozinho.
 
 Sobrescritos por `--org=...` / `--project=...` nos args. Primeiro argumento numerico = ID do work item.
 
@@ -41,7 +40,7 @@ Para org/project alternativos (outra org/projeto), exporte `ADO_ORG` / `ADO_PROJ
 
 Antes de detalhar tecnicamente, fundamente no codigo real:
 
-1. Leia `CLAUDE.md` do projeto e `DESIGN.md` se existirem.
+1. Leia `CLAUDE.md` do projeto e `DESIGN.md` se existirem. **Mapa da org:** se existir `.map/index.md` no repo ou numa pasta acima (nunca procure abaixo), leia o índice e as notas/gerados relevantes antes de grep/`Explore`. Nota marcada STALE não é confiável: confira as âncoras. O mapa descreve `origin/development`; confira o diff da branch por cima.
 2. A partir do titulo + descricao do work item, identifique diretorios/arquivos mais provaveis de serem tocados. Liste e leia os relevantes.
 3. Procure componentes/servicos reutilizaveis com `grep` antes de propor coisa nova.
 4. Se a tarefa toca contratos (APIs, models, BLoC events/states), leia os atuais.

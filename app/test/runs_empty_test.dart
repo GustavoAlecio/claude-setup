@@ -42,7 +42,7 @@ void main() {
       tester,
       const Project(
         name: 'p',
-        cycle: Cycle(stage: Stage.tasks, runs: [], autoMode: false, stageMinutes: {}),
+        cycle: Cycle(stage: Stage.tasks, runs: [], stageMinutes: {}),
       ),
     );
 

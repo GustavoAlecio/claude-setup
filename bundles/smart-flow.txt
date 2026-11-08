@@ -10,6 +10,7 @@ skills/adr
 skills/auto
 skills/status
 skills/fix
+skills/app
 agents/dev-implementer.md
 agents/spec-challenger.md
 workflows/
@@ -20,6 +21,10 @@ bin/get-project.sh
 bin/to-slug.sh
 bin/wf-checkpoint.sh
 bin/wf-event.py
+bin/wf_gate.py
 bin/gate_g0.py
 bin/adr-index.py
 bin/routing-stats.py
+bin/to-app.py
+bin/wf-report.py
+bin/harness-audit.py

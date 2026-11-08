@@ -1,4 +1,5 @@
 import 'models.dart';
+import 'orgs.dart';
 import 'report_models.dart';
 import 'session_models.dart';
 import 'session_reducer.dart';
@@ -125,6 +126,19 @@ Map<Stage, StageState> derivedStageStates(Cycle cycle) {
   };
 }
 
+/// The stage the side panel shows ([selected], else the cycle's) when it reads "em andamento" with no session to
+/// show; `null` otherwise. The panel then points to the palette instead of a bare placeholder.
+Stage? orphanCurrentStage(Cycle? cycle, Stage? selected, {required bool hasSession}) {
+  if (cycle == null || hasSession) return null;
+  final stage = selected ?? cycle.stage;
+  final state = switch (cycle.report?.stage(stage)?.status) {
+    ReportStatus.running => StageState.current,
+    null => derivedStageStates(cycle)[stage],
+    _ => null,
+  };
+  return state == StageState.current ? stage : null;
+}
+
 /// A `running` stage whose session the engine already ended (done, stopped, error or detached). A session missing from
 /// [sessions] is not reported: the list may still be loading.
 class EndedStageSession {
@@ -197,3 +211,28 @@ String findingLocation(String file, int? line, String? root) {
   final shown = base.isNotEmpty && file.startsWith(base) ? file.substring(base.length) : file;
   return line == null ? shown : '$shown:$line';
 }
+
+/// Task blocked in the project's latest run with its diagnosis ready: the cycle stops until the user decides.
+/// A paused cycle asks for nothing: its decision waits until the user resumes it.
+({Run run, TaskRun task})? blockedDecision(Project project) {
+  if (project.cycle?.paused ?? false) return null;
+  final run = project.cycle?.latestRun;
+  final task = run?.blockedTask;
+  return run == null || task == null ? null : (run: run, task: task);
+}
+
+/// Where the blocked task's diagnosis (and its decision buttons) lives.
+String decisionLocation(String project, ({Run run, TaskRun task}) decision) =>
+    '/p/$project/runs/${decision.run.id}/${decision.task.id}';
+
+/// [pending] (sessions per project) plus one for each project whose cycle waits on a [blockedDecision]: both are
+/// "aguardando você".
+Map<String, int> withDecisions(Map<String, int> pending, List<Project> projects) => {
+  ...pending,
+  for (final p in projects)
+    if (!p.hidden && blockedDecision(p) != null) p.name: (pending[p.name] ?? 0) + 1,
+};
+
+/// Blocked-cycle decisions waiting in [org]'s projects.
+int decisionsInOrg(List<Project> projects, String org) =>
+    projectsInOrg(projects, org).where((p) => !p.hidden && blockedDecision(p) != null).length;

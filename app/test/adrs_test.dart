@@ -241,7 +241,7 @@ void main() {
     final selected = tester.widget<Text>(
       find.descendant(of: find.byKey(const ValueKey('adr-chain-0009')), matching: find.byType(Text)),
     );
-    expect(selected.style?.fontWeight, FontWeight.w700);
+    expect(selected.style?.fontWeight, FontWeight.w600);
 
     await tester.tap(find.byKey(const ValueKey('adr-chain-0001')));
     await tester.pumpAndSettle();

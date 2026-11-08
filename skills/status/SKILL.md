@@ -22,7 +22,7 @@ Verifique o estado atual do Fluxo Smart lendo os artefatos em `~/.claude/workflo
 3. Se `plan.md` existir mas `tasks.md` nao → plano gerado, aguardando criacao das tasks
 4. Se `tasks.md` existir → leia `tasks` do `current.json` para progresso detalhado (`tasks.items` com status por task)
 5. Se todas tasks done e status e `"implemented"` → aguardando verificacao
-6. Se status e `"verified"` → ciclo completo
+6. Se status e `"verified"` → verificado, aguardando `/complete`; `"unverified"` → verify nao aprovou: mostre `exec.verify.reason_code` e aponte `/verify` (ou `/complete` com exceção humana)
 
 Se `tasks.items` existir no `current.json`, exiba progresso por task:
 - T1 — Titulo `[S]` done

@@ -8,8 +8,7 @@ Move um work item para estado final (Done / Closed / Resolved, dependendo do tip
 
 ## Defaults
 
-- **Org:** `<your-org>`
-- **Project:** `<your-project>`
+- **Org / Project:** os do tracker da org do repo (`orgs[].tracker` no `.dashboard.json`, configurado no app; `python3 ~/.claude/bin/tracker.py resolve`). Passe-os às tools do MCP.
 
 Argumentos: primeiro numerico = ID. `--state=<estado>` opcional. `--comment="..."` opcional (deixa coment no card antes de fechar).
 

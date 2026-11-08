@@ -344,7 +344,7 @@ assert r['cycle']=={'feature':'Feat B','started_at':'2026-02-01T00:00:00Z'} and 
 " || fail "new cycle report"
 H=$(tmp); mkdir -p "$H/.claude/workflow/proj"
 cp "$W/current.json" "$W/report.json" "$H/.claude/workflow/proj/"
-HOME="$H" bash "$BIN/archive-cycle.sh" completed proj "Feat B" >/dev/null
+HOME="$H" bash "$BIN/archive-cycle.sh" abandoned proj "Feat B" >/dev/null
 ARCH=$(ls -d "$H/.claude/projects/proj/history/"*_feat-b)
 cmp -s "$W/report.json" "$ARCH/report.json" || fail "archive-cycle did not copy report.json intact"
 
@@ -453,21 +453,21 @@ AH=$(tmp); AW="$AH/.claude/workflow/demo"; mkdir -p "$AW/runs/r1" "$AW/details"
 printf '{"feature":"Fechamento do ciclo","start_date":"2026-03-01"}' > "$AW/current.json"
 printf '{"version":1,"stages":[]}' > "$AW/report.json"; echo spec > "$AW/spec.md"; echo "- [ ] fase" > "$AW/phases.md"
 echo '{}' > "$AW/prs.json"; echo card > "$AW/details/42.md"; echo old > "$AW/report.2026-01-01T00:00:00Z.json"
-HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+HOME="$AH" bash "$BIN/archive-cycle.sh" abandoned demo >/dev/null
 AC=$(ls -d "$AH/.claude/projects/demo/history/"*_fechamento-do-ciclo)
 [ -f "$AC/report.json" ] && [ -f "$AC/spec.md" ] && [ -d "$AC/runs/r1" ] || fail "archive-cycle: history incomplete"
 [ -f "$AC/details/42.md" ] && [ -f "$AC/report.2026-01-01T00:00:00Z.json" ] || fail "archive-cycle: details/ or archived report missing from history"
 [ "$(ls "$AW" | tr '\n' ' ')" = "details phases.md prs.json " ] || fail "archive-cycle: workflow dir must keep only phases.md, prs.json, details/"
 [ -f "$AW/details/42.md" ] || fail "archive-cycle: details/ content lost in workflow"
 printf '{"feature":"Fechamento do ciclo","start_date":"2026-03-01"}' > "$AW/current.json"; mkdir -p "$AW/runs/r2"
-HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+HOME="$AH" bash "$BIN/archive-cycle.sh" abandoned demo >/dev/null
 [ -d "$AC/runs/r2" ] && [ ! -e "$AC/runs/runs" ] && [ ! -e "$AC/details/details" ] || fail "archive-cycle: same-day rerun must merge, not nest"
 rm -rf "$AW/details" "$AW/prs.json"; printf '{"feature":"Sem extras"}' > "$AW/current.json"
-HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null || fail "archive-cycle: must not fail without details/ or report.*.json"
+HOME="$AH" bash "$BIN/archive-cycle.sh" abandoned demo >/dev/null || fail "archive-cycle: must not fail without details/ or report.*.json"
 AN=$(ls -d "$AH/.claude/projects/demo/history/"*_sem-extras)
 [ ! -e "$AN/details" ] && [ ! -e "$AN/runs" ] || fail "archive-cycle: empty dirs created"
 rm "$AW/phases.md"; printf '{"feature":"Outro"}' > "$AW/current.json"
-HOME="$AH" bash "$BIN/archive-cycle.sh" completed demo >/dev/null
+HOME="$AH" bash "$BIN/archive-cycle.sh" abandoned demo >/dev/null
 [ ! -e "$AW" ] || fail "archive-cycle: empty workflow dir must go away"
 
 echo "- gate_g0: pkgs, golangci parser and stack_env"
@@ -595,12 +595,218 @@ got=0; out=$(printf '%s\n' main release/draft release/stable-x release-1.0.0 | "
 echo "- skills: greps de kickoff, adr, pr-open e dev-implementer"
 SK="$(cd "$(dirname "$0")/.." && pwd)"
 grep -q "release-base.sh" "$SK/skills/kickoff/SKILL.md" || fail "kickoff: não chama release-base.sh"
-[ "$(grep -c "for k in ('feature', 'start_date', 'end_date', 'phases')" "$SK/skills/kickoff/SKILL.md")" = 3 ] || fail "kickoff: os 3 seeds devem remover identidade"
+[ "$(grep -c "for k in ('feature', 'start_date', 'end_date', 'phases'" "$SK/skills/kickoff/SKILL.md")" = 2 ] || fail "kickoff: os 2 seeds (card e manual) devem remover identidade"
+! grep -qE "ado_id|linear_key" "$SK/skills/kickoff/SKILL.md" "$SK/skills/pr-open/SKILL.md" "$SK/skills/pr-status/SKILL.md" "$SK/skills/complete/SKILL.md" || fail "skills ainda citam ado_id/linear_key"
 grep -q "rev-parse --show-superproject-working-tree" "$SK/skills/adr/SKILL.md" || fail "adr: sem detecção de submódulo"
 grep -q "adr-candidates.md" "$SK/skills/adr/SKILL.md" || fail "adr: sem adr-candidates.md"
 grep -q "adr-candidates.md" "$SK/skills/complete/SKILL.md" || fail "complete: sem adr-candidates.md"
 grep -q "ADRs propostas" "$SK/skills/pr-open/SKILL.md" || fail "pr-open: sem seção ADRs propostas"
 grep -q "pt-BR" "$SK/agents/dev-implementer.md" || fail "dev-implementer: sem pt-BR"
 grep -q "repo inteiro" "$SK/agents/dev-implementer.md" || fail "dev-implementer: sem proibição de formatador no repo inteiro"
+
+echo "- wf-cycle: pause/resume flag current.json under the lock; archive files the cycle as abandoned"
+C=$(tmp); mkdir -p "$C/.claude/workflow/demo"
+echo '{"feature":"F","start_date":"2026-10-01T00:00:00Z"}' > "$C/.claude/workflow/demo/current.json"
+echo "# P" > "$C/.claude/workflow/demo/phases.md"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" pause demo
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['paused'] is True and d['paused_at'], d" "$C/.claude/workflow/demo/current.json" || fail "pause flag"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" resume demo
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert 'paused' not in d and 'paused_at' not in d, d" "$C/.claude/workflow/demo/current.json" || fail "resume flag"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" archive demo >/dev/null
+[ ! -e "$C/.claude/workflow/demo/current.json" ] || fail "archive left current.json"
+[ -f "$C/.claude/workflow/demo/phases.md" ] || fail "archive dropped phases.md"
+grep -q '"status": "abandoned"' "$C"/.claude/projects/demo/history/*/metrics.json || fail "archive status"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" pause demo 2>/dev/null && fail "pause without a cycle must fail"
+CLAUDE_HOME="$C/.claude" python3 "$BIN/wf-cycle.py" pause ../x 2>/dev/null && fail "unsafe project name accepted"
+
+echo "- to-app: asks the connected app to open this session at the CLI's cwd; without a session it refuses"
+C=$(tmp); mkdir -p "$C/.claude/sessions" "$C/.claude/workflow/.dashboard/engine-sessions" "$C/stub"
+SID=11111111-1111-4111-8111-111111111111
+echo "{\"pid\":4242,\"sessionId\":\"$SID\",\"cwd\":\"/repos/demo/pkg\"}" > "$C/.claude/sessions/4242.json"
+printf '#!/bin/sh\necho "$@" >> "%s/opened"\n' "$C" > "$C/stub/open"; chmod +x "$C/stub/open"
+printf '#!/bin/sh\nexit 1\n' > "$C/stub/pgrep"; chmod +x "$C/stub/pgrep"  # no instance open: falls back to open -b
+python3 - "$C" <<'PY' &
+import http.server, json, sys
+root = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def reply(self, body):
+        self.send_response(200); self.send_header("content-type", "application/json"); self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+    def do_GET(self): self.reply({"clients": 1})
+    def do_POST(self):
+        open(f"{root}/posted", "w").write(self.path + " " + self.rfile.read(int(self.headers["content-length"])).decode())
+        self.reply({"clients": 1})
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(f"{root}/.claude/workflow/.dashboard/engine-sessions/engine.json", "w").write(json.dumps({"pid": 1, "port": s.server_port}))
+s.serve_forever()
+PY
+SRV=$!
+for _ in $(seq 50); do [ -s "$C/.claude/workflow/.dashboard/engine-sessions/engine.json" ] && break; sleep 0.1; done
+OUT=$(PATH="$C/stub:$PATH" CLAUDE_HOME="$C/.claude" CLAUDE_CODE_SESSION_ID=$SID CLAUDE_PID=4242 python3 "$BIN/to-app.py")
+kill $SRV; wait $SRV 2>/dev/null || true
+[ "$(cat "$C/posted")" = "/api/ui/open-terminal {\"sdkSessionId\": \"$SID\", \"cwd\": \"/repos/demo/pkg\"}" ] || fail "to-app body: $(cat "$C/posted")"
+grep -q -- "-b dev.claudesetup.claudeFlow" "$C/opened" || fail "to-app did not bring the app forward"
+case "$OUT" in "sessao 11111111 enviada"*) ;; *) fail "to-app output: $OUT" ;; esac
+env -u CLAUDE_CODE_SESSION_ID CLAUDE_HOME="$C/.claude" python3 "$BIN/to-app.py" 2>/dev/null && fail "to-app without a session must fail"
+
+echo "- tracker: org by root or explicit project, card ref per kind, ado env"
+C=$(tmp); mkdir -p "$C/.claude/workflow" "$C/r10/app" "$C/likin/app" "$C/loose" "$C/other"
+cat > "$C/.claude/workflow/.dashboard.json" <<JSON
+{"orgs": [
+  {"name": "OTG", "roots": ["$C/r10"], "tracker": {"kind": "ado", "org": "Grupo OTG", "project": "R10 Score", "base": "release"}},
+  {"name": "Likin", "roots": ["$C/likin"], "tracker": {"kind": "jira", "site": "x.atlassian.net", "project": "LC", "email": "e"}},
+  {"name": "Bare", "roots": ["$C/other"]}
+ ],
+ "projects": [{"name": "loose", "path": "$C/loose", "org": "Likin"}]}
+JSON
+trk() { CLAUDE_HOME="$C/.claude" python3 "$BIN/tracker.py" "$@"; }
+[ "$(trk resolve "$C/r10/app" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["org"],d["tracker"]["kind"])')" = "OTG ado" ] || fail "resolve by root"
+[ "$(trk resolve "$C/loose" | python3 -c 'import json,sys;print(json.load(sys.stdin)["org"])')" = "Likin" ] || fail "resolve by explicit project"
+[ "$(trk resolve "$C/other")" = '{"org": "Bare", "tracker": null}' ] || fail "org without tracker"
+[ "$(trk resolve /nowhere)" = '{"org": null, "tracker": null}' ] || fail "outside every org"
+[ "$(trk ref '#4821' "$C/r10/app")" = '{"kind": "ado", "id": "4821", "url": "https://dev.azure.com/Grupo%20OTG/R10%20Score/_workitems/edit/4821"}' ] || fail "ado ref"
+trk ref LC-1 "$C/r10/app" >/dev/null 2>&1 && fail "a key is not an ADO card"
+[ "$(trk ref 77 "$C/likin/app")" = '{"kind": "jira", "id": "LC-77", "url": "https://x.atlassian.net/browse/LC-77"}' ] || fail "jira number gets the project key"
+[ "$(trk ref lc-9 "$C/likin/app" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')" = "LC-9" ] || fail "jira key uppercased"
+rc=0; trk ref 1 "$C/other" >/dev/null 2>&1 || rc=$?; [ "$rc" = 2 ] || fail "no tracker exits 2"
+[ "$(trk env "$C/r10/app")" = "$(printf "export ADO_ORG='Grupo OTG'\nexport ADO_PROJECT='R10 Score'")" ] || fail "ado env"
+[ -z "$(trk env "$C/likin/app")" ] || fail "jira has no env"
+
+echo "- pr-registry: register stores the card as tracker, or null without one"
+H=$(tmp); git -C "$H" init -q demo; mkdir -p "$H/.claude"; ln -s "$BIN" "$H/.claude/bin"
+(cd "$H/demo" && HOME="$H" CLAUDE_HOME="$H/.claude" bash "$BIN/pr-registry.sh" register 7 feat/x main "T" https://github.com/o/demo/pull/7 jira LC-1 https://x/browse/LC-1 >/dev/null)
+(cd "$H/demo" && HOME="$H" CLAUDE_HOME="$H/.claude" bash "$BIN/pr-registry.sh" register 8 feat/y main "U" https://github.com/o/demo/pull/8 >/dev/null)
+python3 -c "
+import json,sys
+prs={p['pr_number']:p for p in json.load(open(sys.argv[1]))['prs']}
+assert prs[7]['tracker']=={'kind':'jira','id':'LC-1','url':'https://x/browse/LC-1'}, prs[7]
+assert prs[8]['tracker'] is None and 'ado_id' not in prs[8], prs[8]
+" "$H/.claude/workflow/demo/prs.json" || fail "registry tracker"
+
+echo "- verify/complete: verified binds to the tree, stale/forged/unverified cannot complete, only a human exception can"
+GH=$(tmp); mkdir -p "$GH/.claude"; ln -s "$BIN" "$GH/.claude/bin"
+GR=$(tmp); git -C "$GR" init -q; echo a > "$GR/a.dart"; git -C "$GR" add .; git -C "$GR" -c user.email=t@t -c user.name=t commit -qm init
+GW="$GH/.claude/workflow/gp"; mkdir -p "$GW/runs/v1"
+printf '{"feature":"Login","start_date":"2026-11-01","exec":{}}' > "$GW/current.json"
+REV=$("$BIN/wf-checkpoint.sh" create "$GR"); echo "$REV" > "$GW/runs/v1/rev.tree"
+verified_result() {
+  cat <<JSON
+{"status":"verified","reason":"VERIFIED","tasks":[],"trace":[],
+ "decision":{"status":"verified","reason_code":"VERIFIED","reasons":[],"repo":"$GR","revision_start":"@$GW/runs/v1/rev.tree",
+   "criteria":{"total":1,"passed":1,"failed":0,"partial":0,"untestable":0},"gates_run":["G1","G2"],"evidence_refs":["flutter test"]},
+ "report":{"round":1,"g1":[{"gate":"G1","verdict":"pass","findings":[]}],
+   "g2":{"verdict":"pass","criteria":[{"criterion":"c1","status":"PASS","evidence":"test/a_test.dart"}],"findings":[]}}}
+JSON
+}
+persist() { HOME="$GH" python3 "$BIN/wf-event.py" persist --run-dir "$GW/runs/$1" --workflow-dir "$GW" --result-file "$2" >/dev/null; }
+check() { HOME="$GH" python3 "$BIN/wf_gate.py" complete-check --workflow-dir "$GW"; }
+verified_result > "$GW/r.json"; persist v1 "$GW/r.json"
+python3 -c "
+import json,sys; d=json.load(open(sys.argv[1])); v=d['exec']['verify']
+assert v['status']=='verified' and v['revision_id']==sys.argv[2] and v['run']=='v1', v
+r=json.load(open(sys.argv[3])); assert r['decision']['revision_id']==sys.argv[2]
+" "$GW/current.json" "$REV" "$GW/runs/v1/result.json" || fail "persist binds verified to the revision"
+check >/dev/null || fail "AC-08: verified for the current tree completes"
+HOME="$GH" bash "$BIN/capture-metrics.sh" start verify gp "$GR" >/dev/null; HOME="$GH" bash "$BIN/capture-metrics.sh" end verify gp "$GR" >/dev/null
+[ "$(python3 -c "import json;print(json.load(open('$GW/current.json'))['status'])")" = "verified" ] || fail "capture-metrics keeps verified"
+
+echo b > "$GR/b.dart"
+out=$(check) && fail "AC-12: tree changed after verify must not complete"
+echo "$out" | grep -q '"reason_code": "REVISION_CHANGED"' || fail "AC-12 reason: $out"
+rm "$GR/b.dart"
+
+echo c >> "$GR/a.dart"; persist v1 "$GW/r.json"; git -C "$GR" checkout -q -- a.dart
+[ "$(python3 -c "import json;print(json.load(open('$GW/runs/v1/result.json'))['reason'])")" = "REVISION_CHANGED" ] || fail "tree moved during verify downgrades to unverified"
+check >/dev/null && fail "moved-during-verify result must not complete"
+
+python3 -c "
+import json,sys; r=json.loads(open(sys.argv[1]).read()); r['report']['g2']['criteria'][0]['status']='UNTESTABLE'
+open(sys.argv[2],'w').write(json.dumps(r))" "$GW/r.json" "$GW/forged.json"
+persist v1 "$GW/forged.json"
+out=$(check) && fail "forged verified status with UNTESTABLE criteria must not complete"
+echo "$out" | grep -q 'VERIFY_INCONSISTENT' || fail "forged reason: $out"
+
+python3 -c "
+import json,sys; r=json.loads(open(sys.argv[1]).read()); r['status']=r['decision']['status']='unverified'; r['reason']=r['decision']['reason_code']='G2_FAIL'
+open(sys.argv[2],'w').write(json.dumps(r))" "$GW/r.json" "$GW/unv.json"
+persist v1 "$GW/unv.json"
+out=$(check) && fail "AC-11: unverified must not complete"
+echo "$out" | grep -q '"reason_code": "G2_FAIL"' || fail "AC-11 reason: $out"
+HOME="$GH" bash "$BIN/capture-metrics.sh" start verify gp "$GR" >/dev/null; HOME="$GH" bash "$BIN/capture-metrics.sh" end verify gp "$GR" >/dev/null
+[ "$(python3 -c "import json;print(json.load(open('$GW/current.json'))['status'])")" = "unverified" ] || fail "capture-metrics must not mint verified"
+HOME="$GH" bash "$BIN/archive-cycle.sh" completed gp >/dev/null 2>&1 && fail "AC-11: archive completed without verify"
+[ -f "$GW/current.json" ] || fail "refused archive must keep the cycle"
+
+python3 - "$GW" "$GR" "$BIN" <<'PY' || fail "AC-13/AC-14: human exception"
+import json, sys
+from pathlib import Path
+wf, repo = Path(sys.argv[1]), sys.argv[2]
+sys.path.insert(0, sys.argv[3]); import wf_gate as g
+g.confirm = lambda text: False
+assert not g.accept_unverified(wf, "QA manual ok", ["sem golden"], "complete")["accepted"], "dialog refused must reject"
+assert not g.accept_unverified(wf, "  ", ["r"], "complete")["accepted"], "empty reason must reject"
+assert not g.accept_unverified(wf, "motivo", [], "complete")["accepted"], "no risk must reject"
+cur = json.loads((wf / "current.json").read_text())
+cur["exec"]["override"] = {"actor": "agent", "at": "x", "reason": "r", "risks": ["r"], "revision_id": g.snapshot(repo)}
+(wf / "current.json").write_text(json.dumps(cur))
+c = g.complete_check(wf)
+assert not c["allowed"] and c["override_error"] == "OVERRIDE_NOT_HUMAN", c
+g.confirm = lambda text: "Motivo: QA manual ok" in text
+r = g.accept_unverified(wf, "QA manual ok", ["sem golden"], "complete")
+assert r["accepted"] and r["override"]["confirmed_via"] == "macos_dialog" and r["override"]["verify_status"] == "unverified", r
+c = g.complete_check(wf)
+assert c["allowed"] and c["human_override"] and c["verdict"] == "unverified", c
+assert len((wf / "overrides.jsonl").read_text().splitlines()) == 1
+Path(repo, "late.dart").write_text("x")
+c = g.complete_check(wf)
+assert not c["allowed"] and c["override_error"] == "OVERRIDE_STALE_REVISION", c
+Path(repo, "late.dart").unlink()
+PY
+HOME="$GH" bash "$BIN/archive-cycle.sh" completed gp >/dev/null || fail "AC-13: archive with human exception"
+GC=$(ls -d "$GH/.claude/projects/gp/history/"*_login)
+python3 -c "
+import json; m=json.load(open('$GC/metrics.json'))['verify']; assert m['human_override'] is True and m['verdict']=='unverified', m
+" || fail "AC-13: history records human_override without verified"
+[ -f "$GC/overrides.jsonl" ] && [ -f "$GC/completion.json" ] || fail "AC-15: exception and completion evidence archived"
+
+mkdir -p "$GW/runs/i1" "$GW/runs/v1"; printf '{"feature":"Login","exec":{"verify":{"run":"v1","status":"verified"}}}' > "$GW/current.json"
+echo '{"status":"done","tasks":[],"trace":[]}' > "$GW/i.json"; persist i1 "$GW/i.json"
+python3 -c "import json;assert 'verify' not in json.load(open('$GW/current.json'))['exec']" || fail "a later implement run invalidates the verify of record"
+echo '{bad' > "$GW/runs/v1/result.json"; printf '{"feature":"Login","exec":{"verify":{"run":"v1","status":"verified","repo":"'"$GR"'"}}}' > "$GW/current.json"
+out=$(check) && fail "corrupted result.json must not complete"
+echo "$out" | grep -q VERIFY_RESULT_UNREADABLE || fail "corrupted reason: $out"
+
+echo "- tasks-check: Red-only tasks and tests nobody creates are rejected before implement"
+TW=$(tmp); TR=$(tmp); mkdir -p "$TR/test"; echo t > "$TR/test/old_test.dart"
+tc() { python3 "$BIN/wf_gate.py" tasks-check --workflow-dir "$TW" --repo "$TR"; }
+python3 - "$TW" <<'PY'
+import json, sys
+D = lambda done: "**Contexto:** Passo 1.\n\n**O que fazer:**\n- x\n\n**Testes:**\n- t\n\n**Concluído quando:**\n" + done
+b = {"complexity": "S", "risk": "low", "tier0": "haiku", "status": "pending"}
+items = [
+  {**b, "id": "T1", "title": "Teste do LoginBloc", "description": D("- teste escrito"), "affects": ["test/login_bloc_test.dart"], "tests": ["test/login_bloc_test.dart"]},
+  {**b, "id": "T2", "title": "LoginBloc", "description": D("- teste passa"), "affects": ["lib/login_bloc.dart"], "tests": ["test/login_bloc_test.dart"], "depends_on": ["T1"]},
+  {**b, "id": "T3", "title": "Validação", "description": D("- testes falhando aguardando implementação"), "affects": ["lib/v.dart", "test/v_test.dart"], "tests": ["test/v_test.dart"]},
+  {**b, "id": "T4", "title": "Repo", "description": D("- ok"), "affects": ["lib/r.dart"], "tests": ["test/ghost_test.dart"], "depends_on": ["T9"]},
+]
+json.dump({"tasks": {"items": items}}, open(sys.argv[1] + "/current.json", "w"))
+PY
+out=$(tc) && fail "AC-09: Red-only plan must be rejected"
+python3 -c "
+import json,sys; e={(x['task'],x['code']) for x in json.loads(sys.argv[1])['errors']}
+want={('T1','RED_ONLY'),('T3','RED_ONLY'),('T4','TEST_NOT_PRODUCED'),('T4','BAD_DEPENDENCY')}
+assert e==want, e" "$out" || fail "AC-09 errors: $out"
+python3 - "$TW" <<'PY'
+import json, sys
+D = lambda done: "**Contexto:** Passo 1.\n\n**O que fazer:**\n- x\n\n**Testes:**\n- t\n\n**Concluído quando:**\n" + done
+b = {"complexity": "M", "risk": "low", "tier0": "sonnet", "status": "pending"}
+items = [
+  {**b, "id": "T1", "title": "LoginBloc (Red→Green)", "description": D("- teste falha antes da implementação e passa no fim"), "affects": ["lib/login_bloc.dart", "test/login_bloc_test.dart"], "tests": ["test/login_bloc_test.dart"]},
+  {**b, "id": "T2", "title": "Regressão do bug de logout", "description": D("- `test/old_test.dart` cobre o caso e passa"), "affects": ["test/old_test.dart"], "tests": ["test/old_test.dart"], "depends_on": ["T1"]},
+]
+json.dump({"tasks": {"items": items}}, open(sys.argv[1] + "/current.json", "w"))
+PY
+tc >/dev/null || fail "AC-10: Red→Green in one task and a standalone regression test are accepted: $(tc)"
 
 echo "OK"

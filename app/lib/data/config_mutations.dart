@@ -41,18 +41,59 @@ Map<String, dynamic>? applyConfigMutation(Map<String, dynamic> raw, ConfigMutati
 }
 
 /// Appends the org and opens the app in it (`lastOrg`). [permissionMode] `null` inherits the global mode.
-ConfigMutation createOrg(String name, List<String> roots, {OrgGithub? github, PermissionMode? permissionMode}) =>
-    (raw) {
-      final current = DashboardConfig.fromMap(raw);
-      _check(validateOrgs([...current.orgs, OrgConfig(name: name, roots: roots, github: github)]));
-      final out = _copy(raw);
-      out['orgs'] = [
-        ..._list(raw['orgs']),
-        {'name': name, 'roots': roots, 'github': ?github?.toRaw(), 'permissionMode': ?permissionMode?.wire},
-      ];
-      out['lastOrg'] = name;
-      return out;
-    };
+ConfigMutation createOrg(
+  String name,
+  List<String> roots, {
+  OrgGithub? github,
+  PermissionMode? permissionMode,
+  OrgAgent? agent,
+  double? cycleBudget,
+  OrgTracker? tracker,
+}) => (raw) {
+  final current = DashboardConfig.fromMap(raw);
+  _check(validateOrgs([...current.orgs, OrgConfig(name: name, roots: roots, github: github)]));
+  final out = _copy(raw);
+  out['orgs'] = [
+    ..._list(raw['orgs']),
+    {
+      'name': name,
+      'roots': roots,
+      'github': ?github?.toRaw(),
+      'permissionMode': ?permissionMode?.wire,
+      'agent': ?agent?.toRaw(),
+      'cycleBudget': ?cycleBudget,
+      'tracker': ?tracker?.toRaw(),
+    },
+  ];
+  out['lastOrg'] = name;
+  return out;
+};
+
+/// `engineDir`, `nodePath` and `paletteSkills`: a blank value (or an empty list) removes the key: `node` then comes
+/// from the PATH and the palette lists every skill; without `engineDir` the engine does not start (the form refuses it).
+ConfigMutation setAdvanced({String? engineDir, String? nodePath, List<String>? paletteSkills}) => (raw) {
+  final out = _copy(raw);
+  void put(String key, Object? value) => value == null ? out.remove(key) : out[key] = value;
+  put('engineDir', engineDir?.trim().isEmpty ?? true ? null : engineDir!.trim());
+  put('nodePath', nodePath?.trim().isEmpty ?? true ? null : nodePath!.trim());
+  final skills = [
+    for (final s in paletteSkills ?? const <String>[])
+      if (s.trim().isNotEmpty) s.trim().replaceFirst(RegExp('^/'), ''),
+  ];
+  put('paletteSkills', skills.isEmpty ? null : skills);
+  return out;
+};
+
+/// Global budget per cycle in US$; `null` removes the key (no budget).
+ConfigMutation setCycleBudget(double? budget) => (raw) {
+  final out = _copy(raw);
+  if (budget == null || budget <= 0) {
+    out.remove('cycleBudget');
+  } else {
+    out['cycleBudget'] = budget;
+  }
+  return out;
+};
 
 /// Global `permissionMode`; written even when it equals the default, so the choice survives a default change.
 ConfigMutation setGlobalPermissionMode(PermissionMode mode) =>
@@ -194,7 +235,8 @@ Map<String, dynamic> _setHidden(
 /// `github` is rewritten only when it differs from what [previous] parses to, so an untouched org keeps its raw
 /// entry (unknown keys and dropped owners included); a rewrite still keeps unknown keys inside `github`.
 /// `permissionMode` follows the same rule: an invalid raw value parses to inherit and survives until the org gets a
-/// mode; inheriting over a valid mode removes the key, never writing `null`.
+/// mode; inheriting over a valid mode removes the key, never writing `null`. `agent` is rewritten like `github`.
+/// `tracker` too, except that `null` over a valid tracker removes it; switching kinds drops the old kind's fields.
 Map<String, dynamic> _orgEntry(Map<String, dynamic>? previous, OrgConfig org) {
   final entry = {...?previous, 'name': org.name, 'roots': org.roots};
   final github = org.github;
@@ -202,8 +244,40 @@ Map<String, dynamic> _orgEntry(Map<String, dynamic>? previous, OrgConfig org) {
   if (github != null && github != OrgGithub.fromRaw(before)) {
     entry['github'] = {if (before is Map<String, dynamic>) ...before, ...github.toRaw()};
   }
+  final agent = org.agent;
+  final agentBefore = previous?['agent'];
+  if (agent != null && agent != OrgAgent.fromRaw(agentBefore)) {
+    entry['agent'] = {
+      if (agentBefore is Map<String, dynamic>)
+        for (final e in agentBefore.entries)
+          if (e.key != 'account' && e.key != 'model') e.key: e.value,
+      ...agent.toRaw(),
+    };
+  }
+  final tracker = org.tracker;
+  final trackerBefore = previous?['tracker'];
+  if (tracker != OrgTracker.fromRaw(trackerBefore)) {
+    if (tracker == null) {
+      entry.remove('tracker');
+    } else {
+      entry['tracker'] = {
+        if (trackerBefore is Map<String, dynamic>)
+          for (final e in trackerBefore.entries)
+            if (!OrgTracker.rawKeys.contains(e.key)) e.key: e.value,
+        ...tracker.toRaw(),
+      };
+    }
+  }
+  final budget = org.cycleBudget;
+  if (budget != parseBudget(previous?['cycleBudget'])) {
+    if (budget == null) {
+      entry.remove('cycleBudget');
+    } else {
+      entry['cycleBudget'] = budget;
+    }
+  }
   final mode = org.permissionMode;
-  if (mode != PermissionMode.parse(previous?['permissionMode'])) {
+  if (mode != PermissionMode.parseConfig(previous?['permissionMode'])) {
     if (mode == null) {
       entry.remove('permissionMode');
     } else {

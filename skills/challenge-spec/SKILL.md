@@ -24,7 +24,7 @@ python3 ~/.claude/bin/wf-report.py stage-start challenge --workflow-dir "$WF_DIR
 
 ## 3. Desafiar
 
-Spawne o subagent `spec-challenger` (Agent tool, `subagent_type: spec-challenger`) com: caminho da spec, `PROJECT_PATH`, e o caminho de `docs/adr/INDEX.md` e `.claude/rules/` do repo se existirem. Não resuma a spec no prompt — ele lê.
+Spawne o subagent `spec-challenger` (Agent tool, `subagent_type: spec-challenger`) com: caminho da spec, `PROJECT_PATH`, e o caminho de `docs/adr/INDEX.md`, `.claude/rules/` do repo e do mapa da org (`.map/index.md` no repo ou numa pasta acima) se existirem. Não resuma a spec no prompt — ele lê.
 
 ## 4. Apresentar e aplicar
 

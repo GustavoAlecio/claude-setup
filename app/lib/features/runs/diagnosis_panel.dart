@@ -17,6 +17,8 @@ const _reasons = {
       'A mesma falha sobreviveu a dois modelos diferentes — não é capacidade, é spec ou plano.',
   'ladder_exhausted': 'A escada chegou ao topo (fable) sem passar nos gates.',
   'max_attempts': 'Limite de 5 tentativas atingido.',
+  'agent_failed':
+      'Um agente caiu (parado, limite de uso ou erro de API). Não diz nada sobre a task: rode /implement de novo.',
 };
 
 class DiagnosisPanel extends StatelessWidget {
@@ -45,7 +47,7 @@ class DiagnosisPanel extends StatelessWidget {
             children: [
               Icon(Icons.account_tree_outlined, size: 18, color: c.fail),
               const SizedBox(width: 8),
-              Text('${task.id} bloqueada · diagnóstico ToT', style: Theme.of(context).textTheme.titleMedium),
+              Text('${task.id} bloqueada · diagnóstico', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(width: 10),
               Mono(task.blockedReason ?? '', color: c.fail, size: 11),
             ],
@@ -96,7 +98,7 @@ class _HypothesisCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Pill(label: 'lente: ${h.lens}', color: top ? c.accent : c.idle, dot: false),
+              Pill(label: 'ângulo: ${h.lens}', color: top ? c.accent : c.idle, dot: false),
               const Spacer(),
               Mono('${(h.confidence * 100).round()}%', color: c.textPrimary),
             ],
@@ -159,7 +161,7 @@ class _CompactTop extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Pill(label: 'lente: ${h.lens}', color: c.accent, dot: false),
+              Pill(label: 'ângulo: ${h.lens}', color: c.accent, dot: false),
               const SizedBox(height: 6),
               Mono('${(h.confidence * 100).round()}% confiança', color: c.textPrimary, size: 11),
             ],

@@ -189,13 +189,16 @@ class _RunsViewState extends State<_RunsView> {
             style: header.copyWith(color: c.textMuted),
             child: const Row(
               children: [
-                SizedBox(width: 40, child: Text('TASK')),
-                SizedBox(width: 44, child: Text('CX')),
-                Expanded(child: Text('TÍTULO')),
-                SizedBox(width: 150, child: Text('ESCADA')),
-                SizedBox(width: 170, child: Text('TIER0 → ATUAL')),
-                SizedBox(width: 70, child: Text('TOKENS')),
-                SizedBox(width: 100, child: Text('STATUS')),
+                SizedBox(width: 40, child: Text('Task')),
+                SizedBox(
+                  width: 44,
+                  child: Tooltip(message: 'tamanho da task (P/M/G) e risco', child: Text('Tam.')),
+                ),
+                Expanded(child: Text('Título')),
+                SizedBox(width: 150, child: Text('Escada')),
+                SizedBox(width: 170, child: Text('Modelo inicial → atual')),
+                SizedBox(width: 70, child: Text('Tokens')),
+                SizedBox(width: 100, child: Text('Status')),
                 SizedBox(width: 20),
               ],
             ),
@@ -368,7 +371,7 @@ class _Legend extends StatelessWidget {
         const SizedBox(width: 12),
         const Expanded(
           child: Muted(
-            'cada coluna é uma tentativa · anel vermelho = reprovou · degrau = escalada com rollback',
+            'cada coluna é uma tentativa · anel vermelho = reprovou · degrau = desfez e subiu para um modelo maior',
             size: 11,
           ),
         ),

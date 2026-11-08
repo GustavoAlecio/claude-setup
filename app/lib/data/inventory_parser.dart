@@ -360,7 +360,11 @@ String adrBody(String raw) {
     ].join('\n').replaceFirst(RegExp(r'^\n+'), '');
   }
   if (bounds.end < 0) return raw;
-  return bounds.lines.sublist(bounds.end + 1).join('\n');
+  final rest = bounds.lines.sublist(bounds.end + 1);
+  // The page header already shows the title: a leading H1 would print it twice.
+  final first = rest.indexWhere((l) => l.trim().isNotEmpty);
+  if (first >= 0 && rest[first].startsWith('# ')) rest.removeRange(0, first + 1);
+  return rest.join('\n').replaceFirst(RegExp(r'^\n+'), '');
 }
 
 /// Id duplicado: vale o primeiro na ordem de [adrs] (por nome de arquivo); os outros ganham erro.

@@ -5,6 +5,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/markdown_view.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/docs_repository.dart';
+import '../../data/session_failure.dart';
 import '../../data/session_models.dart';
 import '../../data/session_reducer.dart';
 
@@ -13,28 +14,47 @@ typedef AnswerRequest =
     Future<void> Function(String requestId, PermissionDecision decision, {Map<String, String>? answers});
 
 class SessionEventView extends StatelessWidget {
-  const SessionEventView(this.event, {super.key, required this.onAnswer});
+  const SessionEventView(
+    this.event, {
+    super.key,
+    required this.onAnswer,
+    this.onLink,
+    this.attachmentUri,
+    this.failureActions,
+  });
 
   final SessionEvent event;
   final AnswerRequest onAnswer;
 
+  /// Links in assistant turns; `null` opens them externally.
+  final ValueChanged<Uri>? onLink;
+
+  /// Where an image the user attached loads from; `null` (or a `null` result) shows a placeholder.
+  final Uri? Function(String name)? attachmentUri;
+
+  /// Buttons of a failure card ("Tentar de novo", model); only the session's last event gets them.
+  final Widget? failureActions;
+
   @override
   Widget build(BuildContext context) => switch (event) {
-    final UserText e => _UserBubble(e),
-    final AssistantText e => _AssistantBlock(e),
+    final UserText e => _UserBubble(e, attachmentUri: attachmentUri),
+    final AssistantText e => _AssistantBlock(e, onLink: onLink),
     final Thinking e => _ThinkingRow(e),
     final ToolCall e => _ToolRow(e),
     final PermissionRequest e => PermissionCard(e, onAnswer: onAnswer),
     final QuestionRequest e => QuestionCard(e, onAnswer: onAnswer),
+    final SessionResult e when e.isError => FailureCard(describeFailure(e.message), actions: failureActions),
     final SessionResult e => _ResultFooter(e),
-    final SessionError e => _ErrorRow(e),
+    final SessionError e => FailureCard(describeFailure(e.message), actions: failureActions),
+    final SessionNote e => _NoteLine(e),
   };
 }
 
 class _UserBubble extends StatelessWidget {
-  const _UserBubble(this.e);
+  const _UserBubble(this.e, {this.attachmentUri});
 
   final UserText e;
+  final Uri? Function(String name)? attachmentUri;
 
   @override
   Widget build(BuildContext context) {
@@ -49,16 +69,72 @@ class _UserBubble extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: c.border),
         ),
-        child: Text(e.text, style: TextStyle(fontSize: 13, color: c.textPrimary)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (e.images.isNotEmpty) ...[
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                alignment: WrapAlignment.end,
+                children: [for (final name in e.images) _Attachment(attachmentUri?.call(name))],
+              ),
+              const SizedBox(height: 8),
+            ],
+            Text(e.text, style: TextStyle(fontSize: 13, color: c.textPrimary)),
+          ],
+        ),
       ),
     );
   }
 }
 
+/// Thumbnail of an image the user sent; a tap opens it at full size.
+class _Attachment extends StatelessWidget {
+  const _Attachment(this.uri);
+
+  final Uri? uri;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final placeholder = Container(
+      width: 96,
+      height: 72,
+      alignment: Alignment.center,
+      color: c.surface,
+      child: Icon(Icons.image_outlined, size: 20, color: c.textMuted),
+    );
+    final uri = this.uri;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: uri == null
+          ? placeholder
+          : InkWell(
+              onTap: () => showDialog<void>(
+                context: context,
+                builder: (context) => Dialog(
+                  backgroundColor: c.canvas,
+                  child: InteractiveViewer(child: Image.network(uri.toString())),
+                ),
+              ),
+              child: Image.network(
+                uri.toString(),
+                height: 72,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => placeholder,
+              ),
+            ),
+    );
+  }
+}
+
 class _AssistantBlock extends StatelessWidget {
-  const _AssistantBlock(this.e);
+  const _AssistantBlock(this.e, {this.onLink});
 
   final AssistantText e;
+  final ValueChanged<Uri>? onLink;
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +148,10 @@ class _AssistantBlock extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: MarkdownView(e.text, onLink: (uri) => DocsScope.openExternal(context, uri, logName: 'SessionFeed')),
+          child: MarkdownView(
+            e.text,
+            onLink: onLink ?? (uri) => DocsScope.openExternal(context, uri, logName: 'SessionFeed'),
+          ),
         ),
       ],
     );
@@ -151,6 +230,9 @@ class _ToolRowState extends State<_ToolRow> {
   Widget build(BuildContext context) {
     final c = context.colors;
     final e = widget.e;
+    final lines = e.summary.trim().split('\n');
+    final multiline = lines.length > 1;
+    final expandable = e.result != null || multiline;
     final status = e.running
         ? SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5, color: c.running))
         : e.interrupted
@@ -166,7 +248,7 @@ class _ToolRowState extends State<_ToolRow> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
-            onTap: e.result == null ? null : () => setState(() => _open = !_open),
+            onTap: expandable ? () => setState(() => _open = !_open) : null,
             borderRadius: BorderRadius.circular(8),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -186,7 +268,9 @@ class _ToolRowState extends State<_ToolRow> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      e.summary,
+                      // A multi-line command (`python3 -c "…"`) shows its first line; the rest opens below.
+                      multiline ? '${lines.first.trim()}  (+${lines.length - 1} linhas)' : e.summary,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(fontFamily: monoFamily, fontSize: 12, color: c.textSecondary),
                     ),
@@ -206,7 +290,16 @@ class _ToolRowState extends State<_ToolRow> {
               ),
             ),
           ),
-          if (_open)
+          if (_open && multiline)
+            Container(
+              key: const ValueKey('tool-command'),
+              padding: const EdgeInsets.fromLTRB(34, 8, 12, 10),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: c.border)),
+              ),
+              child: Mono(e.summary.trim(), size: 11.5, color: c.textPrimary),
+            ),
+          if (_open && e.result != null)
             Container(
               padding: const EdgeInsets.fromLTRB(34, 8, 12, 10),
               decoration: BoxDecoration(
@@ -503,6 +596,23 @@ class _QuestionCardState extends State<QuestionCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // A long card scrolls its bottom button out of a short panel; the progress bar keeps one in reach.
+          if (pending && e.questions.fold(0, (n, q) => n + q.options.length) > 3) ...[
+            Row(
+              key: const ValueKey('question-progress'),
+              children: [
+                Expanded(
+                  child: Muted(
+                    '${_draft.length} de ${countLabel(e.questions.length, 'pergunta')} respondida'
+                    '${_draft.length == 1 ? '' : 's'}',
+                    size: 11.5,
+                  ),
+                ),
+                _respondButton(c, complete),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
           for (final q in e.questions) ...[
             Row(
               children: [
@@ -542,22 +652,21 @@ class _QuestionCardState extends State<QuestionCard> {
               ],
             )
           else
-            Align(
-              alignment: Alignment.centerRight,
-              child: FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: c.accent,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                ),
-                onPressed: complete && !_sending ? _respond : null,
-                child: const Text('Responder', style: TextStyle(fontSize: 12)),
-              ),
-            ),
+            Align(alignment: Alignment.centerRight, child: _respondButton(c, complete)),
         ],
       ),
     );
   }
+
+  Widget _respondButton(AppColors c, bool complete) => FilledButton(
+    style: FilledButton.styleFrom(
+      backgroundColor: c.accent,
+      foregroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+    ),
+    onPressed: complete && !_sending ? _respond : null,
+    child: const Text('Responder', style: TextStyle(fontSize: 12)),
+  );
 
   List<Widget> _options(AppColors c, Question q, {required bool narrow}) {
     final picked = _picked[q.question] ?? const <String>{};
@@ -662,21 +771,106 @@ class _ResultFooter extends StatelessWidget {
   }
 }
 
-class _ErrorRow extends StatelessWidget {
-  const _ErrorRow(this.e);
+class _NoteLine extends StatelessWidget {
+  const _NoteLine(this.e);
 
-  final SessionError e;
+  final SessionNote e;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final (icon, text) = switch (e.kind) {
+      SessionNoteKind.imported => (
+        Icons.terminal,
+        e.dropped > 0 ? 'trazida do terminal · ${e.dropped} eventos mais antigos ficaram de fora' : 'trazida do terminal',
+      ),
+      SessionNoteKind.forked => (
+        Icons.call_split,
+        'continua num ramo novo · a sessão segue aberta no terminal e não vê o que for feito aqui',
+      ),
+    };
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.error_outline, size: 15, color: c.fail),
-        const SizedBox(width: 10),
-        Expanded(child: Mono(e.message, color: c.fail, size: 12)),
+        Expanded(child: Divider(color: c.border)),
+        Flexible(
+          flex: 4,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 14, color: c.textMuted),
+                const SizedBox(width: 6),
+                Flexible(child: Muted(text)),
+              ],
+            ),
+          ),
+        ),
+        Expanded(child: Divider(color: c.border)),
       ],
+    );
+  }
+}
+
+/// A failed turn: what happened in plain words, when the limit resets, the provider's text, and (on the last event)
+/// the way out.
+class FailureCard extends StatelessWidget {
+  const FailureCard(this.failure, {super.key, this.actions});
+
+  final SessionFailure failure;
+  final Widget? actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final resets = failure.resets;
+    final hint = failure.hint;
+    final actions = this.actions;
+    return Container(
+      key: const ValueKey('failure-card'),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: c.fail.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.fail.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.error_outline, size: 16, color: c.fail),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  failure.title,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.textPrimary),
+                ),
+              ),
+              if (resets != null) Pill(label: 'renova $resets', color: c.warn, dot: false),
+            ],
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 24),
+              child: Text(hint, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 24),
+            child: SelectableText(
+              failure.detail,
+              style: TextStyle(fontFamily: monoFamily, fontSize: 11.5, color: c.textMuted),
+            ),
+          ),
+          if (actions != null) ...[
+            const SizedBox(height: 10),
+            Padding(padding: const EdgeInsets.only(left: 24), child: actions),
+          ],
+        ],
+      ),
     );
   }
 }

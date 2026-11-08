@@ -4,8 +4,7 @@
 # PAT: lido de AZURE_DEVOPS_EXT_PAT (env) ou, senão, do ~/.claude.json
 #      (busca recursiva pela chave AZURE_DEVOPS_EXT_PAT). Nunca é impresso.
 #
-# Config: exporte ADO_ORG e ADO_PROJECT no ambiente
-#           sobrescreva com ADO_ORG / ADO_PROJECT no ambiente.
+# Config: ADO_ORG / ADO_PROJECT do ambiente; sem eles, `orgs[].tracker` da org do repo (tracker.py).
 #
 # Comandos:
 #   get <id>                 -> JSON compacto do work item (title, type, state, desc, ac, repro, tags, assignee)
@@ -16,8 +15,13 @@
 
 set -euo pipefail
 
-ORG="${ADO_ORG:?export ADO_ORG}"
-PROJECT="${ADO_PROJECT:?export ADO_PROJECT}"
+ENV_ORG="${ADO_ORG:-}"; ENV_PROJECT="${ADO_PROJECT:-}"
+if [ -z "$ENV_ORG" ] || [ -z "$ENV_PROJECT" ]; then
+  eval "$(python3 "$(dirname "$0")/tracker.py" env)"
+fi
+ADO_ORG="${ENV_ORG:-${ADO_ORG:-}}"; ADO_PROJECT="${ENV_PROJECT:-${ADO_PROJECT:-}}"
+ORG="${ADO_ORG:?sem org do ADO: configure o tracker da org no app ou exporte ADO_ORG}"
+PROJECT="${ADO_PROJECT:?sem project do ADO: configure o tracker da org no app ou exporte ADO_PROJECT}"
 API="api-version=7.1"
 BASE="https://dev.azure.com/$ORG"
 

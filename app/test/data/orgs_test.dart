@@ -407,6 +407,162 @@ void main() {
     });
   });
 
+  group('org tracker', () {
+    Map<String, dynamic> first(Map<String, dynamic> out) => (out['orgs'] as List).first as Map<String, dynamic>;
+
+    test('parse: unknown kind is no tracker; blank fields are null and missing names them', () {
+      expect(OrgTracker.fromRaw('x'), isNull);
+      expect(OrgTracker.fromRaw({'kind': 'trello'}), isNull);
+      final jira = OrgTracker.fromRaw({
+        'kind': 'jira',
+        'site': ' x.atlassian.net ',
+        'project': 'LC',
+        'base': 'release',
+      });
+      expect(jira, const OrgTracker(kind: TrackerKind.jira, site: 'x.atlassian.net', project: 'LC', releaseBase: true));
+      expect(jira!.missing, 'informe o site, a chave do projeto e o email do Jira');
+      expect(const OrgTracker(kind: TrackerKind.ado, org: 'o', project: 'P 1').missing, isNull);
+      expect(const OrgTracker(kind: TrackerKind.linear).missing, isNull);
+      expect(
+        const OrgTracker(kind: TrackerKind.jira, site: 's', project: 'l c', email: 'e').missing,
+        'chave do projeto Jira inválida (ex.: LC)',
+      );
+    });
+
+    test('updateOrg writes tracker only when it changes, drops the old kind fields and keeps unknown keys', () {
+      final raw = _raw();
+      first(raw)['tracker'] = {'kind': 'ado', 'org': 'o', 'project': 'p', 'note': 'keep'};
+      final untouched = applyConfigMutation(
+        raw,
+        updateOrg(
+          'r10',
+          OrgConfig(name: 'r10', roots: const ['/dev/r10'], tracker: OrgTracker.fromRaw(first(raw)['tracker'])),
+        ),
+      );
+      expect(untouched, isNull);
+
+      final jira = applyConfigMutation(
+        raw,
+        updateOrg(
+          'r10',
+          const OrgConfig(
+            name: 'r10',
+            roots: ['/dev/r10'],
+            tracker: OrgTracker(kind: TrackerKind.jira, site: 's', project: 'LC', email: 'e', releaseBase: true),
+          ),
+        ),
+      )!;
+      expect(first(jira)['tracker'], {
+        'note': 'keep',
+        'kind': 'jira',
+        'project': 'LC',
+        'site': 's',
+        'email': 'e',
+        'base': 'release',
+      });
+
+      final none = applyConfigMutation(jira, updateOrg('r10', const OrgConfig(name: 'r10', roots: ['/dev/r10'])))!;
+      expect(first(none).containsKey('tracker'), isFalse);
+    });
+
+    test('an invalid raw tracker survives a save without tracker', () {
+      final raw = _raw();
+      first(raw)['tracker'] = {'kind': 'trello'};
+      expect(applyConfigMutation(raw, updateOrg('r10', const OrgConfig(name: 'r10', roots: ['/dev/r10']))), isNull);
+    });
+
+    test('createOrg writes tracker when given', () {
+      final out = applyConfigMutation(
+        _raw(),
+        createOrg('novo', const ['/dev/novo'], tracker: const OrgTracker(kind: TrackerKind.linear, team: 'LC')),
+      )!;
+      expect(((out['orgs'] as List).last as Map)['tracker'], {'kind': 'linear', 'team': 'LC'});
+    });
+  });
+
+  group('org agent', () {
+    test('parse: unknown provider is Anthropic, an invalid account and a blank model are dropped', () {
+      expect(OrgAgent.fromRaw('x'), isNull);
+      expect(
+        OrgAgent.fromRaw({'provider': 'antigravity', 'account': 'likin.do', 'model': ' gemini-x '}),
+        const OrgAgent(provider: AgentProvider.antigravity, account: 'likin.do', model: 'gemini-x'),
+      );
+      expect(OrgAgent.fromRaw({'provider': 'openai', 'account': '../x', 'model': ' '}), OrgAgent.anthropic);
+    });
+
+    test('updateOrg writes agent only when it changes, keeps unknown keys and drops a cleared account', () {
+      final raw = _raw();
+      ((raw['orgs'] as List).first as Map)['agent'] = {'provider': 'antigravity', 'account': 'old', 'note': 'keep'};
+      final untouched = applyConfigMutation(
+        raw,
+        updateOrg(
+          'r10',
+          OrgConfig(
+            name: 'r10',
+            roots: const ['/dev/r10'],
+            agent: OrgAgent.fromRaw(((raw['orgs'] as List).first as Map)['agent']),
+          ),
+        ),
+      );
+      expect(untouched, isNull);
+
+      final out = applyConfigMutation(
+        raw,
+        updateOrg(
+          'r10',
+          const OrgConfig(
+            name: 'r10',
+            roots: ['/dev/r10'],
+            agent: OrgAgent(provider: AgentProvider.antigravity, model: 'gemini-x'),
+          ),
+        ),
+      )!;
+      expect(((out['orgs'] as List).first as Map)['agent'], {
+        'provider': 'antigravity',
+        'note': 'keep',
+        'model': 'gemini-x',
+      });
+      expect(((raw['orgs'] as List).first as Map)['agent'], {
+        'provider': 'antigravity',
+        'account': 'old',
+        'note': 'keep',
+      });
+    });
+
+    test('createOrg writes agent when given', () {
+      final out = applyConfigMutation(
+        _raw(),
+        createOrg('novo', const ['/dev/novo'], agent: const OrgAgent(provider: AgentProvider.antigravity)),
+      )!;
+      expect(((out['orgs'] as List).last as Map)['agent'], {'provider': 'antigravity'});
+    });
+
+    test('agentFor: org agent for a prompt, Anthropic for a /skill, an unknown org and no agent', () {
+      final config = DashboardConfig.parse(
+        jsonEncode({
+          'orgs': [
+            {
+              'name': 'likin',
+              'roots': ['/dev/l'],
+              'agent': {'provider': 'antigravity', 'account': 'likin.do'},
+            },
+            {
+              'name': 'otg',
+              'roots': ['/dev/o'],
+            },
+          ],
+        }),
+      );
+      const agy = OrgAgent(provider: AgentProvider.antigravity, account: 'likin.do');
+      expect(agentFor('likin', config, 'liste as pastas'), agy);
+      expect(agentFor('likin', config, '  /review 12'), OrgAgent.anthropic);
+      expect(agentFor('likin', config, '/kickoff ABC-1'), OrgAgent.anthropic);
+      expect(agentFor('otg', config, 'oi'), OrgAgent.anthropic);
+      expect(agentFor('nope', config, 'oi'), OrgAgent.anthropic);
+      expect(agentFor(null, config, 'oi'), OrgAgent.anthropic);
+    });
+  });
+
   group('org github', () {
     Map<String, dynamic> withGithub() {
       final raw = _raw();
@@ -976,19 +1132,36 @@ void main() {
 
     Map<String, dynamic> orgEntry(Map<String, dynamic> out, int i) => (out['orgs'] as List)[i] as Map<String, dynamic>;
 
-    test('global and org modes parse; absent or invalid global is bypass, absent or invalid org inherits', () {
+    test('global and org modes parse; absent or invalid global is acceptEdits, absent or invalid org inherits', () {
       final config = DashboardConfig.fromMap(withModes(global: 'acceptEdits', r10: 'auto'));
       expect(config.permissionMode, PermissionMode.acceptEdits);
       expect(config.orgs.first.permissionMode, PermissionMode.auto);
       expect(config.orgs.last.permissionMode, isNull);
 
-      expect(DashboardConfig.fromMap(_raw()).permissionMode, PermissionMode.bypassPermissions);
+      expect(DashboardConfig.fromMap(_raw()).permissionMode, PermissionMode.acceptEdits);
       final invalid = DashboardConfig.fromMap(withModes(global: 'plan', r10: 'dontAsk'));
-      expect(invalid.permissionMode, PermissionMode.bypassPermissions);
+      expect(invalid.permissionMode, PermissionMode.acceptEdits);
       expect(invalid.orgs.first.permissionMode, isNull);
       expect(DashboardConfig.fromMap(withModes(r10: 7)).orgs.first.permissionMode, isNull);
       expect(PermissionMode.parse('default'), PermissionMode.defaultMode);
-      expect(PermissionMode.values.map((m) => m.wire), ['default', 'acceptEdits', 'auto', 'bypassPermissions']);
+      expect(PermissionMode.values.map((m) => m.wire), ['default', 'acceptEdits', 'auto', 'bypassPermissions', 'plan']);
+      expect(kConfigPermissionModes.map((m) => m.wire), ['default', 'acceptEdits', 'auto', 'bypassPermissions']);
+    });
+
+    test('setAdvanced trims, strips the slash of skills and removes blank keys', () {
+      final raw = <String, dynamic>{
+        'engineDir': '/old',
+        'nodePath': '/n',
+        'paletteSkills': ['a'],
+        'orgs': [],
+      };
+      final out = setAdvanced(engineDir: ' /e ', nodePath: '', paletteSkills: [' /fix ', '', 'status'])(raw);
+      expect(out['engineDir'], '/e');
+      expect(out.containsKey('nodePath'), isFalse);
+      expect(out['paletteSkills'], ['fix', 'status']);
+      expect(out['orgs'], isEmpty);
+      expect(setAdvanced(paletteSkills: const [])(raw).containsKey('paletteSkills'), isFalse);
+      expect(raw['engineDir'], '/old', reason: 'the input map is not touched');
     });
 
     test('setGlobalPermissionMode writes the key at the end and keeps the rest', () {
@@ -1062,8 +1235,8 @@ void main() {
       expect(effectivePermissionMode(null, kNoOrg, config), PermissionMode.acceptEdits);
       expect(effectivePermissionMode(null, 'ghost', config), PermissionMode.acceptEdits);
       expect(effectivePermissionMode(null, null, config), PermissionMode.acceptEdits);
-      expect(effectivePermissionMode(null, 'r10', DashboardConfig.fromMap(_raw())), PermissionMode.bypassPermissions);
-      expect(effectivePermissionMode(null, 'r10', null), PermissionMode.bypassPermissions);
+      expect(effectivePermissionMode(null, 'r10', DashboardConfig.fromMap(_raw())), PermissionMode.acceptEdits);
+      expect(effectivePermissionMode(null, 'r10', null), PermissionMode.acceptEdits);
       expect(effectivePermissionMode(PermissionMode.auto, null, null), PermissionMode.auto);
     });
 
@@ -1089,10 +1262,10 @@ void main() {
       expect(result.org, kNoOrg);
       expect(result.mode, PermissionMode.acceptEdits);
 
-      // No config: global mode defaults to bypass.
+      // No config: global mode defaults to acceptEdits.
       result = launchOrg('/dev/r10/score', projects, null);
       expect(result.org, 'r10');
-      expect(result.mode, PermissionMode.bypassPermissions);
+      expect(result.mode, PermissionMode.acceptEdits);
 
       // Exact path match takes precedence over root containment.
       const singleProject = [
@@ -1102,5 +1275,79 @@ void main() {
       result = launchOrg('/src/app', singleProject, DashboardConfig.fromMap(_raw()));
       expect(result.org, 'p1');
     });
+  });
+
+  group('skillBlockedReason', () {
+    SessionSummary s({AgentProvider provider = AgentProvider.anthropic, String? org}) => SessionSummary(
+      id: 's',
+      project: org == null ? 'p' : '',
+      command: 'oi',
+      title: 'oi',
+      status: SessionStatus.idle,
+      createdAt: '',
+      provider: provider,
+      org: org,
+    );
+
+    test('Antigravity barra qualquer skill; texto livre passa', () {
+      final agy = s(provider: AgentProvider.antigravity);
+      expect(skillBlockedReason(agy, '/review 12'), contains('Antigravity'));
+      expect(skillBlockedReason(agy, '  /kickoff ABC-1'), contains('/kickoff'));
+      expect(skillBlockedReason(agy, 'o que é /tmp?'), isNull);
+      expect(skillBlockedReason(agy, '/'), isNull);
+    });
+
+    test('sessão de org barra só o pipeline; sessão de projeto passa', () {
+      final org = s(org: 'OTG');
+      expect(skillBlockedReason(org, '/kickoff 8031'), contains('projeto'));
+      expect(skillBlockedReason(org, '/ado-get 8031'), isNull);
+      expect(skillBlockedReason(s(), '/kickoff 8031'), isNull);
+    });
+  });
+
+  test('projectOfCwd: the nearest project containing the cwd, never a sibling with the same prefix', () {
+    const projects = [
+      Project(name: 'mono', path: '/dev/mono'),
+      Project(name: 'pkg', path: '/dev/mono/packages/pkg/'),
+      Project(name: 'mono-web', path: '/dev/mono-web'),
+      Project(name: 'sem-path'),
+    ];
+    expect(projectOfCwd('/dev/mono', projects)?.name, 'mono');
+    expect(projectOfCwd('/dev/mono/app', projects)?.name, 'mono');
+    expect(projectOfCwd('/dev/mono/packages/pkg/lib', projects)?.name, 'pkg');
+    expect(projectOfCwd('/dev/mono-web/src', projects)?.name, 'mono-web');
+    expect(projectOfCwd('/dev/other', projects), isNull);
+  });
+
+  test('plan is a per-session mode: the config never holds it, globally or per org', () {
+    final config = DashboardConfig.fromMap({
+      ..._raw(),
+      'permissionMode': 'plan',
+      'orgs': [
+        {
+          'name': 'r10',
+          'roots': ['/dev/r10'],
+          'permissionMode': 'plan',
+        },
+      ],
+    });
+    expect(config.permissionMode, kDefaultPermissionMode);
+    expect(config.orgs.single.permissionMode, isNull);
+    expect(PermissionMode.parse('plan'), PermissionMode.plan);
+    expect(kConfigPermissionModes, isNot(contains(PermissionMode.plan)));
+  });
+
+  test('sessionLocation: org sessions open in the org activities, the rest in their project', () {
+    SessionSummary s({String? org}) => SessionSummary(
+      id: 'a b',
+      project: org == null ? 'demo' : '',
+      command: 'x',
+      title: 'x',
+      status: SessionStatus.idle,
+      createdAt: '',
+      org: org,
+    );
+    expect(sessionLocation(s()), '/p/demo/sessions/a%20b');
+    expect(sessionLocation(s(org: 'OTG')), orgSessionsLocation('OTG', session: 'a b'));
   });
 }

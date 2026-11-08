@@ -1,0 +1,55 @@
+{
+  "name": "python-uv",
+  "detect": [
+    "pyproject.toml"
+  ],
+  "source_ext": [
+    ".py"
+  ],
+  "generated_suffixes": [],
+  "autofix": [
+    [
+      "uv",
+      "run",
+      "ruff",
+      "format",
+      "{files}"
+    ]
+  ],
+  "analyze": {
+    "cmd": [
+      "uv",
+      "run",
+      "ruff",
+      "check",
+      "--output-format=json",
+      "{files}"
+    ],
+    "parser": "ruff_json",
+    "only_changed": true,
+    "severity_map": {
+      "default": "major"
+    }
+  },
+  "test": {
+    "cmd": [
+      "uv",
+      "run",
+      "pytest",
+      "-q",
+      "{files}"
+    ],
+    "flaky_retries": 0
+  },
+  "g1_task_reviewer": "python-correctness",
+  "g1_reviewers": [
+    "python-correctness",
+    "python-security",
+    "python-testing"
+  ],
+  "g2_agent": "general-purpose",
+  "g2_device": "local-cli",
+  "rules_dir": ".claude/rules",
+  "adr_dir": "docs/adr",
+  "g2_runtime": "CLI Python offline em poc/: valide pelos testes pytest e por `uv run poc <comando> --replay tests/data/replay`. Coleta real contra a Pluggy, consentimentos e exportação de arquivos nos bancos são manuais: critério que só se prova com conta real é UNTESTABLE."
+}

@@ -1,4 +1,5 @@
 import 'package:claude_flow/data/kickoff.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -23,20 +24,35 @@ void main() {
   });
 
   group('normalizeCardId', () {
-    test('accepts numeric and keyed IDs', () {
-      expect(normalizeCardId('#123'), '123');
-      expect(normalizeCardId('lc-101'), 'LC-101');
-      expect(normalizeCardId(' 42 '), '42');
-      expect(normalizeCardId('AB2-7'), 'AB2-7');
+    const ado = OrgTracker(kind: TrackerKind.ado, org: 'o', project: 'p');
+    const jira = OrgTracker(kind: TrackerKind.jira, site: 's', project: 'LC', email: 'e');
+    const linear = OrgTracker(kind: TrackerKind.linear);
+
+    test('ADO takes only numeric IDs', () {
+      expect(normalizeCardId('#123', ado), '123');
+      expect(normalizeCardId(' 42 ', ado), '42');
+      expect(normalizeCardId('LC-101', ado), isNull);
+    });
+
+    test('Jira and Linear take keys; a number gets the project or team prefix', () {
+      expect(normalizeCardId('lc-101', jira), 'LC-101');
+      expect(normalizeCardId('AB2-7', jira), 'AB2-7');
+      expect(normalizeCardId('101', jira), 'LC-101');
+      expect(normalizeCardId('lc-9', linear), 'LC-9');
+      expect(normalizeCardId('101', linear), isNull);
     });
 
     test('rejects anything else', () {
-      expect(normalizeCardId('abc'), isNull);
-      expect(normalizeCardId(''), isNull);
-      expect(normalizeCardId('#'), isNull);
-      expect(normalizeCardId('2AB-1'), isNull);
-      expect(normalizeCardId('LC-'), isNull);
-      expect(normalizeCardId('12 3'), isNull);
+      for (final raw in ['abc', '', '#', '2AB-1', 'LC-', '12 3']) {
+        expect(normalizeCardId(raw, jira), isNull, reason: raw);
+        expect(normalizeCardId(raw, ado), isNull, reason: raw);
+      }
     });
+  });
+
+  test('cardIdHint follows the tracker', () {
+    expect(cardIdHint(const OrgTracker(kind: TrackerKind.ado)), '4821');
+    expect(cardIdHint(const OrgTracker(kind: TrackerKind.jira, project: 'APP')), 'APP-101');
+    expect(cardIdHint(const OrgTracker(kind: TrackerKind.linear)), 'LC-101');
   });
 }

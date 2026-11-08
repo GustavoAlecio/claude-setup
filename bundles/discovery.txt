@@ -1,0 +1,3 @@
+# Product discovery: Socratic interview + adversarial review of the assumptions
+skills/discovery
+agents/product-devils-advocate.md

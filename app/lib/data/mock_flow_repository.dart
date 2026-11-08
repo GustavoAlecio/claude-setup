@@ -58,6 +58,18 @@ class MockFlowRepository implements FlowRepository {
   @override
   Stream<DashboardConfig> watchConfig() => _watch(() => config);
 
+  /// The autopilot flag; [setAutoMode] flips it like `/auto` would.
+  bool autoMode = false;
+
+  @override
+  Stream<bool> watchAutoMode() => _watch(() => autoMode);
+
+  @override
+  Future<void> setAutoMode(bool on) async {
+    autoMode = on;
+    _changes.add(null);
+  }
+
   @override
   Future<void> updateConfig(ConfigMutation mutation) async {
     final out = applyConfigMutation(_raw, mutation);
@@ -283,7 +295,6 @@ const _projects = <Project>[
       tracker: 'LIN-142',
       stage: Stage.implement,
       branch: 'feat/lin-142-favoritos-offline',
-      autoMode: true,
       stageMinutes: {
         Stage.kickoff: 2,
         Stage.specify: 6,
@@ -301,10 +312,9 @@ const _projects = <Project>[
     stack: 'go',
     cycle: Cycle(
       feature: 'Retry com backoff',
-      tracker: 'ADO 6731',
+      tracker: 'AB#6731',
       stage: Stage.verify,
       branch: 'feat/3.12.0/6731-retry-backoff',
-      autoMode: false,
       stageMinutes: {Stage.specify: 4, Stage.plan: 9, Stage.tasks: 1, Stage.implement: 21, Stage.verify: 5},
       runs: [],
     ),

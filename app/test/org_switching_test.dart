@@ -113,9 +113,18 @@ class _Sessions extends MockSessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) {
     created.add((project, command, cwd));
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
+    return super.create(
+      project,
+      command,
+      cwd: cwd,
+      githubAccount: githubAccount,
+      permissionMode: permissionMode,
+      agent: agent,
+    );
   }
 }
 
@@ -286,7 +295,7 @@ void main() {
 
       await tester.tap(_header());
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Configurações'));
+      await tester.tap(find.text('Configurações').last);
       await tester.pumpAndSettle();
       expect(_location(tester), '/settings');
     });
@@ -336,7 +345,7 @@ void main() {
         findsOneWidget,
         reason: 'alpha 1; beta (B), hid (hidden) and ghost (unknown) do not count in A',
       );
-      expect(find.byTooltip('1 aguardando você'), findsOneWidget);
+      expect(find.byTooltip('1 aguardando você'), findsNWidgets(2), reason: 'the project and Minha fila (all of A)');
       expect(find.byTooltip('4 aguardando você'), findsNothing);
       expect(find.text('1 aguardando você'), findsOneWidget);
     });
@@ -347,7 +356,7 @@ void main() {
       _router(tester).go('/p/alpha/sessions');
       await tester.pumpAndSettle();
       expect(find.text('Sessão alpha'), findsOneWidget);
-      expect(find.text('OUTROS PROJETOS'), findsNothing);
+      expect(find.text('Outros projetos'), findsNothing);
       expect(find.text('Sessão beta'), findsNothing);
       expect(find.text('Sessão hid'), findsNothing);
       expect(find.text('Sessão ghost'), findsNothing);
@@ -360,7 +369,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(_org(tester), 'Sem org');
-      expect(find.text('OUTROS PROJETOS'), findsOneWidget);
+      expect(find.text('Outros projetos'), findsOneWidget);
       expect(find.text('Sessão ghost'), findsOneWidget);
       expect(find.text('Sessão alpha'), findsNothing);
       expect(find.descendant(of: find.byKey(const ValueKey('org-pending')), matching: find.text('8')), findsOneWidget);
@@ -430,6 +439,19 @@ void main() {
 
     Finder nameField() => find.widgetWithText(TextField, 'Nome');
 
+    testWidgets('first use welcomes, checks Claude Code and gh, and folds the advanced options', (tester) async {
+      await open(tester, {'engineDir': '/engine'});
+
+      expect(find.text('Bem-vindo ao Claude Flow'), findsOneWidget);
+      expect(find.text('dev@example.com · plano max'), findsOneWidget);
+      expect(find.text('conta acct-a'), findsOneWidget);
+      expect(find.text('Provider'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('org-form-advanced')));
+      await tester.pumpAndSettle();
+      expect(find.text('Provider'), findsOneWidget);
+    });
+
     testWidgets('without orgs a suggestion fills name and folder and saving opens the new org', (tester) async {
       final repo = await open(tester, {'engineDir': '/engine'});
 
@@ -440,6 +462,8 @@ void main() {
       expect(find.text('/dev/a'), findsOneWidget);
 
       await tester.enterText(nameField(), 'Pessoal');
+      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Criar org'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Criar org'));
       await tester.pumpAndSettle();
 
@@ -459,6 +483,8 @@ void main() {
       final repo = await open(tester, {});
 
       await tester.enterText(nameField(), 'x');
+      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Criar org'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Criar org'));
       await tester.pumpAndSettle();
       expect(find.text('escolha uma pasta para a org'), findsOneWidget);
@@ -466,6 +492,8 @@ void main() {
       await tester.tap(find.widgetWithText(ActionChip, 'b'));
       await tester.pumpAndSettle();
       await tester.enterText(nameField(), kNoOrg);
+      await tester.ensureVisible(find.widgetWithText(FilledButton, 'Criar org'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Criar org'));
       await tester.pumpAndSettle();
 
@@ -509,7 +537,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('nenhum projeto em $kNoOrg — adicione em Configurações'), findsOneWidget);
+      expect(find.text('nenhum projeto em $kNoOrg ainda'), findsOneWidget);
       await tester.tap(find.text('Ver sessões aguardando em ghost'));
       await tester.pumpAndSettle();
 
@@ -527,7 +555,7 @@ void main() {
         'lastOrg': 'E',
       });
 
-      expect(find.text('nenhum projeto em E — adicione em Configurações'), findsOneWidget);
+      expect(find.text('nenhum projeto em E ainda'), findsOneWidget);
       expect(_location(tester), '/');
     });
   });

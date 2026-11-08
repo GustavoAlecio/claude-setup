@@ -20,7 +20,7 @@ Se `~/.claude/projects/$PROJECT_NAME/lessons.md` existir, leia-o. O mesmo padrao
 Dado o bug report do usuario, investigue autonomamente:
 
 1. **Reproduzir mentalmente:** entenda o cenario descrito
-2. **Localizar codigo relevante:** busque no codebase os arquivos, funcoes e fluxos envolvidos
+2. **Localizar codigo relevante:** busque no codebase os arquivos, funcoes e fluxos envolvidos. **Mapa da org:** se existir `.map/index.md` no repo ou numa pasta acima (nunca procure abaixo), leia o índice e as notas/gerados relevantes antes de grep/`Explore`. Nota marcada STALE não é confiável: confira as âncoras. O mapa descreve `origin/development`; confira o diff da branch por cima.
 3. **Ler logs/stack traces:** se o usuario forneceu, analise-os. Se nao, busque em arquivos de log do projeto
 4. **Testes falhando:** execute a suite de testes para confirmar o que falha
 

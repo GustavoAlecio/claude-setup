@@ -1,7 +1,13 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/theme/app_theme.dart';
 import 'package:claude_flow/core/theme/app_colors.dart';
 import 'package:claude_flow/core/widgets/markdown_view.dart';
 import 'package:claude_flow/core/widgets/wiki_link_syntax.dart';
+import 'package:claude_flow/data/mock_sessions.dart';
+import 'package:claude_flow/data/sessions_repository.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -105,6 +111,37 @@ void main() {
     await tester.pumpWidget(_host(MarkdownView('```mermaid\ngraph TD\nA-->B\n```\n', onLink: (_) {})));
     expect(find.text('mermaid'), findsOneWidget);
     expect(find.textContaining('A-->B'), findsOneWidget);
+  });
+
+  group('mermaid rendered by the engine', () {
+    Widget withEngine(SessionsRepository sessions, Widget child) =>
+        SessionsScope(sessions: sessions, engine: const MockEngineController(), child: _host(child));
+    const source = '```mermaid\ngraph TD\nA-->B\n```\n';
+
+    testWidgets('shows the diagram and toggles to the source', (tester) async {
+      final sessions = _Diagrams((code, dark) async => base64Decode(_onePixelPng));
+      await tester.pumpWidget(withEngine(sessions, MarkdownView(source, onLink: (_) {})));
+      await tester.pumpAndSettle();
+
+      expect(sessions.calls, [('graph TD\nA-->B', true)]);
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.textContaining('A-->B'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('mermaid-toggle')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('A-->B'), findsOneWidget);
+    });
+
+    testWidgets('a syntax error keeps the source and shows the mermaid message', (tester) async {
+      final sessions = _Diagrams(
+        (code, dark) async => throw const SessionsException('Parse error on line 2', statusCode: 422),
+      );
+      await tester.pumpWidget(withEngine(sessions, MarkdownView(source, onLink: (_) {})));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('A-->B'), findsOneWidget);
+      expect(find.text('diagrama inválido: Parse error on line 2'), findsOneWidget);
+    });
   });
 
   testWidgets('inline link and image alt', (tester) async {
@@ -212,4 +249,20 @@ void main() {
       expect(_plain(tester), contains('[[0002-cubit]]'));
     });
   });
+}
+
+/// 1x1 transparent PNG.
+const _onePixelPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+class _Diagrams extends MockSessionsRepository {
+  _Diagrams(this.render);
+
+  final Future<Uint8List> Function(String code, bool dark) render;
+  final calls = <(String, bool)>[];
+
+  @override
+  Future<Uint8List> renderMermaid(String code, {required bool dark}) {
+    calls.add((code, dark));
+    return render(code, dark);
+  }
 }

@@ -32,9 +32,18 @@ class _SlowSessions extends MockSessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     await gate.future;
-    return super.create(project, command, cwd: cwd, githubAccount: githubAccount, permissionMode: permissionMode);
+    return super.create(
+      project,
+      command,
+      cwd: cwd,
+      githubAccount: githubAccount,
+      permissionMode: permissionMode,
+      agent: agent,
+    );
   }
 }
 
@@ -46,6 +55,8 @@ class _FailingSessions extends MockSessionsRepository {
     String? cwd,
     String? githubAccount,
     required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
   }) async {
     createCalls.add((project, command, cwd, githubAccount, permissionMode));
     throw const SessionsException('cwd fora das raízes', statusCode: 400);
@@ -219,13 +230,7 @@ void main() {
     await tester.tap(_review(7));
     await tester.pumpAndSettle();
 
-    expect(sessions.createCalls.single, (
-      'my-repo',
-      '/review 7',
-      '/tmp/my_repo',
-      null,
-      PermissionMode.bypassPermissions,
-    ));
+    expect(sessions.createCalls.single, ('my-repo', '/review 7', '/tmp/my_repo', null, PermissionMode.acceptEdits));
     expect(_location(tester), startsWith('/p/my-repo/sessions/'));
   });
 
@@ -241,7 +246,7 @@ void main() {
     await tester.tap(_review(7));
     await tester.pumpAndSettle();
 
-    expect(sessions.createCalls.single, ('x', '/review 7', '/dev/org/x', null, PermissionMode.bypassPermissions));
+    expect(sessions.createCalls.single, ('x', '/review 7', '/dev/org/x', null, PermissionMode.acceptEdits));
     expect(_location(tester), startsWith('/p/x/sessions/'));
   });
 
@@ -503,7 +508,7 @@ void main() {
 
       await tester.tap(_review(7));
       await tester.pumpAndSettle();
-      expect(sessions.createCalls.single, ('y', '/review 7', '/dev/b/y', 'acct-a', PermissionMode.bypassPermissions));
+      expect(sessions.createCalls.single, ('y', '/review 7', '/dev/b/y', 'acct-a', PermissionMode.acceptEdits));
     });
 
     testWidgets('Revisar uses the mode of the org of the cwd, not of the listing scope', (tester) async {

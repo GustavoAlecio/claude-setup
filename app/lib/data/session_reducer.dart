@@ -39,6 +39,8 @@ SessionSummary parseSummary(Map<String, dynamic> json) => SessionSummary(
   id: json['id'] as String,
   project: json['project'] as String? ?? '',
   command: json['command'] as String? ?? '',
+  skill: json['skill'] as String?,
+  asideOf: json['asideOf'] as String?,
   title: json['title'] as String? ?? json['command'] as String? ?? '',
   status: parseStatus(json['status']),
   createdAt: json['createdAt'] as String? ?? '',
@@ -50,7 +52,39 @@ SessionSummary parseSummary(Map<String, dynamic> json) => SessionSummary(
   org: json['org'] as String?,
   additionalDirectories: [if (json['additionalDirectories'] case final List<dynamic> dirs) ...dirs.whereType<String>()],
   permissionMode: PermissionMode.parse(json['permissionMode']) ?? PermissionMode.defaultMode,
+  provider: AgentProvider.parse(json['provider']) ?? AgentProvider.anthropic,
+  account: json['account'] as String?,
 );
+
+/// Imported from the terminal and never attached since: the first `reattached` resumes it, nothing was killed.
+bool isFreshImport(List<SessionEvent> events) => switch (events.lastOrNull) {
+  SessionNote(kind: SessionNoteKind.imported) => true,
+  _ => false,
+};
+
+/// One entry of `GET /api/terminal-sessions`; `null` when the engine sent something unusable.
+TerminalSession? parseTerminalSession(Object? raw) {
+  if (raw is! Map<String, dynamic>) return null;
+  final id = raw['sdkSessionId'];
+  final cwd = raw['cwd'];
+  final updatedAt = DateTime.tryParse(raw['updatedAt'] as String? ?? '');
+  if (id is! String || cwd is! String || updatedAt == null) return null;
+  final first = raw['firstPrompt'] as String?;
+  return TerminalSession(
+    sdkSessionId: id,
+    cwd: cwd,
+    title: raw['title'] as String? ?? first ?? id,
+    firstPrompt: first,
+    updatedAt: updatedAt,
+    live: raw['live'] as String?,
+  );
+}
+
+/// The `/skill` a message runs, the same rule the engine applies to its summary's `skill`.
+String? skillOf(String text) {
+  final first = text.trimLeft().split(RegExp(r'\s')).first;
+  return first.length > 1 && first.startsWith('/') ? first : null;
+}
 
 /// Badge "aguardando você": only sessions whose process can still act on the answer.
 int pendingOf(SessionSummary session) => isLive(session.status) ? session.pendingPermissions : 0;
@@ -70,6 +104,15 @@ Map<String, int> pendingByProject(List<SessionSummary> sessions) {
     out[s.project] = (out[s.project] ?? 0) + n;
   }
   return out;
+}
+
+/// `open-terminal` frame of the global stream; `null` for any other frame or a malformed one.
+TerminalHandoff? parseHandoff(SseFrame frame) {
+  if (frame.event != 'open-terminal') return null;
+  return switch (_decode(frame)) {
+    {'sdkSessionId': final String id, 'cwd': final String cwd} => (sdkSessionId: id, cwd: cwd),
+    _ => null,
+  };
 }
 
 /// Global stream (`/api/sessions/stream`): `snapshot`, `summary` and `removed`.
@@ -217,7 +260,18 @@ SessionDetail _applyEvent(SessionDetail state, Map<String, dynamic> e, int seq) 
   final events = state.events;
   switch (e['kind']) {
     case 'user_text':
-      return state.copyWith(events: [...events, UserText(at, e['text'] as String? ?? '')]);
+      final skill = skillOf(e['text'] as String? ?? '');
+      return state.copyWith(
+        summary: skill == null ? null : state.summary.copyWith(skill: skill),
+        events: [
+          ...events,
+          UserText(
+            at,
+            e['text'] as String? ?? '',
+            images: [if (e['images'] case final List<dynamic> images) ...images.whereType<String>()],
+          ),
+        ],
+      );
     case 'assistant_text':
       return state.copyWith(
         events: [...events, AssistantText(at, e['text'] as String? ?? '')],
@@ -254,9 +308,15 @@ SessionDetail _applyEvent(SessionDetail state, Map<String, dynamic> e, int seq) 
     case 'reattached':
       // The engine sets `idle` right after `reattached`; replay only sends the final status at the end.
       final status = state.summary.status == SessionStatus.detached ? SessionStatus.idle : null;
-      return _withRequests(state.copyWith(summary: state.summary.copyWith(status: status, interrupted: true)), [
+      // The first attach of a session imported from the terminal resumes it; no process of ours was killed.
+      return _withRequests(state.copyWith(summary: state.summary.copyWith(status: status, interrupted: !isFreshImport(events))), [
         for (final ev in events) ev is PendingRequest && ev.pending && ev.seq < seq ? ev.expire() : ev,
+        if (e['forked'] == true) SessionNote(at, SessionNoteKind.forked),
       ]);
+    case 'imported':
+      return state.copyWith(
+        events: [...events, SessionNote(at, SessionNoteKind.imported, dropped: (e['dropped'] as num?)?.toInt() ?? 0)],
+      );
     case 'result':
       final cost = (e['cost'] as num?)?.toDouble() ?? state.summary.cost;
       final result = SessionResult(
@@ -265,6 +325,7 @@ SessionDetail _applyEvent(SessionDetail state, Map<String, dynamic> e, int seq) 
         cost: cost,
         seconds: ((e['durationMs'] as num?) ?? 0) ~/ 1000,
         turns: (e['numTurns'] as num?)?.toInt() ?? 0,
+        message: e['isError'] == true && e['text'] is String ? e['text'] as String : null,
       );
       return state.copyWith(
         events: [...events, result],
@@ -275,7 +336,7 @@ SessionDetail _applyEvent(SessionDetail state, Map<String, dynamic> e, int seq) 
     case 'permission_mode':
       final mode = PermissionMode.parse(e['mode']);
       return mode == null ? state : state.copyWith(summary: state.summary.copyWith(permissionMode: mode));
-    case 'init':
+    case 'init' || 'model':
       final model = e['model'] as String?;
       return model == null ? state : state.copyWith(summary: state.summary.copyWith(model: model));
     default:
@@ -338,3 +399,7 @@ List<Question> _questions(Object? raw) => [
 ];
 
 Map<String, dynamic> _map(Object? raw) => raw is Map<String, dynamic> ? raw : const {};
+
+/// Total cost of [project]'s sessions (org sessions are left out: they belong to no project).
+double projectSessionsCost(List<SessionSummary> sessions, String project) =>
+    sessions.where((s) => !s.isOrgSession && s.project == project).fold(0.0, (sum, s) => sum + s.cost);

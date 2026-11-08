@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
@@ -39,7 +42,7 @@ class AboutConfig extends StatelessWidget {
             label: const Text('Editar em Configurações', style: TextStyle(fontSize: 12)),
           ),
         ),
-        const SectionTitle('ORGS'),
+        const SectionTitle('Orgs'),
         if (config.orgs.isEmpty) const Muted('nenhuma'),
         for (final org in config.orgs) ...[
           _Row(
@@ -47,7 +50,7 @@ class AboutConfig extends StatelessWidget {
             label: org.name,
             value:
                 '${org.roots.isEmpty ? 'sem raízes' : org.roots.join(', ')} · '
-                '${projectsInOrg(projects, org.name).length} projetos visíveis',
+                '${countLabel(projectsInOrg(projects, org.name).length, 'projeto visível', 'projetos visíveis')}',
           ),
           _Row(
             key: ValueKey('about-config-org-github-${org.name}'),
@@ -56,7 +59,7 @@ class AboutConfig extends StatelessWidget {
           ),
         ],
         _Row(label: 'lastOrg', value: config.lastOrg ?? '—'),
-        const SectionTitle('PROJETOS REGISTRADOS'),
+        const SectionTitle('Projetos registrados'),
         if (config.projects.isEmpty) const Muted('nenhum'),
         for (final p in config.projects)
           _Row(
@@ -64,10 +67,10 @@ class AboutConfig extends StatelessWidget {
             label: p.name,
             value: [p.path ?? 'sem path', if (p.org != null) 'org ${p.org}'].join(' · '),
           ),
-        const SectionTitle('OCULTOS'),
+        const SectionTitle('Ocultos'),
         if (config.hidden.isEmpty) const Muted('nenhum'),
         for (final name in config.hidden) Mono(name, key: ValueKey('about-config-hidden-$name')),
-        const SectionTitle('ENGINE'),
+        const SectionTitle('Engine'),
         _Row(
           key: const ValueKey('about-config-engine-dir'),
           label: 'engineDir (config)',
@@ -92,7 +95,7 @@ class AboutConfig extends StatelessWidget {
             EngineStatus.stopped => 'parado${engine!.error == null ? '' : ': ${engine.error}'}',
           },
         ),
-        const SectionTitle('CAMINHOS EFETIVOS'),
+        const SectionTitle('Caminhos efetivos'),
         _Row(label: 'raiz do workflow', key: const ValueKey('about-config-workflow-root'), value: paths.workflowRoot),
         _Row(label: 'claudeHome', value: claudeHome),
         if (engine?.versionWarning case final warning?) ...[
@@ -129,6 +132,17 @@ class _Row extends StatelessWidget {
           ),
           Expanded(
             child: SelectableText(value, style: TextStyle(fontSize: 12, color: c.textPrimary)),
+          ),
+          IconButton(
+            tooltip: 'Copiar',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 24, height: 20),
+            onPressed: () {
+              unawaited(Clipboard.setData(ClipboardData(text: value)));
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('copiado')));
+            },
+            icon: Icon(Icons.copy_rounded, size: 13, color: c.textMuted),
           ),
         ],
       ),

@@ -18,6 +18,9 @@ class MockDocsRepository implements DocsRepository {
   final _stamps = <String, DocEntry>{};
   final reads = <String, int>{};
   final opened = <Uri>[];
+
+  /// Every [reveal] call, as `(project, rel)`.
+  final revealed = <(String, String)>[];
   int _version = 0;
 
   void write(String rel, String content) {
@@ -44,6 +47,12 @@ class MockDocsRepository implements DocsRepository {
     if (content == null) return DocText.error('não encontrado: $rel');
     if (_stamps[rel]!.size > kDocSizeLimit) return const DocText.tooLarge();
     return DocText.content(content);
+  }
+
+  @override
+  Future<bool> reveal(String project, String rel) async {
+    revealed.add((project, rel));
+    return true;
   }
 
   @override

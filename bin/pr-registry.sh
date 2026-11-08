@@ -1,19 +1,19 @@
 #!/bin/bash
-# pr-registry.sh — mantem o indice de PRs em voo (spine ADO<->GitHub).
+# pr-registry.sh — mantem o indice de PRs em voo (spine card<->GitHub).
 #
 # Store: ~/.claude/workflow/<PROJECT_NAME>/prs.json
-# Fonte durável do vínculo é o rodapé "ADO: #<id>" no corpo do PR;
+# Fonte durável do vínculo é a referência ao card no corpo do PR (AB#<id>, chave Jira/Linear);
 # este arquivo é apenas o índice rápido para o /pr-status.
 #
 # Comandos:
-#   register <pr_number> <ado_id> <branch> <target> <title> <url>
+#   register <pr_number> <branch> <target> <title> <url> [<kind> <card_id> [<card_url>]]
 #   set-stage <pr_number> <stage>          # atualiza stage + last_check
 #   touch <pr_number>                       # so atualiza last_check
 #   get <pr_number>                         # imprime o objeto do PR
 #   list                                    # imprime prs.json inteiro
 #   remove <pr_number>                      # remove (merge/close)
 #
-# ado_id pode ser "" (PR sem card vinculado).
+# Sem <kind>/<card_id>, o PR entra sem card (tracker: null). kind: ado | jira | linear.
 # stages: awaiting_review | changes_requested | resolving | approved | merge_ready | merged | closed
 
 set -euo pipefail
@@ -45,21 +45,24 @@ cmd="${1:-}"; shift || true
 
 case "$cmd" in
   register)
-    pr="$1"; ado="${2:-}"; branch="$3"; target="$4"; title="$5"; url="$6"
+    pr="$1"; branch="$2"; target="$3"; title="$4"; url="$5"
+    kind="${6:-}"; card="${7:-}"; card_url="${8:-}"
     ensure_store
     apply '
       (.prs |= map(select(.pr_number != ($pr|tonumber)))) |
       .prs += [{
         pr_number: ($pr|tonumber),
-        ado_id: (if $ado == "" then null else ($ado|tonumber) end),
+        tracker: (if $kind == "" or $card == "" then null
+                  else {kind: $kind, id: $card, url: (if $card_url == "" then null else $card_url end)} end),
         branch: $branch, target: $target, title: $title, url: $url,
         stage: "awaiting_review",
         opened_at: $ts, last_check: null
       }]
     ' \
-      --arg pr "$pr" --arg ado "$ado" --arg branch "$branch" \
+      --arg pr "$pr" --arg kind "$kind" --arg card "$card" --arg card_url "$card_url" --arg branch "$branch" \
       --arg target "$target" --arg title "$title" --arg url "$url" --arg ts "$(now)"
-    echo "registered PR #$pr (ado=${ado:-none}) in $STORE"
+    label="none"; [ -n "$card" ] && label="$kind:$card"
+    echo "registered PR #$pr (card=$label) in $STORE"
     ;;
 
   set-stage)

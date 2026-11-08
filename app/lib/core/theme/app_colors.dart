@@ -25,6 +25,7 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.warn,
     required this.running,
     required this.idle,
+    required this.awaiting,
   });
 
   final Color canvas;
@@ -48,6 +49,9 @@ class AppColors extends ThemeExtension<AppColors> {
   final Color running;
   final Color idle;
 
+  /// A session waiting for the user's next message; apart from [warn] (permission) and [accent] (brand).
+  final Color awaiting;
+
   static const dark = AppColors(
     canvas: Color(0xFF0E0F12),
     sidebar: Color(0xFF121418),
@@ -69,6 +73,7 @@ class AppColors extends ThemeExtension<AppColors> {
     warn: Color(0xFFE0AF68),
     running: Color(0xFF7AA2F7),
     idle: Color(0xFF9AA0AA),
+    awaiting: Color(0xFFB48EF0),
   );
 
   static const light = AppColors(
@@ -92,6 +97,7 @@ class AppColors extends ThemeExtension<AppColors> {
     warn: Color(0xFFB7811F),
     running: Color(0xFF3B6FD9),
     idle: Color(0xFF7A808A),
+    awaiting: Color(0xFF7C4FD0),
   );
 
   Color tier(Tier tier) => switch (tier) {

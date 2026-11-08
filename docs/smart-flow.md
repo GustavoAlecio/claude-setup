@@ -58,6 +58,12 @@ When a task is blocked, three independent `opus` agents diagnose it through diff
 | **G1** (cycle) | `/verify` | the whole cycle diff, one agent per reviewer in the stack profile; looks for cross-task problems | `g1_reviewers` |
 | **G2** | `/verify` | each acceptance criterion: PASS / PARTIAL / FAIL / UNTESTABLE, using tests plus the running app (dart MCP: `launch_app`, `flutter_driver`, `get_runtime_errors`) | `qa-flutter` |
 
+The verify outcome is decided by code (`decide` in `smart-verify.js`), never by an agent, and fails closed: `verified` needs every G1 reviewer at `pass`, G2 at `pass`, at least one criterion PASS with evidence, no FAIL/PARTIAL/UNTESTABLE criterion and no open `critical`/`major` finding. Anything else is `unverified` (or `blocked` when a gate did not run) with a `reason_code` (`G2_FAIL`, `CRITERIA_FAILED`, `CRITERIA_UNTESTED`, `NO_CRITERIA`, `QA_SKIPPED`, `G2_INCONCLUSIVE`, `G2_MALFORMED`, …). `skip_g2` is always `unverified`. `wf-event.py persist` pins the result to the tree it judged (`revision_start` vs. the tree at persist); a tree that moved is `REVISION_CHANGED`.
+
+`/complete` and `archive-cycle.sh completed` both run `wf_gate.py complete-check`: the last verify must be `verified` for the tree on disk (re-derived from the raw gate report), or a human must have accepted that exact tree with `wf_gate.py accept-unverified --reason … --risk …`, confirmed in a macOS dialog. The record is kept in `exec.override` and `overrides.jsonl` and archived with `human_override: true`; it never turns into `verified`. An agent with shell access can still write `exec.override` by hand: the dialog stops an agent from approving through the tool, not from forging the file.
+
+`/tasks` and `/implement` run `wf_gate.py tasks-check`, which rejects plans G0 cannot approve by construction: a Red-only task (ends with failing tests, or only writes a test a later task makes pass), a test no task creates, dependencies on later tasks.
+
 When `/verify` fails, findings go back to the task that touched the file. Findings with no owner become a new task, `V<round>`. These re-enter `smart-implement` and keep the tier each task already reached. There are at most 2 verify rounds.
 
 All gates return the same verdict shape:

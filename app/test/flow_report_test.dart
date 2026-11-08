@@ -119,8 +119,8 @@ void main() {
       expect(tops, [...tops]..sort());
       expect(tops.toSet(), hasLength(Stage.values.length));
       expect(_inStage(Stage.verify, find.text('em andamento')), findsOneWidget);
-      expect(_inStage(Stage.complete, find.text('sem relatório desta etapa')), findsOneWidget);
-      expect(find.text('sem relatório desta etapa'), findsOneWidget);
+      // Pending stages do not announce a missing report; nothing was expected from them yet.
+      expect(find.text('sem relatório desta etapa'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -142,7 +142,7 @@ void main() {
       expect(inReport('Critério C1 reescrito como verificável.'), findsOneWidget);
       expect(find.descendant(of: report, matching: find.text('challenger')), findsOneWidget);
       expect(find.descendant(of: report, matching: find.text('user')), findsOneWidget);
-      expect(inReport('1 tentativa(s)'), findsOneWidget);
+      expect(inReport('1 tentativa'), findsOneWidget);
 
       await _expand(tester, Stage.challenge);
       expect(report, findsNothing);
@@ -271,7 +271,9 @@ void main() {
       await _open(tester, data, '/p/beta/flow');
 
       expect(data.firstWhere((p) => p.name == 'beta').cycle!.report, isNull);
-      expect(find.text('sem relatório desta etapa'), findsNWidgets(Stage.values.length));
+      // Without a report the timeline says so once, in its header, not on every row.
+      expect(find.text('sem relatório desta etapa'), findsNothing);
+      expect(find.text('sem relatório deste ciclo'), findsWidgets);
       expect(find.byKey(const ValueKey('flow-tasks')), findsOneWidget);
       expect(find.byKey(const ValueKey('flow-verify')), findsOneWidget);
       expect(_inPanel('flow-decisions', find.text('sem relatório deste ciclo')), findsOneWidget);
@@ -288,12 +290,14 @@ void main() {
         Project(
           name: 'versao',
           path: '/synthetic/versao',
-          cycle: Cycle(stage: Stage.plan, autoMode: false, stageMinutes: const {}, runs: const [], report: report),
+          cycle: Cycle(stage: Stage.plan, stageMinutes: const {}, runs: const [], report: report),
         ),
       ];
       await _open(tester, data, '/p/versao/flow');
 
-      expect(find.text('sem relatório desta etapa'), findsNWidgets(Stage.values.length));
+      // Without a report the timeline says so once, in its header, not on every row.
+      expect(find.text('sem relatório desta etapa'), findsNothing);
+      expect(find.text('sem relatório deste ciclo'), findsWidgets);
       expect(find.text('nova versão'), findsNothing);
       expect(_inStage(Stage.plan, find.text('em andamento')), findsOneWidget);
       expect(_inStage(Stage.specify, find.text('concluída')), findsOneWidget);
@@ -374,7 +378,6 @@ void main() {
       path: '/synthetic/closing-app',
       cycle: Cycle(
         stage: Stage.complete,
-        autoMode: false,
         stageMinutes: const {},
         runs: const [],
         report: parseReport(

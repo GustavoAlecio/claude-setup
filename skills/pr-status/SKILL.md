@@ -11,6 +11,7 @@ Mata o "conferir PR diariamente". Lê o índice, cruza com o GitHub, e diz exata
 ```bash
 source ~/.claude/bin/get-project.sh
 PROJECT_NAME="$(get-project-name)"
+WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 ~/.claude/bin/pr-registry.sh list
 ```
 
@@ -22,13 +23,17 @@ Se `prs.json` não tem PRs (índice novo), ofereça popular a partir das suas PR
 gh pr list --state open --author @me --json number,title,baseRefName,headRefName,url
 ```
 
-Para cada uma, extraia o `ADO_ID` do corpo do PR com a convenção nativa Azure Boards:
+Para cada uma, extraia o card da referência que o `/pr-open` grava (`python3 ~/.claude/bin/tracker.py resolve` diz o `kind` da org):
 
 ```bash
-gh pr view <n> --json body -q .body | grep -oiE 'AB#[0-9]+' | grep -oE '[0-9]+' | head -1
+gh pr view <n> --json title,body -q '.title + "\n" + .body' > "$WF_DIR/.pr-text"
+grep -oiE 'AB#[0-9]+' "$WF_DIR/.pr-text" | grep -oE '[0-9]+' | head -1            # ado
+grep -oE "\b$PREFIX-[0-9]+\b" "$WF_DIR/.pr-text" | head -1                         # jira / linear
 ```
 
-Registre com `pr-registry.sh register`. Avise quais PRs entraram vinculadas e quais ficaram sem card (`AB#` ausente — normal em PRs antigas).
+`PREFIX` é o `project` (Jira) ou o `team` (Linear) do tracker. Linear sem `team`: procure `[A-Z][A-Z0-9]*-[0-9]+` e confirme a chave com o usuário (casa também `UTF-8`, `ISO-9001`).
+
+Com o ID, `REF=$(python3 ~/.claude/bin/tracker.py ref "<id>")` dá `kind` e `url`. Registre com `pr-registry.sh register <n> <branch> <base> <título> <url> <kind> <id> <card_url>` (sem card, sem os três últimos). Avise quais PRs entraram vinculadas e quais ficaram sem card (referência ausente — normal em PRs antigas).
 
 ## 3. Inspecionar cada PR
 
@@ -60,20 +65,20 @@ Ordene por urgência (o que precisa de você primeiro). Formato:
 ---
 **PRs em voo — PROJECT_NAME**
 
-🔴 **#<n>** <título> — `changes_requested` · ADO #<id>
+🔴 **#<n>** <título> — `changes_requested` · <card>
   2 comentários não resolvidos · CI: ✓ · base: `release/3.11.0/main`
   → resolver comentários
 
-🟡 **#<n>** <título> — `awaiting_review` · ADO #<id>
+🟡 **#<n>** <título> — `awaiting_review` · <card>
   aguardando review · CI: ✓
 
-🟢 **#<n>** <título> — `merge_ready` · ADO #<id>
+🟢 **#<n>** <título> — `merge_ready` · <card>
   aprovada, CI verde → **pronta pra merge**
 
 _(concluídas nesta rodada: #<n> merged)_
 ---
 
-Use ✓/✗/⏳ para checks (SUCCESS/FAILURE/PENDING). Se `ado_id` for null, mostre "sem card".
+Use ✓/✗/⏳ para checks (SUCCESS/FAILURE/PENDING). `<card>` vem do `tracker` do índice: `AB#<id>` no ADO, a chave no Jira/Linear; `tracker` null → "sem card".
 
 ## 5. Resolver comentários (gate)
 

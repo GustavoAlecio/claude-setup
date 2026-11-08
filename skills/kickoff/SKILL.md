@@ -1,10 +1,10 @@
 ---
 name: kickoff
 model: opus
-description: Entrada do pipeline — com ID de card, detecta o tracker pela raiz do repo (ADO ou Linear), puxa o card/issue e faz triage bug/feature/auditoria; sem ID (ou com --manual), entra no modo manual a partir de uma descricao livre, sem tracker. Semeia a spine no current.json e encadeia refine->specify (feature), aponta /fix (bug/chore), ou refine-only/abort (card nao-implementavel neste repo).
+description: Entrada do pipeline — com ID de card, usa o tracker configurado na org do repo (Azure DevOps, Jira ou Linear), puxa o card e faz triage bug/feature/auditoria; sem ID (ou com --manual), entra no modo manual a partir de uma descricao livre, sem tracker. Semeia a spine no current.json e encadeia refine->specify (feature), aponta /fix (bug/chore), ou refine-only/abort (card nao-implementavel neste repo).
 ---
 
-Ponto de entrada único do ciclo. A partir do ID do card (ou de uma descrição livre, no modo manual), decide o tracker, decide a rota e já carrega o contexto — você não redigita nada.
+Ponto de entrada único do ciclo. A partir do ID do card (ou de uma descrição livre, no modo manual), resolve o tracker, decide a rota e já carrega o contexto — você não redigita nada.
 
 ## 0. Resolver modo, tracker e config do repo
 
@@ -17,12 +17,12 @@ WF_DIR="$HOME/.claude/workflow/$PROJECT_NAME"
 
 ### Parsing do argumento
 
-1. Remova primeiro as flags conhecidas: `--ado`, `--az`, `--linear`, `--l`, `--org=…`, `--project=…`, `--manual`, `--bug`, `--feature`. Na forma multilinha (ver "Modo manual"), flags só são lidas da **primeira linha**; o corpo nunca é parseado.
+1. Remova primeiro as flags conhecidas: `--org=…`, `--project=…`, `--manual`, `--bug`, `--feature`. Na forma multilinha (ver "Modo manual"), flags só são lidas da **primeira linha**; o corpo nunca é parseado.
 2. Combinações inválidas — **pare com erro**, sem criar nada:
-   - `--manual` junto com `--ado`/`--az`/`--linear`/`--l`/`--org=`/`--project=` → "modo manual não tem tracker; remova as flags de tracker".
+   - `--manual` junto com `--org=`/`--project=` → "modo manual não tem tracker; remova as flags de tracker".
    - `--bug` junto com `--feature` → "escolha um tipo só".
 3. Decida o modo:
-   - Sem `--manual` e sobra **exatamente um** token que casa com `^\d+$` ou `^[A-Z][A-Z0-9]*-\d+$` → **modo ID** (resto deste passo e passos 1-7). Se veio `--bug`/`--feature`, avise "flag de tipo ignorada com ID" e siga a triage do tracker.
+   - Sem `--manual` e sobra **exatamente um** token que casa com `^#?\d+$` ou `^[A-Za-z][A-Za-z0-9]*-\d+$` → **modo ID** (resto deste passo e passos 1-7). Se veio `--bug`/`--feature`, avise "flag de tipo ignorada com ID" e siga a triage do tracker.
    - Sem argumento nenhum (nem flag, nem texto) → pergunte a descrição do trabalho (1 pergunta) e siga no **modo manual**.
    - Qualquer outro caso (`--manual`, texto livre, mais de um token, token que não é ID) → **modo manual**. Sem `--manual` explícito, anuncie "sem ID de card → modo manual". `--manual` sem descrição → pergunte a descrição (1 pergunta).
 
@@ -30,45 +30,51 @@ No modo manual, **pule o resto deste passo e o passo 1** e vá para a seção "M
 
 ### Tracker (modo ID)
 
-O tracker é propriedade do **repositório**, não da invocação. Resolva por `$PROJECT_PATH`:
+O tracker é propriedade da **org**, não da invocação nem da forma do ID (uma key `LC-101` tanto pode ser Jira quanto Linear). Ele vive em `orgs[].tracker` do `~/.claude/workflow/.dashboard.json`, editado no app em Configurações → org → Tracker. Resolva e normalize o ID:
 
-| Raiz | Tracker | Refine | Base de branch | Nome de branch | Exige RFC |
-|---|---|---|---|---|---|
-| `<ado-root>/**` | **ADO** — org `<your-org>`, project `<your-project>` | `/ado-refine` | última `release/*` no remoto, senão `main` | `<tipo>/<versao>/<id>-<slug>` | não |
-| `<linear-root>/**` | **Linear** | `/linear-refine` | `main` | `<tipo>/<key-minusculo>-<slug>` | sim (features) |
-| qualquer outra | — | — | — | — | — |
+```bash
+python3 ~/.claude/bin/tracker.py resolve "$PROJECT_PATH"            # {"org", "tracker"}
+REF=$(python3 ~/.claude/bin/tracker.py ref "<ID>" "$PROJECT_PATH")  # {"kind", "id", "url"}
+```
 
-Repo Linear sem team key conhecido: pergunte o team key antes de seguir.
+- `tracker` `null` → **pare**: "a org `<org>` não tem tracker configurado: configure em Configurações → org → Tracker, ou rode `/kickoff --manual`". Com `org` `null`: "este repo não está em nenhuma org do app". Não chute o tracker.
+- `ref` sai com código 2 → **pare** repassando o stderr (ex.: "ID 'LC-101' nao e um card de ado"). Ele já normaliza: `#123` → `123`, `lc-101` → `LC-101`, e um número em Jira/Linear ganha a chave do projeto/team (`101` → `LC-101`).
 
-Fora das duas raízes conhecidas, **pare** e pergunte qual tracker usar — não chute. (Trabalho sem card nesses repos é o modo manual.)
+Daqui em diante, `<ID>` é o `id` do `REF` e `<KIND>` o `kind`.
+
+| kind | Buscar o card | Refine | Exige RFC |
+|---|---|---|---|
+| `ado` | `~/.claude/bin/ado.sh` | `/ado-refine <ID>` | não |
+| `jira` | `~/.claude/bin/jira.py` | `/jira-refine <ID>` | não |
+| `linear` | MCP `linear` | `/linear-refine <ID>` | sim (features) |
+
+Base e nome da branch vêm do `base` do tracker, não do kind:
+
+| `base` | Base de branch | Nome de branch |
+|---|---|---|
+| `release` | última `release/*` no remoto, senão `main` | `<prefixo>/<versao>/<id>-<slug>` |
+| ausente | branch padrão do remoto | `<prefixo>/<id-minusculo>-<slug>` |
 
 ### Override explícito
 
-- `--ado` / `--az` → força ADO. Aceita `--org=` / `--project=`.
-- `--linear` / `--l` → força Linear.
+`--org=` / `--project=` sobrescrevem os campos de mesmo nome do tracker resolvido só nesta invocação (ex.: outro projeto ADO da mesma org). No ADO, exporte `ADO_ORG`/`ADO_PROJECT` antes de chamar o `ado.sh`; no Jira, `--project=` muda só o prefixo de um ID numérico (rode o `ref` de novo com a key completa).
 
-**Se o flag contradiz o path, pare e confirme** ("`--az` num repo da raiz Linear — o card #X é mesmo do ADO?"). Semear a spine do tracker errado só aparece lá no `/pr-open`, e aí já custou.
-
-### Forma do ID
-
-- Numérico puro (`12345`) → ID do ADO.
-- Key (`ENG-101`) → issue do Linear; o prefixo já identifica o team.
-- Numérico com `--l` → prefixe com o team key do repo (`101` com team key `ENG` → `ENG-101`).
-
-Anuncie o resultado em uma linha antes de seguir: "Repo `<nome>` → tracker **<ADO|Linear>**, refine `/<skill>`, base `<base>`."
+Anuncie o resultado em uma linha antes de seguir: "Org `<org>` → **<kind>**, card `<ID>`, refine `/<skill>`, base `<base>`."
 
 ## 1. Pré-condições do tracker
 
-**ADO:** acesso via `~/.claude/bin/ado.sh` (PAT + REST, headless-safe; PAT lido de `~/.claude.json`). **Não** dependemos do MCP `azure-devops` (auth interativa quebra).
+**ADO:** acesso via `~/.claude/bin/ado.sh` (PAT + REST, headless-safe; PAT em `~/.claude/.ado_pat`, `AZURE_DEVOPS_EXT_PAT` ou `~/.claude.json`; org/projeto do tracker da org). **Não** dependemos do MCP `azure-devops` (auth interativa quebra).
+
+**Jira:** acesso via `~/.claude/bin/jira.py` (API token + REST v3, headless-safe; token em `~/.claude/.jira_token` ou `JIRA_API_TOKEN`; site e email do tracker da org). Não dependemos do MCP do Atlassian pelo mesmo motivo do ADO. Se faltar token, **pare** e diga onde criá-lo (id.atlassian.com → Security → API tokens) e onde gravá-lo.
 
 **Linear:** acesso via MCP `linear`. Se as únicas ferramentas `mcp__linear__*` disponíveis forem `authenticate` / `complete_authentication`, o server **não está logado** — pare e peça ao usuário para rodar `/mcp` e autenticar.
 
 ## 2. Checar fluxo em andamento
 
 Leia `$WF_DIR/current.json` (se existir). Se `status` não for terminal (`verified`/ausente), ele conta como de **outro** card quando:
-- o tracker é diferente do novo kickoff (inclusive `manual` × ADO/Linear), ou
-- não tem chave de tracker (`tracker`, `ado_id`, `linear_key` ausentes), ou
-- tem `ado_id`/`linear_key` diferente do novo ID.
+- não tem `tracker`, ou
+- `tracker.kind` é diferente do `<KIND>` (inclusive `manual` × card), ou
+- `tracker.id` é diferente do `<ID>`.
 
 Nesse caso, **pare** com um `AskUserQuestion` (parada incondicional): "Já há um fluxo ativo em **PROJECT_NAME** (card X, status Y). Continuar (`/status`) ou resetar pra começar o <novo>?" — não clobber sem OK.
 
@@ -78,19 +84,26 @@ No modo manual, a regra de mesma descrição está em "Modo manual" (M3).
 
 ## 3. Puxar o card
 
-**Rota ADO:**
+**ADO:**
 ```bash
-~/.claude/bin/ado.sh get <id>     # metadados (title, type, state, assignee, tags)
-~/.claude/bin/ado.sh desc <id>    # descricao + repro + criterios em texto plano
+~/.claude/bin/ado.sh get <ID>     # metadados (title, type, state, assignee, tags)
+~/.claude/bin/ado.sh desc <ID>    # descricao + repro + criterios em texto plano
 ```
 
-**Rota Linear:** busque a issue pela key via MCP `linear` — título, descrição, estado, labels, assignee, projeto/cycle, links, comentários relevantes.
+**Jira:**
+```bash
+~/.claude/bin/jira.py get <ID>    # metadados (title, type, state, assignee, labels, priority, parent, url)
+~/.claude/bin/jira.py desc <ID>   # descricao em texto plano
+```
+
+**Linear:** busque a issue pela key via MCP `linear` — título, descrição, estado, labels, assignee, projeto/cycle, links, comentários relevantes. Se o `REF` veio com `url` `null` (tracker sem `workspace`), guarde a URL da issue que o MCP devolve como `CARD_URL`.
 
 ## 4. Triage bug/feature
 
-**ADO** — classifique pelo `type`, case-insensitive por substring (os tipos reais variam: `Bug`, `Bug USs`, etc.):
+**ADO e Jira** — classifique pelo `type`, case-insensitive por substring (os tipos reais variam: `Bug`, `Bug USs`, etc.):
 - contém `bug` → **bug**
-- resto (`User Story`, `Feature`, `Task`, `Product Backlog Item`, ...) → **feature**
+- resto (`User Story`, `Story`, `Feature`, `Task`, `Product Backlog Item`, `Epic`, ...) → **feature**
+- Jira: um `Task` de pura manutenção (dependência, config, CI), pela descrição, é **chore** (vai pro `/fix`).
 
 **Linear** — classifique pelo **conteúdo primeiro**; a label é desempate, não fonte:
 
@@ -121,7 +134,7 @@ Bug sempre segue pra `/fix`. **Feature exige um segundo julgamento pelo CONTEÚD
 
 Se **nenhum** sinal → prossiga normal (4b → 6). Se **houver** sinal, **pare com um `AskUserQuestion` de 3 rotas** (parada incondicional, mesmo com auto on — esta decisão não é automatizável):
 
-1. **refine-only** — invoque o refine do tracker (`/ado-refine` ou `/linear-refine`) para investigar o card no codebase (o que existe, onde vive, gaps) e postar os achados. **Sem** seed/branch/specify. É a rota certa pra auditoria.
+1. **refine-only** — invoque o refine do tracker (tabela do passo 0) para investigar o card no codebase (o que existe, onde vive, gaps) e postar os achados. **Sem** seed/branch/specify. É a rota certa pra auditoria.
 2. **Feature completa** — segue 4b → 6 (o usuário assume que há escopo implementável aqui).
 3. **Abortar** — card não é pra este fluxo/repo; encerra limpo (nada criado) e o usuário redireciona.
 
@@ -138,9 +151,9 @@ Nunca começar o card na branch de outro trabalho. Prepare o isolamento:
 [ -n "$(git status --porcelain)" ] && git stash push -u -m "kickoff-<id>-wip"
 ```
 
-**Base e nome da branch seguem a tabela do passo 0.**
+**Base e nome da branch seguem o `base` do tracker (passo 0).** Prefixo: bug/chore → `fix`, feature → `feat`.
 
-Rota ADO (base = `release/X.Y.Z` ou `release/X.Y.Z/main` da maior versão, via `release-base.sh`; senão `main`):
+`base: "release"` (base = `release/X.Y.Z` ou `release/X.Y.Z/main` da maior versão, via `release-base.sh`; senão `main`):
 ```bash
 # helper: 1a linha = base, 2a = versão X.Y.Z; exit 3 = só sufixos não-main (stdout = candidatas); exit 1 = sem release
 RB=$(git ls-remote --heads origin 'release/*' | awk '{print $2}' | sed 's|refs/heads/||' | ~/.claude/bin/release-base.sh) && rc=0 || rc=$?
@@ -150,20 +163,22 @@ case "$rc" in
   *) BASE=main ;;
 esac
 git fetch origin "$BASE" --quiet
-# prefixo: bug→fix, feature→feat ; versão X.Y.Z é sempre a do nome da base (release/3.11.0/main → 3.11.0)
+# versão X.Y.Z é sempre a do nome da base (release/3.11.0/main → 3.11.0); com BASE=main, nome sem versão
 SLUG=$(~/.claude/bin/to-slug.sh "<título curto do card>")
 git checkout -b "<prefixo>/<versao>/<id>-$SLUG" "origin/$BASE"
 ```
 
-Rota Linear (base = `main`):
+Sem `base` (branch padrão do remoto):
 ```bash
-BASE=main
+BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
+[ -z "$BASE" ] && BASE=$(git ls-remote --symref origin HEAD 2>/dev/null | awk '/^ref:/ {sub("refs/heads/", "", $2); print $2}')
+BASE=${BASE:-main}
 git fetch origin "$BASE" --quiet
-SLUG=$(~/.claude/bin/to-slug.sh "<título curto da issue>")
-git checkout -b "<prefixo>/<key-minusculo>-$SLUG" "origin/$BASE"   # ex: feat/eng-101-refresh-token
+SLUG=$(~/.claude/bin/to-slug.sh "<título curto do card>")
+git checkout -b "<prefixo>/<id-minusculo>-$SLUG" "origin/$BASE"   # ex: feat/lc-101-refresh-token
 ```
 
-Na rota ADO, se a base for `release/*`, faça um `AskUserQuestion` para confirmar a base antes do checkout (parada incondicional; release errada é custosa). Com `main` e no `checkout -b` de branch nova, apenas anuncie, sem gate. Se houve stash, anuncie que há um `stash` pendente da branch anterior.
+Se a base for `release/*`, faça um `AskUserQuestion` para confirmar a base antes do checkout (parada incondicional; release errada é custosa). Com a branch padrão e no `checkout -b` de branch nova, apenas anuncie, sem gate. Se houve stash, anuncie que há um `stash` pendente da branch anterior.
 
 ## 5. Rota BUG
 
@@ -171,9 +186,7 @@ Não semeia `current.json` (não polui o estado do Flow Smart). Apresente:
 
 - Resumo do bug (root cause provável se os repro steps derem pista), em 2-3 linhas.
 - Instrução: "Bug — pulando refino. Rodando `/fix` com esse contexto." E **invoque `/fix`** passando o contexto do card como bug report.
-- Lembrete de vínculo do PR:
-  - ADO: "Ao abrir o PR, rode `/pr-open <id>` (ou inclua `AB#<id>` no corpo) — o card não está no current.json nesta rota."
-  - Linear: "Ao abrir o PR, inclua a key `<KEY>` no título ou o link da issue no corpo — `/pr-open` ainda não vincula Linear automaticamente."
+- Lembrete de vínculo do PR: "Ao abrir o PR, rode `/pr-open <ID>` — o card não está no current.json nesta rota."
 
 Encerre após o `/fix` assumir.
 
@@ -181,32 +194,23 @@ Encerre após o `/fix` assumir.
 
 ### 6a. Semear a spine no current.json
 
-Rota ADO:
-```bash
-python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/bin')
-from current_json import update_current_json
-seed = {'tracker': 'ado', 'ado_id': <ADO_ID>, 'work_item_type': 'feature', 'status': 'triaged'}
-def m(d):
-    for k in ('feature', 'start_date', 'end_date', 'phases'):
-        d.pop(k, None)
-    d.update(seed); d.setdefault('status', 'triaged'); return d
-update_current_json('$WF_DIR', m, default=seed)
-"
-```
+`tracker` é o `REF` do passo 0 (`{"kind", "id", "url"}`); no Linear sem `url`, passe o `CARD_URL` do passo 3 como terceiro argumento.
 
-Rota Linear:
 ```bash
-python3 -c "
-import sys; sys.path.insert(0, '$HOME/.claude/bin')
+python3 - "$WF_DIR" "$REF" "${CARD_URL:-}" <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.expanduser('~/.claude/bin'))
 from current_json import update_current_json
-seed = {'tracker': 'linear', 'linear_key': '<KEY>', 'linear_url': '<URL>', 'work_item_type': 'feature', 'status': 'triaged'}
+ref = json.loads(sys.argv[2])
+if sys.argv[3]:
+    ref['url'] = sys.argv[3]
+seed = {'tracker': ref, 'work_item_type': 'feature', 'status': 'triaged'}
 def m(d):
-    for k in ('feature', 'start_date', 'end_date', 'phases'):
+    for k in ('feature', 'start_date', 'end_date', 'phases', 'manual_description'):
         d.pop(k, None)
     d.update(seed); d.setdefault('status', 'triaged'); return d
-update_current_json('$WF_DIR', m, default=seed)
-"
+update_current_json(sys.argv[1], m, default=seed)
+PY
 ```
 
 Relatório: início da etapa, só depois do seed.
@@ -217,7 +221,7 @@ python3 ~/.claude/bin/wf-report.py stage-start kickoff --workflow-dir "$WF_DIR" 
 
 ### 6b. Refinar
 
-**Invoque o refine do tracker** — `/ado-refine <id>` ou `/linear-refine <KEY>`. Gera o detalhamento técnico em `$WF_DIR/details/<slug>.md` e (com seu OK) comenta no card. Aguarde ele concluir.
+**Invoque o refine do tracker** (tabela do passo 0) com o `<ID>`. Gera o detalhamento técnico em `$WF_DIR/details/<slug>.md` e (com seu OK) comenta no card. Aguarde ele concluir.
 
 ### 6c. Especificar
 
@@ -231,13 +235,11 @@ python3 ~/.claude/bin/wf-report.py stage-end kickoff --workflow-dir "$WF_DIR" --
 
 A partir daí o Flow Smart segue seu curso normal (specify → challenge-spec → plan → tasks → implement → verify → complete), com os gates conforme `auto_mode.flag`. Implement e verify rodam como workflows com escada de modelos; `blocked`/`backtrack` sempre param para decisão humana.
 
-Vínculo do PR no fim do ciclo:
-- ADO: `ado_id` já está no `current.json`, então `/pr-open` vincula o PR sozinho.
-- Linear: `/pr-open` **ainda não lê `linear_key`** — ele abrirá o PR sem vínculo. Inclua a key no título do PR ou o link da issue no corpo.
+Vínculo do PR no fim do ciclo: o `tracker` já está no `current.json`, então `/pr-open` vincula o PR sozinho.
 
 ## Modo manual
 
-Trabalho sem card: ideia, ajuste pessoal, repo fora das raízes com tracker. Entra no mesmo pipeline a partir de uma descrição livre.
+Trabalho sem card: ideia, ajuste pessoal, org sem tracker. Entra no mesmo pipeline a partir de uma descrição livre.
 
 ### M1. Forma do comando
 
@@ -258,14 +260,14 @@ O engine não faz parsing do comando: ele chega como mensagem de usuário. Não 
 
 ### M2. Pré-condições
 
-- Sem tracker: pule a tabela de raízes, as pré-condições de ADO/Linear (passo 1) e a exigência de RFC — em qualquer raiz, inclusive fora das conhecidas.
+- Sem tracker: pule a resolução de tracker do passo 0, as pré-condições do passo 1 e a exigência de RFC — em qualquer org, com ou sem tracker, e fora delas.
 - Fora de repositório git (`git rev-parse --show-toplevel` falha) → **pare**: "modo manual precisa de um repositório git".
 
 Grave a descrição com a ferramenta **Write** em `$WF_DIR/manual-description.md` (crie `$WF_DIR` com `mkdir -p "$WF_DIR"` se faltar). Um kickoff novo sobrescreve o arquivo. Daqui em diante, **nenhum texto do usuário entra em shell**: nem em `python3 -c`, nem em `to-slug.sh`, nem em mensagem de stash/commit. Quem precisa da descrição lê o arquivo.
 
 ### M3. Fluxo em andamento
 
-Aplique o passo 2. Um fluxo não terminal sem chave de tracker, ou de tracker ADO/Linear, conta como outro card. Com `tracker: manual`, compare a descrição:
+Aplique o passo 2. Um fluxo não terminal sem `tracker`, ou com um card, conta como outro card. Com `tracker.kind` `manual`, compare a descrição:
 
 ```bash
 python3 - "$WF_DIR" <<'PY'
@@ -277,12 +279,13 @@ try:
 except FileNotFoundError:
     cur = {}
 active = cur.get('status') not in (None, 'verified')
+tracker = cur.get('tracker') if isinstance(cur.get('tracker'), dict) else {}
 if not active:
     print('NO_ACTIVE_FLOW')
-elif cur.get('tracker') == 'manual' and (cur.get('manual_description') or '').strip() == desc.strip():
+elif tracker.get('kind') == 'manual' and (cur.get('manual_description') or '').strip() == desc.strip():
     print('SAME_MANUAL_FLOW', cur.get('status'))
 else:
-    print('OTHER_FLOW', cur.get('tracker') or '-', cur.get('ado_id') or cur.get('linear_key') or '-', cur.get('status'))
+    print('OTHER_FLOW', tracker.get('kind') or '-', tracker.get('id') or '-', cur.get('status'))
 PY
 ```
 
@@ -309,8 +312,8 @@ BRANCH="<feat|fix>/$SLUG"
 ```
 
 Base:
-- Raiz conhecida → a base do tracker da raiz (tabela do passo 0): ADO = última `release/*` no remoto, senão `main` (confirme com `AskUserQuestion` só se for `release/*`); Linear = `main`.
-- Fora das raízes:
+- Org com tracker de `base: "release"` (`tracker.py resolve`) → a última `release/*` no remoto, senão `main`, como no passo 4b (confirme com `AskUserQuestion` só se for `release/*`).
+- Senão, a branch padrão do remoto:
 
 ```bash
 BASE=$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')
@@ -351,10 +354,8 @@ wf = sys.argv[1]
 sys.path.insert(0, os.path.expanduser('~/.claude/bin'))
 from current_json import update_current_json
 desc = open(os.path.join(wf, 'manual-description.md'), encoding='utf-8').read()
-seed = {'tracker': 'manual', 'manual_description': desc, 'work_item_type': 'feature', 'status': 'triaged'}
+seed = {'tracker': {'kind': 'manual'}, 'manual_description': desc, 'work_item_type': 'feature', 'status': 'triaged'}
 def m(d):
-    for k in ('ado_id', 'linear_key', 'linear_url'):
-        d.pop(k, None)
     for k in ('feature', 'start_date', 'end_date', 'phases'):
         d.pop(k, None)
     d.update(seed)
@@ -379,7 +380,7 @@ Depois **invoque `/specify`** com a descrição (conteúdo de `$WF_DIR/manual-de
 
 ## 7. Não fazer
 
-- Não mudar estado/assignee do card (ADO: isso é do `/ado-close`; Linear: é decisão do usuário).
+- Não mudar estado/assignee do card (ADO: isso é do `/ado-close`; Jira/Linear: é decisão do usuário).
 - Não abrir PR aqui — isso é do `/pr-open`, no fim do ciclo.
-- Não assumir tracker por hábito. Repo manda; flag só com confirmação quando contradiz.
+- Não assumir tracker por hábito nem pela forma do ID. A org manda; sem tracker configurado, pare.
 - Não interpolar a descrição do modo manual em shell nem reescrevê-la.

@@ -60,6 +60,7 @@ const SYNTH = {
 const base = `Repo: ${A.project_path}
 Spec aprovada: ${A.spec_path}
 Rules: ${A.project_path}/${A.rules_dir} · ADRs aceitos: ${A.project_path}/${A.adr_dir}/INDEX.md${A.lessons_path ? ` · Lessons: ${A.lessons_path}` : ''}
+Mapa da org: se existir .map/index.md em ${A.project_path} ou numa pasta acima (nunca abaixo), leia o índice e as notas/gerados relevantes antes de buscar no código; nota STALE não é confiável; o mapa descreve origin/development.
 Template obrigatório do plano: seção 7 de ~/.claude/skills/plan/SKILL.md (mesmas seções, mesmo limite de itens), incluindo a seção "Decisões" com ADRs citados.`
 
 phase('Branch')

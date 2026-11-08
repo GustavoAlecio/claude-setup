@@ -1,11 +1,11 @@
 ---
 id: 0019
 title: Modo de permissão por sessão, resolvido no app, com bypass sempre habilitável no engine
-status: accepted
+status: superseded
 date: 2026-10-02
 affects: ["engine/sessions.mjs", "engine/engine.mjs", "app/lib/data/orgs.dart", "app/lib/data/sessions_repository.dart", "app/lib/core/widgets/permission_mode.dart", "app/lib/features/settings/**"]
 supersedes: []
-superseded_by: []
+superseded_by: ["0025"]
 tags: [engine, flutter, security]
 ---
 

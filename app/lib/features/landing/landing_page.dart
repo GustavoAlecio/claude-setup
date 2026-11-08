@@ -8,12 +8,15 @@ import '../../app/projects_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
+import '../../core/widgets/readiness_checklist.dart';
 import '../../data/config_mutations.dart';
+import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../engine/engine_config.dart';
+import '../settings/add_project.dart';
 import '../settings/org_form.dart';
 
 /// `/` decides where the app opens from `landingFor`: "Criar org" without orgs, the org chooser when
@@ -126,17 +129,36 @@ class _CreateOrgState extends State<_CreateOrg> {
   Widget build(BuildContext context) {
     final repository = RepositoryScope.of(context);
     return _Card(
-      title: 'Criar org',
-      subtitle: 'Uma org agrupa os projetos de uma pasta. O app sempre abre em uma org.',
+      title: 'Bem-vindo ao Claude Flow',
+      subtitle:
+          'Aqui você acompanha agentes de IA trabalhando nos seus projetos. Comece criando uma org: ela reúne os '
+          'projetos de uma pasta (por exemplo, ~/development/cliente). Os repositórios dentro dela aparecem sozinhos.',
       child: FutureBuilder<List<String>>(
         future: _suggestions,
-        builder: (_, snapshot) => OrgForm(
-          maxRoots: 1,
-          suggestions: snapshot.data ?? const [],
-          saveLabel: 'Criar org',
-          onSave: (org) => repository.updateConfig(
-            createOrg(org.name, org.roots, github: org.github, permissionMode: org.permissionMode),
-          ),
+        builder: (_, snapshot) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ReadinessChecklist(),
+            const SizedBox(height: 16),
+            OrgForm(
+              simple: true,
+              maxRoots: 1,
+              suggestions: snapshot.data ?? const [],
+              saveLabel: 'Criar org',
+              onSave: (org) => repository.updateConfig(
+                createOrg(
+                  org.name,
+                  org.roots,
+                  github: org.github,
+                  permissionMode: org.permissionMode,
+                  agent: org.agent,
+                  cycleBudget: org.cycleBudget,
+                  tracker: org.tracker,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -153,6 +175,7 @@ class _ChooseOrg extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     return _Card(
       title: 'Escolha uma org',
       child: Column(
@@ -180,11 +203,40 @@ class _ChooseOrg extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(child: Text(org, style: const TextStyle(fontSize: 13))),
-                    Muted('${projectsInOrg(projects, org).length} projetos', size: 11),
+                    if (pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org) case final n
+                        when n > 0) ...[
+                      Tooltip(
+                        message: '$n aguardando você',
+                        child: Pill(label: '$n', color: c.warn),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    Muted(countLabel(projectsInOrg(projects, org).length, 'projeto'), size: 11),
+                    if (config.orgs.indexWhere((o) => o.name == org) case final i when i >= 0 && i < 9) ...[
+                      const SizedBox(width: 10),
+                      Muted('⌘${i + 1}', size: 11),
+                    ],
                   ],
                 ),
               ),
             ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              TextButton.icon(
+                style: TextButton.styleFrom(foregroundColor: c.accent),
+                onPressed: () => context.go('/settings?nova=1'),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Nova org', style: TextStyle(fontSize: 12)),
+              ),
+              const Spacer(),
+              TextButton(
+                style: TextButton.styleFrom(foregroundColor: c.textSecondary),
+                onPressed: () => context.go('/settings'),
+                child: const Text('Configurações  ⌘,', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -206,8 +258,22 @@ class _EmptyOrg extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Muted('nenhum projeto em $org — adicione em Configurações', size: 13),
-          const SizedBox(height: 8),
+          Muted('nenhum projeto em $org ainda', size: 13),
+          const SizedBox(height: 4),
+          const Muted('repositórios dentro das pastas da org aparecem sozinhos; outros, adicione aqui', size: 12),
+          const SizedBox(height: 12),
+          if (org != kNoOrg)
+            FilledButton.icon(
+              key: const ValueKey('empty-org-add-project'),
+              style: FilledButton.styleFrom(backgroundColor: c.accent, foregroundColor: Colors.white),
+              onPressed: () async {
+                final config = context.read<ConfigCubit>().state.data;
+                if (config != null) await addProjectToOrg(context, org, config);
+              },
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Adicionar projeto'),
+            ),
+          const SizedBox(height: 4),
           TextButton(
             style: TextButton.styleFrom(foregroundColor: c.accent),
             onPressed: () => context.go('/settings'),

@@ -9,15 +9,21 @@ import '../theme/app_theme.dart';
 const kTitleBarInset = 44.0;
 
 class Pill extends StatelessWidget {
-  const Pill({super.key, required this.label, required this.color, this.mono = false, this.dot = true});
+  const Pill({super.key, required this.label, required this.color, this.mono = false, this.dot = true, this.tooltip});
 
   final String label;
   final Color color;
   final bool mono;
   final bool dot;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
+    final tooltip = this.tooltip;
+    return tooltip == null ? _pill() : Tooltip(message: tooltip, child: _pill());
+  }
+
+  Widget _pill() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(color: color.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(999)),
@@ -51,6 +57,16 @@ class Pill extends StatelessWidget {
   }
 }
 
+/// ADR statuses stay in English in the files (`accepted`…); the screen speaks Portuguese.
+String adrStatusLabel(String status) => switch (status) {
+  'accepted' => 'aceito',
+  'proposed' => 'proposto',
+  'superseded' => 'substituído',
+  'deprecated' => 'obsoleto',
+  'rejected' => 'rejeitado',
+  _ => status,
+};
+
 Color adrStatusColor(AppColors c, String status) => switch (status) {
   'accepted' => c.pass,
   'proposed' => c.accent,
@@ -72,8 +88,8 @@ class VerdictBadge extends StatelessWidget {
   final Verdict verdict;
 
   static String label(Verdict v) => switch (v) {
-    Verdict.pass => 'pass',
-    Verdict.fail => 'fail',
+    Verdict.pass => 'passou',
+    Verdict.fail => 'reprovou',
     Verdict.running => 'rodando',
     Verdict.blocked => 'bloqueado',
     Verdict.inconclusive => 'inconclusivo',
@@ -178,17 +194,22 @@ class Mono extends StatelessWidget {
 }
 
 class Muted extends StatelessWidget {
-  const Muted(this.text, {super.key, this.size = 12});
+  const Muted(this.text, {super.key, this.size = 12, this.align});
 
   final String text;
   final double size;
+  final TextAlign? align;
 
   @override
   Widget build(BuildContext context) => Text(
     text,
+    textAlign: align,
     style: TextStyle(fontSize: size, color: context.colors.textMuted),
   );
 }
+
+/// `1 projeto`, `3 projetos`: [plural] defaults to [singular] + `s`.
+String countLabel(int n, String singular, [String? plural]) => '$n ${n == 1 ? singular : plural ?? '${singular}s'}';
 
 String formatTokens(int? n) => switch (n) {
   null => '—',
