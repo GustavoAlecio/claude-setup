@@ -10,3 +10,12 @@ agents/gcp-performance.md
 agents/gcp-security.md
 agents/gcp-testing.md
 agents/gcp-cloudsql-ops.md
+agents/go-concurrency.md
+agents/go-correctness.md
+agents/go-security.md
+agents/go-testing.md
+agents/python-architecture.md
+agents/python-correctness.md
+agents/python-performance.md
+agents/python-security.md
+agents/python-testing.md

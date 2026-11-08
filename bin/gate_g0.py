@@ -130,7 +130,33 @@ def parse_golangci_json(stdout, root, repo, sev_map):
     return found
 
 
-PARSERS = {"dart_machine": parse_dart_machine, "golangci_json": parse_golangci_json}
+def parse_ruff_json(stdout, root, repo, sev_map):
+    found = []
+    start, end = stdout.find("["), stdout.rfind("]")
+    if start < 0 or end < start:
+        return found
+    try:
+        issues = json.loads(stdout[start:end + 1])
+    except ValueError:
+        return found
+    for i in issues:
+        try:
+            rel = str((root / i.get("filename", "")).resolve().relative_to(repo))
+        except ValueError:
+            rel = i.get("filename", "")
+        code = i.get("code") or "syntax"
+        found.append({
+            "id": f"G0-ANALYZE-{code}",
+            "severity": sev_map.get(code, sev_map.get("default", "major")),
+            "file": rel,
+            "line": int((i.get("location") or {}).get("row") or 0),
+            "rule_ref": code.lower(),
+            "message": i.get("message", "").strip(),
+        })
+    return found
+
+
+PARSERS = {"dart_machine": parse_dart_machine, "golangci_json": parse_golangci_json, "ruff_json": parse_ruff_json}
 
 
 def main():
@@ -143,10 +169,13 @@ def main():
     ap.add_argument("--task")
     ap.add_argument("--attempt")
     ap.add_argument("--tier")
+    ap.add_argument("--profile")
     a = ap.parse_args()
 
     repo = Path(a.repo).resolve()
-    prof = json.loads((STACKS / f"{a.stack}.json").read_text())
+    # The run's own stack (with per-run overrides such as an empty autofix) wins over the global profile.
+    override = Path(a.profile) if a.profile else None
+    prof = json.loads((override if override and override.exists() else STACKS / f"{a.stack}.json").read_text())
     markers = prof["detect"]
     sp = prof.get("sdk_prefix") or []
     prefix = sp if sp and shutil.which(sp[0]) and any((repo / m).exists() for m in prof.get("sdk_prefix_when", [])) else []

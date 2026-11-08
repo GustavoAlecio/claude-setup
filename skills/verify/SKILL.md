@@ -35,7 +35,14 @@ Relatório: início da etapa
 python3 ~/.claude/bin/wf-report.py stage-start verify --workflow-dir "$WF_DIR" ${CLAUDE_FLOW_SESSION_ID:+--session "$CLAUDE_FLOW_SESSION_ID"} || true
 ```
 
-Para G2 com runtime, o device do profile (`g2_device`) precisa estar disponível. Cheque com o dart MCP (`list_devices`); se não estiver, avise antes de disparar — o QA vai voltar `inconclusive`.
+Antes de disparar, audite o harness na fase verify (inclui o `g2_device`: plataforma existe no repo e device conectado):
+
+```bash
+python3 ~/.claude/bin/harness-audit.py --repo "$PROJECT_PATH" --stack <stack> --phase verify --quick --text
+```
+
+- **FAIL** → não dispare: o G2 voltaria `inconclusive` e gastaria a rodada. Mostre os findings; device desconectado → peça para conectar e espere o OK; `G2-PLATFORM` → o `g2_device` do profile não serve para este repo, decisão do usuário. `--fix` só com OK.
+- **major** → mostre e siga.
 
 ## 4. Disparar
 

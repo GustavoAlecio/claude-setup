@@ -112,9 +112,10 @@ Bundles are named subsets defined as plain text files under `bundles/`. Use them
 | `agents-ios` | iOS agents (5) |
 | `agents-mobile` | flutter + android + ios |
 | `agents-react` | React agents (5) |
-| `agents-backend` | NestJS + GCP agents (11, incl. `gcp-cloudsql-ops`) |
-| `agents-all` | All 36 agents |
-| `ado-flow` | Card pipeline skills (kickoff, refine, ado-*, jira-refine, pr-open, pr-status) |
+| `agents-backend` | NestJS + GCP + Go + Python agents (20, incl. `gcp-cloudsql-ops`) |
+| `agents-all` | All 45 review agents |
+| `ado-flow` | Card pipeline skills (kickoff, refine, ado-*, jira-refine, linear-refine, pr-open, pr-status) and their bin scripts |
+| `discovery` | `/discovery` + `product-devils-advocate` |
 | `all` | Everything (default) |
 
 Bundles can reference other bundles with `@<name>` lines. Bundle files are simple — feel free to edit or add your own.

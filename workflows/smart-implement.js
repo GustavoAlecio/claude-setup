@@ -118,6 +118,7 @@ function context(task) {
     A.lessons_path ? `Lessons do projeto (constraints): ${A.lessons_path}` : null,
     `Rules do projeto: ${A.project_path}/${A.stack.rules_dir} (leia as que casam com os arquivos tocados; ausente = sem rules)`,
     `ADRs relevantes: rode \`python3 ${BIN}/adr-index.py match ${A.project_path} --dir ${A.stack.adr_dir} <arquivos>\` e leia os que voltarem.`,
+    `Mapa da org: se existir .map/index.md em ${A.project_path} ou numa pasta acima (nunca abaixo), leia o índice e as notas/gerados relevantes antes de buscar no código; nota STALE não é confiável; o mapa descreve origin/development.`,
     `Task ${task.id} [${task.complexity}${task.risk === 'high' ? ', risco alto' : ''}] — ${task.title}`,
     task.description ? `Descrição: ${task.description}` : null,
     task.affects && task.affects.length ? `Escopo esperado: ${task.affects.join(', ')}` : null,
@@ -204,7 +205,7 @@ for (const task of A.tasks || []) {
 
     const g0 = await step('g0', task, attempts, tier, () =>
       agent(`Rode exatamente o comando abaixo e devolva o JSON impresso no stdout, campo a campo, sem interpretar nem resumir:
-python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --checkpoint ${cp} --tests "${(task.tests || []).join(',')}" --run-dir ${A.run_dir} --task ${task.id} --attempt ${attempts} --tier ${tier}`,
+python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --checkpoint ${cp} --tests "${(task.tests || []).join(',')}" --run-dir ${A.run_dir} --task ${task.id} --attempt ${attempts} --tier ${tier} --profile ${A.run_dir}/stack.json`,
         { label: `g0:${task.id}#${attempts}`, phase: 'G0', model: 'haiku', effort: 'low', schema: G0_VERDICT }))
     if (agentDown) { outcome = { status: 'blocked', reason: 'agent_failed' }; break }
     if (!g0) { outcome = { status: 'blocked', reason: 'g0_failed_to_run' }; break }

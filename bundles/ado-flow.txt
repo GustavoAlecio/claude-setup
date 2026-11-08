@@ -6,5 +6,15 @@ skills/ado-comment
 skills/ado-close
 skills/ado-refine
 skills/jira-refine
+skills/linear-refine
 skills/pr-open
 skills/pr-status
+bin/tracker.py
+bin/ado.sh
+bin/jira.py
+bin/pr-registry.sh
+bin/pr-inspect.sh
+bin/release-base.sh
+bin/get-project.sh
+bin/to-slug.sh
+bin/wf-report.py

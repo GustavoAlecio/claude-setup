@@ -58,6 +58,8 @@ Classifique cada arquivo modificado em uma ou mais stacks pelas regras abaixo. U
 | `android/**`, `*.kt`, `*.java` (fora de teste flutter) | `android` |
 | `ios/**`, `*.swift`, `*.m`, `*.mm`, `*.h` (fora de flutter pods) | `ios` |
 | `*.tf`, `cloudbuild*.yaml`, `app.yaml`, `.gcloudignore`, arquivos referenciando `gcloud`/`firebase` | `gcp` |
+| `*.py` | `python` |
+| `*.go` (usa focos `correctness`, `concurrency`, `security`, `testing`) | `go` |
 
 Se nenhum padrao bater para um arquivo (ex: docs, config), ignore-o do review tecnico.
 
@@ -102,6 +104,7 @@ Para cada combinacao `(stack, focus)` em `DETECTED_STACKS x FOCUSES`:
 3. Passe ao agente:
    - Lista de arquivos relevantes (paths absolutos)
    - Caminho do diff: `$REVIEWS_DIR/PR-${PR_NUM}.diff`
+   - Caminho do mapa da org (`<org>/.map/index.md`), se existir no repo ou numa pasta acima: o agente usa para contratos cross-repo, rotas, providers e endpoints em vez de grep amplo
    - Instrucao: "Leia o diff e os arquivos. Retorne JSON array de comentarios inline. Schema: `[{path, line, severity, body}]`. severity ∈ critical|major|minor|nit. Sem prosa fora do JSON.
 
      **IMPORTANTE sobre `line`:** o numero deve ser a linha **no arquivo NEW (pos-imagem)**, nao o offset dentro do diff. Para encontrar a linha correta:

@@ -24,6 +24,17 @@ Cada item de `tasks.items` precisa de `complexity`, `tier0`, `tests` e `affects`
 
 Escolha o profile em `~/.claude/stacks/*.json` cujo `detect` existe na raiz do repo ou no package root mais próximo dos `affects` (Flutter: `pubspec.yaml`; app em subdiretório como `app/` conta). Monorepo com mais de uma stack: use a do diretório onde a maioria dos `affects` cai. Nenhum profile casa → pare e diga qual stack falta (o motor não roda sem G0).
 
+### 3a. Audit do harness
+
+```bash
+python3 ~/.claude/bin/harness-audit.py --repo "$PROJECT_PATH" --stack <stack> --phase kickoff --text
+```
+
+Roda os comandos do G0 num arquivo de controle e confere SDK, deps, codegen, submódulos e o profile contra o repo.
+- **FAIL (critical)** → pare. Mostre os findings e ofereça `--fix` (link do SDK, `make setup`/pub get + build_runner, submódulo limpo). Só rode `--fix` com OK do usuário; depois, audite de novo.
+- **major** → mostre numa linha cada e siga. Submódulo que guarda o `adr_dir` fora do commit registrado merece destaque: os ADRs lidos não são os desta branch.
+- Falha de ambiente que escapar do audit e aparecer no G0 depois vira check novo no `harness-audit.py`, não lesson.
+
 ## 4. Preparar run
 
 ```bash
@@ -42,6 +53,8 @@ python3 ~/.claude/bin/wf-report.py stage-start implement --workflow-dir "$WF_DIR
 Checkpoint base:
 - `current.json.exec.checkpoint` existe (retomada ou execução anterior) → use-o.
 - Senão: `bash ~/.claude/bin/wf-checkpoint.sh create "$PROJECT_PATH"` e grave em `exec.checkpoint` **e** `exec.base_checkpoint` (o verify usa o base para o diff do ciclo inteiro).
+
+Grave o profile de stack que vai nos args (com overrides do run, ex.: `autofix: []` em repo não formatado) em `$RUN_DIR/stack.json`: o G0 lê esse arquivo via `--profile` e só cai no `~/.claude/stacks/<stack>.json` se ele não existir.
 
 Atualize `status` para `"implementing"`.
 

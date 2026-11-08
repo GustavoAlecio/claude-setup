@@ -25,3 +25,5 @@ bin/gate_g0.py
 bin/adr-index.py
 bin/routing-stats.py
 bin/to-app.py
+bin/wf-report.py
+bin/harness-audit.py

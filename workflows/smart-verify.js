@@ -68,6 +68,7 @@ function g1Prompt(reviewer, round) {
 Você é o gate G1 (arquitetural) do ciclo inteiro, lente ${reviewer}. Ignore o formato em array JSON da sua definição: devolva pela StructuredOutput com gate="G1:${reviewer}".
 Escopo: o diff do ciclo, \`bash ${BIN}/wf-checkpoint.sh diff ${A.project_path} ${A.base_checkpoint}\`.
 Referências: spec ${A.spec_path}, plano ${A.plan_path}, rules em ${A.project_path}/${A.stack.rules_dir}, ADRs via \`python3 ${BIN}/adr-index.py match ${A.project_path} --dir ${A.stack.adr_dir} <arquivos>\`${A.lessons_path ? `, lessons ${A.lessons_path}` : ''}.
+Mapa da org: se existir .map/index.md em ${A.project_path} ou numa pasta acima (nunca abaixo), leia o índice e as notas/gerados relevantes antes de buscar no código; nota STALE não é confiável; o mapa descreve origin/development.
 Foque no que só aparece olhando o conjunto: fronteiras entre camadas/pacotes, contratos entre tasks, duplicação entre arquivos, DI/rotas registradas, estado inconsistente entre BLoCs.
 critical/major exigem linha, cenário concreto e rule_ref (rule, ADR ou convenção do CLAUDE.md). Resto é minor/nit.
 Rodada ${round}. Ao final: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role g1 --stage verify --verdict <pass|fail> --count <n bloqueantes> --note ${reviewer}\``
@@ -76,6 +77,7 @@ Rodada ${round}. Ao final: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_di
 function qaPrompt(round) {
   return `Repo: ${A.project_path}
 Você é o gate G2 (QA) do ciclo. Devolva pela StructuredOutput com gate="G2".
+Mapa da org: se existir .map/index.md em ${A.project_path} ou numa pasta acima (nunca abaixo), leia o índice e as notas/gerados relevantes antes de buscar no código; nota STALE não é confiável; o mapa descreve origin/development.
 1. Leia os critérios de aceite em ${A.spec_path} e a "Estratégia de testes" em ${A.plan_path}.
 2. Rode a suíte dos pacotes tocados (arquivos: \`bash ${BIN}/wf-checkpoint.sh changed ${A.project_path} ${A.base_checkpoint}\`).
 3. ${A.stack.g2_runtime || `Para critérios de comportamento visível, valide em runtime no device "${A.stack.g2_device}" com as ferramentas do dart MCP (launch_app, flutter_driver, get_widget_tree, get_runtime_errors, hot_reload). Pare o app ao terminar (stop_app).`}

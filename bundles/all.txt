@@ -10,3 +10,4 @@ workflows/
 stacks/
 skills/orcamento
 @ado-flow
+@discovery

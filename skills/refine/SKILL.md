@@ -29,6 +29,7 @@ mkdir -p "$DETAILS_DIR"
 Refine no concreto, nunca no abstrato. Antes de escrever uma linha do detalhamento:
 
 1. **Convencoes:** leia `CLAUDE.md` do projeto (se existir) e `DESIGN.md` (se existir). Sao constraints, nao sugestoes.
+   **Mapa da org:** se existir `.map/index.md` no repo ou numa pasta acima (nunca procure abaixo), leia o índice e as notas/gerados relevantes antes de grep/`Explore`. Nota marcada STALE não é confiável: confira as âncoras. O mapa descreve `origin/development`; confira o diff da branch por cima.
 2. **Estrutura relevante:** identifique os diretorios/arquivos mais provaveis de serem tocados pela tarefa. Faca `ls`/`tree` direcionado.
 3. **Codigo existente:** leia os arquivos chave que a tarefa modifica ou se conecta. Patterns, abstracoes, contratos atuais.
 4. **Reuso:** antes de propor algo novo, busque componente/servico/util similar via `grep`. Liste explicitamente o que da pra reaproveitar.
