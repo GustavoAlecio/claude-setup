@@ -99,13 +99,15 @@ Sem evidência de runtime: `python3 ~/.claude/bin/wf-report.py real-data --workf
 
 Apresente em 3-5 linhas o que o PR conterá (feature, tasks, ADRs propostos). Com `human_override`, o corpo do PR diz que o ciclo **não** foi verificado, com o motivo e os riscos aceitos.
 
+Repo sem `remote.origin` (`git config --get remote.origin.url` vazio) → não há onde abrir PR: siga sem PR, diga isso no resumo e pule este gate.
+
 Gate `pr` (decisão determinística; nunca leia `gates.json`):
 
 ```bash
 python3 ~/.claude/bin/wf-report.py gate pr
 ```
 
-- `skip`: trate como Aprovar.
+- `skip`: trate como Aprovar. Se o `/pr-open` parar, siga sem PR e diga o motivo no resumo (`/pr-open` avulso abre depois); não espere o usuário.
 - `ask`: faça um `AskUserQuestion` ("Abrir o PR deste ciclo?") com as opções:
   - **Aprovar (Recommended)**: invoque `/pr-open --from-complete` (ele lê o card do `tracker` do `current.json`). A última linha do resultado é a URL do PR; grave-a:
     ```bash
