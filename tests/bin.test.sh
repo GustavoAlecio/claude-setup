@@ -809,4 +809,28 @@ json.dump({"tasks": {"items": items}}, open(sys.argv[1] + "/current.json", "w"))
 PY
 tc >/dev/null || fail "AC-10: Red→Green in one task and a standalone regression test are accepted: $(tc)"
 
+echo "- harness-audit: g2 targets come from the app roots and platform dirs of the repo"
+G=$(tmp); mkdir -p "$G/apps/loja/lib" "$G/apps/loja/web" "$G/apps/loja/macos" "$G/apps/loja/build/web" "$G/packages/core/lib" "$G/mobile/lib" "$G/mobile/android"
+touch "$G/pubspec.yaml" "$G/apps/loja/pubspec.yaml" "$G/apps/loja/lib/main.dart" "$G/packages/core/pubspec.yaml" "$G/mobile/pubspec.yaml" "$G/mobile/lib/main.dart"
+python3 - "$BIN" "$G" <<'PY' || fail "g2 targets"
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("ha", sys.argv[1] + "/harness-audit.py"); ha = importlib.util.module_from_spec(spec); spec.loader.exec_module(ha)
+repo = Path(sys.argv[2]).resolve(); prof = {"name": "flutter", "g2_device": "auto"}
+devs = [{"id": "chrome", "name": "Chrome", "targetPlatform": "web-javascript"}, {"id": "macos", "name": "macOS", "targetPlatform": "darwin-arm64"}]
+got = {(t["app"], t["platform"], t["device"]) for t in ha.g2_targets(prof, repo, devs)}
+assert got == {("apps/loja", "web", "chrome"), ("apps/loja", "macos", "macos"), ("mobile", "android", None)}, got
+ids = lambda out: [(f["id"], f["severity"]) for f in out]
+ha.flutter_devices = lambda prof, repo: devs
+out = []; ha.check_g2_device(prof, repo, "verify", out)
+assert ids(out) == [("G2-TARGET-SKIP", "minor")], out
+ha.flutter_devices = lambda prof, repo: []
+out = []; ha.check_g2_device(prof, repo, "verify", out)
+assert ("G2-DEVICE", "critical") in ids(out), out
+out = []; ha.check_g2_device(prof, repo, "kickoff", out)
+assert ("G2-DEVICE", "major") in ids(out), out
+out = []; ha.check_g2_device(prof, repo / "packages" / "core", "verify", out)
+assert ids(out) == [("G2-PLATFORM", "major")], out
+PY
+
 echo "OK"

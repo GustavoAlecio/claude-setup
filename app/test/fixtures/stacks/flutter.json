@@ -22,7 +22,7 @@
   "g1_task_reviewer": "flutter-architecture",
   "g1_reviewers": ["flutter-architecture", "flutter-correctness", "dart-correctness"],
   "g2_agent": "qa-flutter",
-  "g2_device": "macos",
+  "g2_device": "auto",
   "rules_dir": ".claude/rules",
   "adr_dir": "docs/adr"
 }

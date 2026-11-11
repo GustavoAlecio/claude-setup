@@ -44,8 +44,16 @@ Antes de disparar, audite o harness na fase verify (inclui o `g2_device`: plataf
 python3 ~/.claude/bin/harness-audit.py --repo "$PROJECT_PATH" --stack <stack> --phase verify --quick --text
 ```
 
-- **FAIL** → não dispare: o G2 voltaria `inconclusive` e gastaria a rodada. Mostre os findings; device desconectado → peça para conectar e espere o OK; `G2-PLATFORM` → o `g2_device` do profile não serve para este repo, decisão do usuário. `--fix` só com OK.
+- **FAIL** → não dispare: o G2 voltaria `inconclusive` e gastaria a rodada. Mostre os findings; device desconectado → peça para conectar e espere o OK; `G2-PLATFORM` → o `g2_device` fixo do profile não serve para este repo (use `auto`), decisão do usuário. `--fix` só com OK.
 - **major** → mostre e siga.
+
+Profile com `g2_device: "auto"` (Flutter): o harness descobre os alvos de runtime pelo repo. Cada app (`pubspec.yaml` + `lib/main.dart`, na raiz ou em subpasta de monorepo) vira um alvo por pasta de plataforma que tiver (`web/`, `macos/`, `ios/`, `android/`, `windows/`, `linux/`) e device conectado. Leia os alvos e passe-os em `stack.g2_targets` nos args do workflow; o G2 valida em todos:
+
+```bash
+python3 ~/.claude/bin/harness-audit.py --repo "$PROJECT_PATH" --stack <stack> --g2-targets
+```
+
+Lista vazia com audit em PASS = repo sem app executável (só pacotes): o G2 fica nos testes. `G2-TARGET-SKIP` (minor) avisa plataforma do repo sem device conectado; mostre e siga.
 
 ## 4. Disparar
 

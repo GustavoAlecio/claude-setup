@@ -137,13 +137,21 @@ critical/major exigem linha, cenário concreto e rule_ref (rule, ADR ou convenç
 Rodada ${round}. Ao final: \`python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role g1 --stage verify --verdict <pass|fail> --count <n bloqueantes> --note ${reviewer}\``
 }
 
+function g2RuntimeStep() {
+  const tools = 'com as ferramentas do dart MCP (launch_app, flutter_driver, get_widget_tree, get_runtime_errors, hot_reload). Pare o app ao terminar (stop_app).'
+  const targets = Array.isArray(A.stack.g2_targets) ? A.stack.g2_targets.filter(t => t && t.device) : []
+  if (!targets.length) return `Para critérios de comportamento visível, valide em runtime no device "${A.stack.g2_device}" ${tools}`
+  const list = targets.map(t => `app "${t.app}" (plataforma ${t.platform}) no device "${t.device}"`).join('; ')
+  return `Para critérios de comportamento visível, valide em runtime em cada alvo detectado no repo: ${list}. Suba o app a partir do diretório do alvo, ${tools} Cite em evidence o alvo de cada observação. Alvo que não subir deixa o verdict inconclusive, com o motivo; não troque de device em silêncio.`
+}
+
 function qaPrompt(round) {
   return `Repo: ${A.project_path}
 Você é o gate G2 (QA) do ciclo. Devolva pela StructuredOutput com gate="G2".
 Mapa da org: se existir .map/index.md em ${A.project_path} ou numa pasta acima (nunca abaixo), leia o índice e as notas/gerados relevantes antes de buscar no código; nota STALE não é confiável; o mapa descreve origin/development.
 1. Leia os critérios de aceite em ${A.spec_path} e a "Estratégia de testes" em ${A.plan_path}.
 2. Rode a suíte dos pacotes tocados (arquivos: \`bash ${BIN}/wf-checkpoint.sh changed ${A.project_path} ${A.base_checkpoint}\`).
-3. ${A.stack.g2_runtime || `Para critérios de comportamento visível, valide em runtime no device "${A.stack.g2_device}" com as ferramentas do dart MCP (launch_app, flutter_driver, get_widget_tree, get_runtime_errors, hot_reload). Pare o app ao terminar (stop_app).`}
+3. ${A.stack.g2_runtime || g2RuntimeStep()}
 4. Para cada critério: PASS / PARTIAL / FAIL / UNTESTABLE, com evidência (arquivo:linha, teste, ou o que observou no app). PASS só com evidência executada (teste que rodou, observação no app); leitura de código sem execução é UNTESTABLE. Não alegue execução de app, device ou golden sem artefato correspondente em evidence.
 5. Cada PARTIAL ou FAIL vira um finding major com o arquivo mais provável de conter a correção. Erro de runtime (exception, overflow, assert) é critical.
 6. verdict: fail se houver finding bloqueante; inconclusive se não conseguiu validar (app não subiu, device indisponível) — explique em evidence.

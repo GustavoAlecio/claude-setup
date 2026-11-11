@@ -274,15 +274,62 @@ def check_g0_smoke(prof, repo, out, evidence):
             evidence.append(f"G0 test ok: {' '.join(args)} ({test})")
 
 
-def check_g2_device(prof, repo, phase, out):
-    device = prof.get("g2_device")
-    if not device or prof["name"] != "flutter":
-        return
+G2_SKIP_DIRS = {"build", ".dart_tool", ".git", ".fvm", "node_modules", "ios", "android", "macos", "web", "linux", "windows"}
+
+
+def flutter_devices(prof, repo):
     sp, pinned = sdk_prefix(prof, repo)
     prefix = sp if pinned and shutil.which(sp[0]) else []
     rc, stdout, err = sh(prefix + ["flutter", "devices", "--machine"], repo, timeout=120)
     m = re.search(r"\[.*\]", stdout, re.S)
-    devices = json.loads(m.group(0)) if rc == 0 and m else []
+    return json.loads(m.group(0)) if rc == 0 and m else []
+
+
+def flutter_app_roots(repo, depth=3):
+    """Dirs with pubspec.yaml + lib/main.dart: the repo root, or the apps of a monorepo/pub workspace."""
+    roots, stack = [], [(repo, 0)]
+    while stack:
+        d, n = stack.pop()
+        if (d / "pubspec.yaml").is_file() and (d / "lib" / "main.dart").is_file():
+            roots.append(d)
+        if n < depth:
+            stack.extend((c, n + 1) for c in sorted(d.iterdir(), reverse=True)
+                         if c.is_dir() and c.name not in G2_SKIP_DIRS and not c.name.startswith("."))
+    return roots
+
+
+def g2_targets(prof, repo, devices=None):
+    """One target per (app root, platform dir present). `device` is None when nothing connected runs that platform."""
+    devices = flutter_devices(prof, repo) if devices is None else devices
+    targets = []
+    for root in flutter_app_roots(repo):
+        for prefix, pdir in PLATFORM_DIRS.items():
+            if not (root / pdir).is_dir():
+                continue
+            dev = next((d for d in devices if str(d.get("targetPlatform", "")).startswith(prefix)), None)
+            targets.append({"app": str(root.relative_to(repo)) or ".", "platform": pdir,
+                            "device": dev["id"] if dev else None})
+    return targets
+
+
+def check_g2_device(prof, repo, phase, out):
+    device = prof.get("g2_device")
+    if not device or prof["name"] != "flutter":
+        return
+    devices = flutter_devices(prof, repo)
+    if device == "auto":
+        targets = g2_targets(prof, repo, devices)
+        ready = [t for t in targets if t["device"]]
+        if not targets:
+            out.append(finding("G2-PLATFORM", "major", "g2_device=auto não achou app Flutter com pasta de plataforma (web/, macos/, ios/, android/, windows/, linux/): G2 fica só nos testes"))
+        elif not ready:
+            sev = "critical" if phase == "verify" else "major"
+            want = ", ".join(sorted({t["platform"] for t in targets}))
+            out.append(finding("G2-DEVICE", sev, f"g2_device=auto: nenhum device conectado para {want} (flutter devices)"))
+        for t in targets:
+            if not t["device"]:
+                out.append(finding("G2-TARGET-SKIP", "minor", f"{t['app']} tem {t['platform']}/ mas não há device conectado para ela: alvo fora do G2", t["app"]))
+        return
     dev = next((d for d in devices if device in (d["id"], d["name"])), None)
     platform = (dev or {}).get("targetPlatform", "darwin" if device == "macos" else "")
     pdir = next((v for k, v in PLATFORM_DIRS.items() if platform.startswith(k)), None)
@@ -326,9 +373,13 @@ def main():
     ap.add_argument("--fix", action="store_true")
     ap.add_argument("--quick", action="store_true", help="skip running the G0 analyze/test commands")
     ap.add_argument("--text", action="store_true")
+    ap.add_argument("--g2-targets", action="store_true", help="print the runtime targets (app, platform, device) as JSON and exit")
     a = ap.parse_args()
     repo = Path(a.repo).expanduser().resolve()
     prof = json.loads((STACKS / f"{a.stack}.json").read_text())
+    if a.g2_targets:
+        print(json.dumps([t for t in g2_targets(prof, repo) if t["device"]], ensure_ascii=False))
+        return
 
     fixed = [] if a.fix else None
     findings, evidence = audit(prof, repo, a.phase, a.quick, fixed)

@@ -96,7 +96,7 @@ All gates return the same verdict shape:
   "g1_task_reviewer": "flutter-architecture",
   "g1_reviewers": ["flutter-architecture", "flutter-correctness", "dart-correctness"],
   "g2_agent": "qa-flutter",
-  "g2_device": "macos"
+  "g2_device": "auto"
 }
 ```
 
@@ -130,7 +130,7 @@ Each run writes to `~/.claude/workflow/<project>/runs/<run-id>/`:
 
 - Claude Code with dynamic workflows enabled (`/config` → Dynamic workflows).
 - `python3`, `git`, `node` (tests only).
-- Flutter stack: `dart` / `flutter` on PATH (or `fvm`), the `dart-flutter` MCP server for G2 runtime checks, and the `g2_device` target enabled in the app.
+- Flutter stack: `dart` / `flutter` on PATH (or `fvm`), the `dart-flutter` MCP server for G2 runtime checks, and a connected device for at least one platform of the app. With `g2_device: "auto"` the harness derives the G2 runtime targets from the repo: one per app root (`pubspec.yaml` + `lib/main.dart`, monorepo members included) and platform folder (`web/`, `macos/`, `ios/`, `android/`, `windows/`, `linux/`) that has a connected device; G2 validates on all of them. A fixed device id still works.
 
 ## When to use the full flow vs `/fix`
 
