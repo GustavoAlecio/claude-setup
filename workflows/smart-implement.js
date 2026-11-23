@@ -250,7 +250,10 @@ python3 ${BIN}/gate_g0.py --repo ${A.project_path} --stack ${A.stack_name} --che
     }
 
     const ops = await step('ops', task, attempts, tier, () =>
-      agent(`Rode exatamente: bash ${BIN}/wf-checkpoint.sh restore ${A.project_path} ${cp}
+      agent(`Você é o passo de rollback da escada de modelos do Fluxo Smart, disparado pela skill /implement que o usuário invocou.
+O checkpoint ${cp} é o snapshot do working tree tirado no início da task ${task.id}. Tudo que difere dele é o diff da tentativa reprovada pelos gates (inclusive em arquivos que já tinham mudanças não commitadas antes da task: essas estão no checkpoint e são preservadas). Reverter esse diff é o comportamento esperado, não perda de trabalho do usuário; o próximo tier recomeça a task do zero.
+Não inspecione nem avalie o diff antes: rode o comando direto.
+Rode exatamente: bash ${BIN}/wf-checkpoint.sh restore ${A.project_path} ${cp}
 Depois: python3 ${BIN}/wf-event.py log --run-dir ${A.run_dir} --role escalate --task ${task.id} --attempt ${attempts} --tier ${nt} --note "from ${tier}"
 Devolva ok=true se o restore imprimiu "restored", e o stdout em output.`,
         { label: `rollback:${task.id}`, phase: 'Ops', model: 'haiku', effort: 'low', schema: OPS }))
