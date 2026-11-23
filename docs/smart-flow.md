@@ -20,7 +20,7 @@ kickoff ─► specify ─► challenge-spec ─► plan ─► tasks ─► imp
 | `/verify` | `smart-verify` workflow | opus / sonnet | verify report, re-entry runs |
 | `/complete` | skill | sonnet | proposed ADRs, lessons, `routing.json`, archived cycle |
 
-`/auto` removes the approval gates between stages. It never auto-decides a `BLOQUEANTE` challenge, a `backtrack` or a `blocked` run.
+`/auto` skips the confirmations between stages that depend on it (such as the kickoff classification). It does not decide the `spec`, `plan`, `tasks` and `pr` gates: `wf-report.py gate` does, from the report (see Decision gates). It never auto-decides a `BLOQUEANTE` challenge, a `backtrack` or a `blocked` run.
 
 ## The model ladder
 
@@ -77,6 +77,32 @@ All gates return the same verdict shape:
   "evidence": ["…"]
 }
 ```
+
+## Decision gates
+
+The `spec`, `plan`, `tasks` and `pr` gates are decision summaries, not document approvals. Before a gate, the skill drafts candidates, the `gate-critic` agent writes `$WF_DIR/.gate-<g>.json`, and `wf-report.py brief` validates it and stores it as the optional `stages[owner].gate` block of `report.json` (version 1; a report without a block is unchanged). The block carries `summary`, `risks`, `questions` (options with the author's and the critic's preference, and an optional `header` of up to 12 characters shown above the question in place of its id), `omitted` (what the cut dropped, always whole) and, in `pr`, the `why`/`anchor` of each point plus the `base` and `tree` it was judged against. Limits and the one-sentence rule are checked before any write, and the refusal text goes back to the critic once.
+
+| Command | Does |
+|---|---|
+| `brief <g> --workflow-dir W --file JSON [--candidates FILE] [--tree @REF]` | validates and records the block, prints the rendered summary. `pr` requires `--tree` |
+| `gate <g> --workflow-dir W` | prints `ask` or `skip` (the stop rule below); writes `passed` only on `skip` for an `open` plan/tasks block |
+| `show <g> --workflow-dir W` | read-only: `{status, round, text_md, questions}` ready for `AskUserQuestion`; in `pr`, each pending question also carries `why`/`anchor` and `text_md` lists them under `Pontos:`; `{"status":"absent"}` without a block |
+| `answer <g> --workflow-dir W (--question ID (--option ID \| --text-file MD) \| --text-file MD \| --approve \| --reject)` | records the answer; `--text-file` alone is the Adjust of the no-questions branch and moves the block to `revising` (up to a round limit, then the skill offers approve as is, go back or abort) |
+| `reopen pr --workflow-dir W` | for every answer other than `ok` in a `revising` `pr` block, appends a pending `P<round>.<n>` task (risk high, tier0 opus, `affects` the anchor path) to `current.json` and `tasks.md`; idempotent by id, leaves `report.json` alone |
+
+None of these archives `report.json`: a missing block or a report from another cycle is exit 2 and the file keeps its bytes. `gate` without `--workflow-dir` exits 2.
+
+**Stop rule.** The `auto_mode.flag` is not read. `required` is `spec` and `pr`, plus whatever `~/.claude/workflow/gates.json` (`{"required": [...]}`) adds; an invalid or empty file means only `spec` and `pr`.
+
+| Gate state | In `required` (`spec`, `pr`, or listed) | Not in `required` (`plan`, `tasks` by default) |
+|---|---|---|
+| no block, other cycle, no `current.json`/`report.json` | ask | ask |
+| block `open` with an unanswered question | ask | ask |
+| block `open`, every question answered | ask | skip, writes `passed` |
+| `approved` or `passed` | skip | skip |
+| any other status (`revising`, `rejected`) | ask | ask |
+
+Unconditional stops (a blocking challenge, `backtrack`, `blocked`, an existing branch, a `release/*` base, reset, push) stay outside this table. `stage-start` on the owner stage drops the block unless it is `revising`, so the `pr` round pending a `reopen pr` survives the re-entry; the next `brief` records `round: 2` and moves the previous one to `history`.
 
 ## Checkpoints
 

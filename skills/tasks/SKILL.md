@@ -142,16 +142,70 @@ python3 ~/.claude/bin/wf-report.py stage-end tasks --workflow-dir "$WF_DIR" --su
 
 Apresente o resumo: "N tasks criadas (Xs S, Xm M, Xl L) · tier0: Xh haiku, Ys sonnet, Zo opus · K de risco alto."
 
-Gate `tasks` (decisão determinística; nunca leia `gates.json`):
+O gate pergunta só as decisões em aberto das tasks, não a aprovação do documento. Nunca leia `gates.json` nem o `report.json`: o script decide e entrega a pergunta pronta.
 
-```bash
-python3 ~/.claude/bin/wf-report.py gate tasks
+### 7a. Candidatas
+
+Escreva com **Write** em `$WF_DIR/.gate-tasks.candidates.json` uma lista JSON com as escolhas da quebra em tasks que o usuário pode querer mudar (recorte ou ordem com alternativa real, task de risco alto que poderia ser dividida, override de `tier0` aplicado). Lista vazia (`[]`) se não houver:
+
+```json
+[{"id": "C1", "text": "<a decisão, em uma frase>",
+  "options": [{"id": "a", "label": "<curto>", "consequence": "<o que muda>"}, {"id": "b", "label": "...", "consequence": "..."}],
+  "assumed": "a", "prefers": {"author": "a"}}]
 ```
 
-- `skip`: informe em 1 linha e execute `/implement`.
-- `ask`: o `stage-end` acima já rodou; faça um `AskUserQuestion` ("Tasks aprovadas para implementar?") com as opções:
-  - **Aprovar (Recommended)**: execute `/implement` na mesma sessão.
-  - **Ajustar**: o usuário escreve o ajuste em Other; aplique o texto e repita este mesmo gate.
-  - **Rejeitar**: rode `stage-end tasks --status blocked` (mesmo `--summary-file`), mantenha o `status` do `current.json` e encerre o turno.
-- A resposta do usuário vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision tasks --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.
+`assumed` é a opção que o `tasks.md` já assume.
 
+### 7b. Crítico
+
+Spawne o agente `gate-critic` (Agent tool, `subagent_type: gate-critic`) com: gate `tasks`, artefato `tasks.md` (em `$WF_DIR`; as descrições completas estão em `tasks.items` do `current.json`), candidatas `$WF_DIR/.gate-tasks.candidates.json` e saída `$WF_DIR/.gate-tasks.json`. Não resuma as tasks no prompt; ele lê.
+
+### 7c. Brief
+
+Sem `|| true`: a recusa é o sinal para o reenvio.
+
+```bash
+python3 ~/.claude/bin/wf-report.py brief tasks --workflow-dir "$WF_DIR" --file "$WF_DIR/.gate-tasks.json" --candidates "$WF_DIR/.gate-tasks.candidates.json"
+```
+
+- Saída 0: siga ao gate.
+- Saída 2 com `rodadas esgotadas` no stderr: vá para "Rodadas esgotadas" (7f).
+- Outra saída 2: reenvie o stderr ao `gate-critic` uma única vez (mesmo prompt + o stderr) e rode o `brief` de novo. Na segunda recusa siga sem bloco: o gate devolve `ask` e você faz a pergunta única do ramo sem perguntas, avisando "resumo indisponível".
+
+### 7d. Gate
+
+```bash
+python3 ~/.claude/bin/wf-report.py gate tasks --workflow-dir "$WF_DIR"
+```
+
+Qualquer saída diferente de `skip` é `ask`. Nos dois casos leia o bloco pronto:
+
+```bash
+python3 ~/.claude/bin/wf-report.py show tasks --workflow-dir "$WF_DIR"
+```
+
+- `skip`: imprima o `text_md` do `show` e a linha `Gate tasks: passed, sem decisão em aberto` e execute `/implement`.
+- **`ask` com perguntas** (`questions` do `show` não vazio): imprima o `text_md` e faça um `AskUserQuestion` com as `questions` do `show` como vieram (`header`, `question`, `options` com `label`/`description`, `multiSelect: false`); não reescreva, não reordene e não marque recomendação, o script já resolveu. Para cada resposta, ache o `id` da opção pelo `label` escolhido e grave:
+  ```bash
+  python3 ~/.claude/bin/wf-report.py answer tasks --workflow-dir "$WF_DIR" --question <id da pergunta> --option <id da opção>
+  ```
+  Texto livre (Other): escreva-o com **Write** em `$WF_DIR/.gate-answer.md` e troque `--option <id>` por `--text-file "$WF_DIR/.gate-answer.md"`. Depois rode o `show` de novo: `approved` → execute `/implement`; `revising` → 7e.
+- **`ask` sem perguntas** (`questions` vazio, ou `{"status":"absent"}`): imprima o `text_md` (ou "resumo indisponível" sem bloco) e faça a pergunta única `AskUserQuestion` ("Tasks aprovadas para implementar?"):
+  - **Aprovar (Recomendado)**: `answer tasks --workflow-dir "$WF_DIR" --approve` e execute `/implement` na mesma sessão.
+  - **Ajustar**: o usuário escreve o ajuste em Other; grave-o com **Write** em `$WF_DIR/.gate-answer.md`, rode `answer tasks --workflow-dir "$WF_DIR" --text-file "$WF_DIR/.gate-answer.md"` (leva a `revising`) e siga para 7e.
+  - **Rejeitar**: `answer tasks --workflow-dir "$WF_DIR" --reject`, rode `stage-end tasks --status blocked` (mesmo `--summary-file`), mantenha o `status` do `current.json` e encerre o turno.
+  - Sem bloco ("resumo indisponível") não há o que gravar com `answer`: Aprovar e Rejeitar seguem igual sem ele, e Ajustar aplica o texto nas tasks (`current.json` e `tasks.md`, rodando o `tasks-check` de novo) e repete o gate desde 7a.
+- Toda resposta do usuário também vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision tasks --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.
+
+### 7e. Revising
+
+Revise as tasks (`current.json` e `tasks.md`, com o `tasks-check` saindo 0) com as respostas (opções diferentes de `assumed` e textos livres), reescreva as candidatas (7a) e chame o `gate-critic` (7b) dizendo o que mudou desde a rodada anterior, que vira `changes` (1 a 3 linhas). Rode o `brief` (7c), que grava a rodada seguinte, e o gate (7d) de novo.
+
+### 7f. Rodadas esgotadas
+
+O `brief` recusou a quarta rodada. Faça um `AskUserQuestion` com:
+- **Aprovar como está**: siga sem chamar o gate de novo e execute `/implement`.
+- **Voltar à etapa anterior**: rode `stage-end tasks --status blocked` (mesmo `--summary-file`) e indique `/plan` para rever o plano.
+- **Abortar**: rode `stage-end tasks --status blocked` e encerre o turno.
+
+A escolha vira `decision --by user` como acima.

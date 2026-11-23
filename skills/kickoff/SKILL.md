@@ -233,7 +233,7 @@ python3 ~/.claude/bin/wf-report.py stage-end kickoff --workflow-dir "$WF_DIR" --
 
 **Invoque `/specify`** usando como descrição de entrada: o card (título + descrição + critérios de aceite) **+ o doc de refino recém-gerado** (`$WF_DIR/details/<slug>.md`). Na rota Linear, inclua também a **RFC** lida no refine — ela é o input principal da spec. Diga ao `/specify` explicitamente para se basear nesse material em vez de pedir a descrição ao usuário.
 
-A partir daí o Flow Smart segue seu curso normal (specify → challenge-spec → plan → tasks → implement → verify → complete), com os gates conforme `auto_mode.flag`. Implement e verify rodam como workflows com escada de modelos; `blocked`/`backtrack` sempre param para decisão humana.
+A partir daí o Flow Smart segue seu curso normal (specify → challenge-spec → plan → tasks → implement → verify → complete), com os gates decididos por `wf-report.py gate` (independente do `auto_mode.flag`). Implement e verify rodam como workflows com escada de modelos; `blocked`/`backtrack` sempre param para decisão humana.
 
 Vínculo do PR no fim do ciclo: o `tracker` já está no `current.json`, então `/pr-open` vincula o PR sozinho.
 

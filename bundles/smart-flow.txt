@@ -13,6 +13,7 @@ skills/fix
 skills/app
 agents/dev-implementer.md
 agents/spec-challenger.md
+agents/gate-critic.md
 workflows/
 bin/current_json.py
 bin/capture-metrics.sh
