@@ -123,6 +123,9 @@ printf '{"tasks":[
 {"id":"T8","complexity":"M","risk":"high","status":"done","attempts":2,"escalations":["e1","e2"],"tier":"opus"},
 {"id":"T9","complexity":"M","risk":"high","status":"blocked","attempts":4,"escalations":[],"tier":"unknown"}
 ]}' > "$H/.claude/workflow/test1/runs/run2/result.json"
+# A verify run echoes the same tasks and must not be counted
+mkdir -p "$H/.claude/workflow/test1/runs/verify-20260101T000000Z"
+cp "$H/.claude/workflow/test1/runs/run1/result.json" "$H/.claude/workflow/test1/runs/verify-20260101T000000Z/result.json"
 # Test with existing routing.json that has extra keys
 printf '{"extra_key":"preserve_me","overrides":{"S:low":{"tier0":"haiku","reason":"old"}}}' > "$H/.claude/projects/test1/routing.json"
 # Run routing-stats with --write

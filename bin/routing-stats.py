@@ -22,6 +22,9 @@ def results(project):
     globs = [f"workflow/{project or '*'}/runs/*/result.json", f"projects/{project or '*'}/history/*/runs/*/result.json"]
     for g in globs:
         for p in HOME.glob(g):
+            # A verify result echoes the cycle's tasks: counting it would double every task as a tier0 pass.
+            if p.parent.name.startswith("verify-"):
+                continue
             try:
                 yield json.loads(p.read_text())
             except (json.JSONDecodeError, OSError):

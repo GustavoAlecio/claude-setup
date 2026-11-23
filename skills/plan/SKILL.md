@@ -84,7 +84,16 @@ Sem gatilho, siga para a seção 7. Com gatilho, anuncie em 1 linha ("Plano via 
 { "project_path": "<PROJECT_PATH>", "spec_path": "<WF_DIR>/spec.md", "plan_path": "<WF_DIR>/plan.md",
   "rules_dir": ".claude/rules", "adr_dir": "docs/adr", "lessons_path": "<se existir>" }
 ```
-Ao receber o resultado: grave-o em `$WF_DIR/tot-plan.json` (o `/complete` usa os `adr_candidates`), mostre vencedor + placar + enxertos em 3 linhas, confira que o `plan.md` segue o template abaixo e pule para a seção 8.
+Ao receber o resultado: grave-o inteiro em `$WF_DIR/tot-plan.json` (o `/complete` usa os `adr_candidates`; o resto é a trilha de auditoria dos juízes). Mostre em até 5 linhas:
+- vencedor + placar por ângulo (+ `tie_break` se houver);
+- por juiz: escolha, nº de afirmações verificadas / refutadas (`agreement.claims_checked` / `claims_refuted`);
+- concordância: `same_winner` e o maior `total_spread`;
+- enxertos: aplicados / sugeridos (`grafts_applied`);
+- se `degraded`, diga o motivo (juiz faltando, `scored_all: false` ou `invalid_scores`) — o placar ficou menos confiável.
+
+A visão agregada entre ciclos (os juízes valem o custo?) sai de `python3 ~/.claude/bin/tot-stats.py [--project NAME] [--list]`.
+
+Confira que o `plan.md` segue o template abaixo e pule para a seção 8.
 
 ## 7. Gerar plano tecnico
 
