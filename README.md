@@ -42,7 +42,7 @@ These are invoked automatically by the `review` skill based on the stack of the 
 
 Plus one ops agent: `gcp-cloudsql-ops` — inspects and operates on GCP Cloud SQL (PostgreSQL) instances via `gcloud sql connect`.
 
-Smart Flow agents: `dev-implementer` (implements one task; its model is set by the ladder), `spec-challenger` (attacks a spec before planning), `qa-flutter` (G2: acceptance criteria against tests and the running app).
+Smart Flow agents: `dev-implementer` (implements one task; its model is set by the ladder), `spec-challenger` (attacks a spec before planning), `gate-critic` (cuts a gate's candidates down to the user's decisions), `qa-flutter` (G2: acceptance criteria against tests and the running app).
 
 ### Workflows (`workflows/`) and stack profiles (`stacks/`)
 

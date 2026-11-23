@@ -1,11 +1,11 @@
 ---
 id: 0021
 title: Gates do Fluxo como AskUserQuestion decididos por wf-report.py, respondidos no Fluxo com a sessão embutida
-status: accepted
+status: superseded
 date: 2026-10-02
 affects: ["bin/wf-report.py", "skills/*/SKILL.md", "engine/sessions.mjs", "app/lib/features/flow/**", "app/lib/features/sessions/session_view.dart", "app/lib/data/flow_aggregates.dart", "app/lib/data/session_reducer.dart"]
 supersedes: []
-superseded_by: []
+superseded_by: [0029]
 tags: [workflow, skills, flutter, engine]
 ---
 

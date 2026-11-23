@@ -253,6 +253,497 @@ expect_exit 3 stage-start specify --workflow-dir "$N"
 expect_exit 3 reset --workflow-dir "$N"
 [ ! -e "$N/report.json" ] || fail "report.json written without current.json"
 
+echo "- wf-report: subcommands that never archive refuse a missing or foreign report untouched"
+report_state() {
+  if [ -f "$1/report.json" ]; then python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$1/report.json"; else echo absent; fi
+  ls -A "$1" | grep '^report\..*\.json$' || true
+}
+report_snap() { SNAP_STATE=$(report_state "$1"); }
+report_untouched() { [ "$(report_state "$1")" = "$SNAP_STATE" ] || fail "report.json changed or archived: $2"; }
+wfr_as() {
+  local cmd=$1 dir=$2 got=0
+  env -u CLAUDE_FLOW_SESSION_ID HOME="$HOME_BIN_SHIM" python3 - "$BIN/wf-report.py" "$cmd" "$dir" "$BRIEF_OK" 2>"$dir/.err" <<'PY' || got=$?
+import argparse, importlib.util, sys
+spec = importlib.util.spec_from_file_location("wf_report", sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m.parse_args = lambda: argparse.Namespace(cmd=sys.argv[2], workflow_dir=sys.argv[3], name="plan", file=sys.argv[4], candidates=None)
+m.main()
+PY
+  echo "$got"
+}
+BRIEF_OK=$(tmp)/brief.json
+cat > "$BRIEF_OK" <<'JSON'
+{"summary": "Grava em report.json. Fim.", "artifact": "plan.md",
+ "risks": [{"id": "R1", "text": "Lock invertido trava o relatório", "source": "critic"}],
+ "questions": [{"id": "Q1", "text": "Onde fica a regra de parada?",
+   "options": [{"id": "a", "label": "No script", "consequence": "Testável por e2e"},
+               {"id": "b", "label": "Na skill", "consequence": "Depende do modelo"}],
+   "assumed": "a", "prefers": {"author": "a", "critic": "a"}}]}
+JSON
+G=$(tmp)
+printf '{"feature":"Feat G","start_date":"2026-04-01T00:00:00Z"}' > "$G/current.json"
+for cmd in brief answer show reopen; do
+  report_snap "$G"
+  [ "$(wfr_as "$cmd" "$G")" = 2 ] || fail "$cmd without report.json: expected exit 2"
+  grep -q "bloco ausente" "$G/.err" || fail "$cmd: stderr names the missing block"
+  report_untouched "$G" "$cmd without report.json"
+done
+wfr stage-start plan --workflow-dir "$G"
+printf '{"feature":"Feat H","start_date":"2026-04-01T00:00:00Z"}' > "$G/current.json"
+for cmd in brief answer show reopen; do
+  report_snap "$G"
+  [ "$(wfr_as "$cmd" "$G")" = 2 ] || fail "$cmd on a foreign cycle: expected exit 2"
+  report_untouched "$G" "$cmd on a foreign cycle"
+done
+printf '{"version":2,"cycle":{"feature":"Feat H","started_at":"2026-04-01T00:00:00Z"},"stages":[]}' > "$G/report.json"
+report_snap "$G"
+[ "$(wfr_as brief "$G")" = 2 ] || fail "brief on another version: expected exit 2"
+report_untouched "$G" "brief on another version"
+
+echo "- wf-report: brief validates, cuts and is idempotent"
+B=$(tmp); BD=$(tmp)
+printf '{"feature":"Feat Br","start_date":"2026-05-01T00:00:00Z"}' > "$B/current.json"
+wfr stage-start plan --workflow-dir "$B"
+mkb() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); exec(sys.argv[2]); json.dump(d,open(sys.argv[3],'w'),ensure_ascii=False)" "$BRIEF_OK" "$2" "$BD/$1.json"; }
+gate_ok() {
+  python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert $1, g" "$B/report.json" || fail "$2"
+}
+brief_refused() {
+  local label=$1 want=$2 got=0; shift 2
+  report_snap "$B"
+  wfr brief plan --workflow-dir "$B" "$@" >/dev/null 2>"$BD/err" || got=$?
+  [ "$got" = 2 ] || fail "brief $label: expected exit 2, got $got"
+  report_untouched "$B" "brief $label"
+  grep -qF -- "$want" "$BD/err" || fail "brief $label: stderr '$(cat "$BD/err")' lacks '$want'"
+}
+OUT=$(wfr brief plan --workflow-dir "$B" --file "$BRIEF_OK")
+gate_ok "g['name']=='plan' and g['status']=='open' and g['round']==1 and g['artifact']=='plan.md'" "brief writes round 1 open on the plan stage"
+gate_ok "g['summary']=='Grava em report.json. Fim.'" "a dot inside report.json is not a sentence end"
+gate_ok "g['questions'][0]['answer'] is None and g['history']==[] and g['changes']==[] and g['cut']==[]" "brief fields set by the script"
+gate_ok "g['omitted']=={'risks':0,'questions':0,'candidates':0}" "omitted always carries the three counts"
+[ "$OUT" = "$(wfr show plan --workflow-dir "$B")" ] || fail "brief prints the render of the written block"
+report_snap "$B"
+wfr brief plan --workflow-dir "$B" --file "$BRIEF_OK" >/dev/null
+report_untouched "$B" "same file again is a byte-identical no-op"
+python3 -c "
+import json,sys; r=json.load(open(sys.argv[1]))
+[s for s in r['stages'] if s['stage']=='plan'][0]['gate']['questions'][0]['answer']='b'
+json.dump(r,open(sys.argv[1],'w'),indent=2)" "$B/report.json"
+wfr brief plan --workflow-dir "$B" --file "$BRIEF_OK" >/dev/null
+gate_ok "g['questions'][0]['answer'] is None and g['status']=='open'" "round 1 brief replaces the block and clears answers"
+mkb other "d['summary']='Outro resumo.'"
+wfr brief plan --workflow-dir "$B" --file "$BD/other.json" >/dev/null
+gate_ok "g['summary']=='Outro resumo.' and g['round']==1" "another file replaces the round 1 block"
+for k in round status answer history cut; do
+  mkb "forbid-$k" "d['$k']=1"
+  brief_refused "with $k" "$k: campo do script" --file "$BD/forbid-$k.json"
+done
+mkb qanswer "d['questions'][0]['answer']='a'"
+brief_refused "with a question answer" "questions[0].answer: campo do script" --file "$BD/qanswer.json"
+
+mkb cuts "
+d['risks']=[{'id':f'R{i}','text':f'Risco {i}','source':'author'} for i in range(5)]
+d['questions']=[dict(d['questions'][0], id=f'Q{i}') for i in range(4)]"
+wfr brief plan --workflow-dir "$B" --file "$BD/cuts.json" >/dev/null
+gate_ok "[r['id'] for r in g['risks']]==['R0','R1','R2'] and [q['id'] for q in g['questions']]==['Q0','Q1','Q2']" "risks and questions cut to 3 in the order received"
+gate_ok "g['omitted']=={'risks':2,'questions':1,'candidates':0}" "omitted counts the cut risks and questions"
+mkb s281 "d['summary']='a'*281"
+brief_refused "summary of 281 chars" "summary: 281 caracteres, teto 280" --file "$BD/s281.json"
+mkb s3 "d['summary']='A. B. C.'"
+brief_refused "summary with 3 sentences" "summary: 3 frases, teto 2" --file "$BD/s3.json"
+mkb o1 "d['questions'][0]['options']=d['questions'][0]['options'][:1]"
+brief_refused "question with 1 option" "questions[0].options: 1 opções, precisa de 2 a 3" --file "$BD/o1.json"
+mkb o4 "
+o=d['questions'][0]['options']; o+=[dict(o[0], id='c'), dict(o[0], id='d')]"
+brief_refused "question with 4 options" "questions[0].options: 4 opções, precisa de 2 a 3" --file "$BD/o4.json"
+mkb c4 "d['changes']=['Linha']*4"
+brief_refused "changes with 4 lines" "changes: 4 linhas, teto 3" --file "$BD/c4.json"
+mkb m9 "d['map']={'nodes':[{'id':f'n{i}','label':'N','state':'new'} for i in range(9)]}"
+brief_refused "map with 9 nodes" "map.nodes: 9 nós, teto 8" --file "$BD/m9.json"
+mkb edge "
+d['map']={'nodes':[{'id':'a','label':'A','state':'new'}],'edges':[{'from':'a','to':'zz','label':'usa'}]}"
+brief_refused "edge to a missing node" "map.edges[0].to: zz não é nó do mapa" --file "$BD/edge.json"
+mkb state "
+d['map']={'nodes':[{'id':'a','label':'A','state':'gone'}]}"
+brief_refused "node state outside the enum" "map.nodes[0].state: gone fora de new|changed|existing" --file "$BD/state.json"
+mkb assumed "d['questions'][0]['assumed']='z'"
+brief_refused "assumed not an option" "questions[0].assumed: z não é opção da pergunta" --file "$BD/assumed.json"
+mkb prefers "d['questions'][0]['prefers']['critic']='z'"
+brief_refused "prefers not an option" "questions[0].prefers.critic: z não é opção da pergunta" --file "$BD/prefers.json"
+mkb dup "d['risks'][0]['id']='Q1'"
+brief_refused "repeated id" "questions[0].id: Q1 repetido" --file "$BD/dup.json"
+mkb label "d['questions'][0]['options'][1]['label']='l'*41"
+brief_refused "label above its cap" "questions[0].options[1].label: 41 caracteres, teto 40" --file "$BD/label.json"
+report_snap "$B"; got=0; wfr brief tasks --workflow-dir "$B" --file "$BRIEF_OK" >/dev/null 2>"$BD/err" || got=$?
+[ "$got" = 2 ] && grep -qF "etapa tasks ausente" "$BD/err" || fail "brief on a stage that never started"
+report_untouched "$B" "brief on a stage that never started"
+mkb map "
+d['map']={'summary':'Dois nós.','nodes':[{'id':'a','label':'A','state':'new','note':'n'},{'id':'b','label':'B','state':'existing'}],'edges':[{'from':'a','to':'b','label':'usa'}],'approaches':[]}"
+wfr brief plan --workflow-dir "$B" --file "$BD/map.json" >/dev/null
+gate_ok "g['map']['edges'][0]['to']=='b'" "a valid map is kept"
+
+printf '[{"id":"Q1","text":"Onde fica a regra?"},{"id":"C2","text":"Nome do campo"},{"id":"C3","text":"Ordem dos locks"},{"id":"C4","text":"Teto de rodadas"}]' > "$BD/cand.json"
+wfr brief plan --workflow-dir "$B" --file "$BRIEF_OK" --candidates "$BD/cand.json" >/dev/null
+gate_ok "[c['id'] for c in g['cut']]==['C2','C3','C4'] and g['cut'][0]=={'id':'C2','text':'Nome do campo'}" "candidates outside questions go to cut"
+gate_ok "g['omitted']['candidates']==3" "omitted counts the cut candidates"
+python3 -c "import json; json.dump([{'id':f'C{i}','text':'t'} for i in range(12)], open('$BD/cand12.json','w'))"
+wfr brief plan --workflow-dir "$B" --file "$BRIEF_OK" --candidates "$BD/cand12.json" >/dev/null
+gate_ok "len(g['cut'])==10 and g['omitted']['candidates']==12" "cut keeps 10, omitted keeps the full count"
+printf '[{"id":"C1"}]' > "$BD/bad.json"
+brief_refused "with malformed candidates" "candidates[0].text" --file "$BRIEF_OK" --candidates "$BD/bad.json"
+
+echo "- wf-report: show is read-only and recommends only when author and critic agree"
+show_q() { python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert $1, d" "$(wfr show plan --workflow-dir "$B")" || fail "$2"; }
+[ "$(wfr show tasks --workflow-dir "$B")" = '{"status":"absent"}' ] || fail "show without a block prints absent"
+wfr brief plan --workflow-dir "$B" --file "$BRIEF_OK" >/dev/null
+report_snap "$B"
+show_q "d['status']=='open' and d['round']==1 and 'Grava em report.json. Fim.' in d['text_md'] and 'Lock invertido' in d['text_md']" "show prints status, round and text_md"
+show_q "[o['label'] for o in d['questions'][0]['options']]==['No script (Recomendado)','Na skill'] and d['questions'][0]['multiSelect'] is False" "agreeing prefers mark the option recommended"
+show_q "d['questions'][0]['question']=='Onde fica a regra de parada?' and d['questions'][0]['options'][1]['description']=='Depende do modelo'" "question text and consequence as description"
+report_untouched "$B" "show is read-only"
+mkb split "d['questions'][0]['prefers']={'author':'a','critic':'b'}"
+wfr brief plan --workflow-dir "$B" --file "$BD/split.json" >/dev/null
+show_q "not any('(Recomendado)' in o['label'] for o in d['questions'][0]['options'])" "diverging prefers recommend nothing"
+show_q "[o['description'] for o in d['questions'][0]['options']]==['Testável por e2e. Preferida pelo autor.','Depende do modelo. Preferida pelo crítico.']" "diverging prefers say who prefers what"
+mkb noprefers "del d['questions'][0]['prefers']"
+wfr brief plan --workflow-dir "$B" --file "$BD/noprefers.json" >/dev/null
+show_q "not any('(Recomendado)' in o['label'] for o in d['questions'][0]['options'])" "missing prefers count as disagreement"
+show_q "d['questions'][0]['header']=='Q1'" "without header the id heads the question"
+mkb dotted "d['questions'][0]['prefers']={'author':'a','critic':'b'}; d['questions'][0]['options'][0]['consequence']='Testável por e2e!'"
+wfr brief plan --workflow-dir "$B" --file "$BD/dotted.json" >/dev/null
+show_q "[o['description'] for o in d['questions'][0]['options']]==['Testável por e2e! Preferida pelo autor.','Depende do modelo. Preferida pelo crítico.']" "a consequence already ending in punctuation gets no extra dot"
+mkb header "d['questions'][0]['header']='Regra parada'"
+wfr brief plan --workflow-dir "$B" --file "$BD/header.json" >/dev/null
+gate_ok "g['questions'][0]['header']=='Regra parada'" "brief keeps the header"
+show_q "d['questions'][0]['header']=='Regra parada' and d['questions'][0]['id']=='Q1'" "the header replaces the id as the question header"
+mkb longheader "d['questions'][0]['header']='Regra de parada'"
+brief_refused "with a header above its cap" "questions[0].header: 15 caracteres, teto 12" --file "$BD/longheader.json"
+mkb emptyheader "d['questions'][0]['header']=''"
+brief_refused "with an empty header" "questions[0].header: precisa ser texto não vazio" --file "$BD/emptyheader.json"
+
+echo "- wf-report: answer, rounds and show"
+A=$(tmp); AD=$(tmp)
+printf '{"feature":"Feat An","start_date":"2026-06-01T00:00:00Z"}' > "$A/current.json"
+wfr stage-start plan --workflow-dir "$A"
+mka() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); exec(sys.argv[2]); json.dump(d,open(sys.argv[3],'w'),ensure_ascii=False)" "$BRIEF_OK" "$2" "$AD/$1.json"; }
+agate() {
+  python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert $1, g" "$A/report.json" || fail "$2"
+}
+refused() {
+  local label=$1 want=$2 got=0; shift 2
+  report_snap "$A"
+  wfr "$@" >/dev/null 2>"$AD/err" || got=$?
+  [ "$got" = 2 ] || fail "$label: expected exit 2, got $got"
+  report_untouched "$A" "$label"
+  grep -qF -- "$want" "$AD/err" || fail "$label: stderr '$(cat "$AD/err")' lacks '$want'"
+}
+ans() { wfr answer plan --workflow-dir "$A" "$@"; }
+aq() { python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert $1, d" "$(wfr show plan --workflow-dir "$A")" || fail "$2"; }
+mka two "d['questions'].append(dict(d['questions'][0], id='Q2', text='Quem grava o bloco?', prefers={'author':'a','critic':'b'}))"
+printf 'Prefiro um terceiro caminho.\n' > "$AD/free.md"
+
+wfr brief plan --workflow-dir "$A" --file "$AD/two.json" >/dev/null
+aq "[o['label'] for o in d['questions'][0]['options']]==['No script (Recomendado)','Na skill']" "agreeing prefers keep (Recomendado)"
+aq "not any('(Recomendado)' in o['label'] for o in d['questions'][1]['options'])" "diverging prefers drop (Recomendado)"
+ans --question Q1 --option a
+agate "g['status']=='open' and g['questions'][0]['answer']=='a' and g['questions'][1]['answer'] is None" "first of two answers keeps open"
+aq "[q['id'] for q in d['questions']]==['Q2'] and 'Respostas:' in d['text_md'] and 'Onde fica a regra de parada? → No script' in d['text_md']" "show asks only the pending question and lists the recorded answer"
+report_snap "$A"; ans --question Q1 --option a
+report_untouched "$A" "the same answer again is a no-op"
+refused "--approve with a pending question" "--approve: perguntas sem resposta: Q2" answer plan --workflow-dir "$A" --approve
+refused "unknown question" "--question: Q9 não é pergunta do bloco" answer plan --workflow-dir "$A" --question Q9 --option a
+refused "unknown option" "--option: z não é opção da pergunta" answer plan --workflow-dir "$A" --question Q2 --option z
+refused "--text-file alone with questions" "--text-file sem --question só vale sem perguntas" answer plan --workflow-dir "$A" --text-file "$AD/free.md"
+refused "--option without --question" "--option exige --question" answer plan --workflow-dir "$A" --option a
+ans --question Q2 --option a
+agate "g['status']=='approved'" "all answers equal to assumed approve the block"
+aq "d['status']=='approved' and d['questions']==[]" "show of an approved block asks nothing"
+report_snap "$A"; ans --question Q2 --option a
+report_untouched "$A" "repeating a recorded answer on an approved block is a no-op"
+refused "another answer on an approved block" "answer plan: bloco já está approved" answer plan --workflow-dir "$A" --question Q2 --option b
+refused "--reject on an approved block" "bloco já está approved" answer plan --workflow-dir "$A" --reject
+
+wfr brief plan --workflow-dir "$A" --file "$AD/two.json" >/dev/null
+agate "g['status']=='open' and g['round']==1 and all(q['answer'] is None for q in g['questions'])" "round 1 brief over approved replaces it"
+ans --question Q1 --option a
+ans --question Q2 --option b
+agate "g['status']=='revising'" "an answer other than assumed leads to revising"
+F=$(tmp)
+printf '{"feature":"Feat Ft","start_date":"2026-06-04T00:00:00Z"}' > "$F/current.json"
+wfr stage-start plan --workflow-dir "$F"
+wfr brief plan --workflow-dir "$F" --file "$AD/two.json" >/dev/null
+wfr answer plan --workflow-dir "$F" --question Q2 --option a
+wfr answer plan --workflow-dir "$F" --question Q1 --text-file "$AD/free.md"
+python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert g['status']=='revising' and g['questions'][0]['answer']=={'text':'Prefiro um terceiro caminho.\n'}, g" "$F/report.json" || fail "free text counts as different from assumed"
+ans --question Q1 --text-file "$AD/free.md"
+ans --question Q2 --option a
+agate "g['status']=='revising' and g['questions'][0]['answer']=={'text':'Prefiro um terceiro caminho.\n'}" "changing answers of a revising block re-evaluates the status"
+aq "'texto livre: Prefiro um terceiro caminho.' in d['text_md']" "show lists free text answers"
+refused "--approve on revising" "--approve: bloco revising, só vale com open" answer plan --workflow-dir "$A" --approve
+
+refused "round 2 without changes" "changes: 0 linhas, a rodada 2 exige de 1 a 3" brief plan --workflow-dir "$A" --file "$BRIEF_OK"
+mka r2dup "d['changes']=['Regra movida para o script']"
+refused "round 2 reusing a history id" "questions[0].id: Q1 repetido (já usado em history, rodada 1)" brief plan --workflow-dir "$A" --file "$AD/r2dup.json"
+mka r2 "d['changes']=['Regra movida para o script']; d['questions']=[dict(d['questions'][0], id='Q3')]"
+wfr brief plan --workflow-dir "$A" --file "$AD/r2.json" >/dev/null
+agate "g['round']==2 and g['status']=='open' and [q['id'] for q in g['questions']]==['Q3'] and g['questions'][0]['answer'] is None" "brief over revising writes round 2 with only the new questions"
+agate "len(g['history'])==1 and g['history'][0]['round']==1 and [(q['id'],q['answer']) for q in g['history'][0]['questions']]==[('Q1',{'text':'Prefiro um terceiro caminho.\n'}),('Q2','a')]" "answered questions move to history[0] with their answers"
+aq "d['round']==2 and 'Regra movida para o script' in d['text_md']" "show carries the round and the changes"
+report_snap "$A"; wfr brief plan --workflow-dir "$A" --file "$AD/r2.json" >/dev/null
+report_untouched "$A" "the same file over an open round 2 is a no-op"
+refused "another file over an open round 2" "bloco open na rodada 2 só aceita o mesmo arquivo" brief plan --workflow-dir "$A" --file "$AD/two.json"
+ans --question Q3 --option a
+agate "g['status']=='approved' and g['round']==2" "round 2 approves"
+refused "another file over an approved round 2" "bloco approved na rodada 2 só aceita o mesmo arquivo" brief plan --workflow-dir "$A" --file "$AD/r2dup.json"
+report_snap "$A"; wfr brief plan --workflow-dir "$A" --file "$AD/r2.json" >/dev/null
+report_untouched "$A" "the same file over an approved round 2 keeps the answers"
+
+python3 -c "
+import json,sys; r=json.load(open(sys.argv[1])); g=[s for s in r['stages'] if s['stage']=='plan'][0]['gate']
+g['status']='revising'; g['questions'][0]['answer']='b'
+json.dump(r,open(sys.argv[1],'w'),indent=2)" "$A/report.json"
+mka r3 "d['changes']=['Terceira rodada']; d['questions']=[dict(d['questions'][0], id='Q4')]"
+wfr brief plan --workflow-dir "$A" --file "$AD/r3.json" >/dev/null
+agate "g['round']==3 and [h['round'] for h in g['history']]==[1,2] and g['history'][1]['questions'][0]['id']=='Q3'" "round 3 appends to history"
+ans --question Q4 --option b
+agate "g['status']=='revising'" "round 3 diverges"
+mka r4 "d['changes']=['Quarta rodada']; d['questions']=[dict(d['questions'][0], id='Q5')]"
+refused "a fourth round" "rodadas esgotadas" brief plan --workflow-dir "$A" --file "$AD/r4.json"
+
+mka noq "d['questions']=[]"
+wfr brief plan --workflow-dir "$A" --file "$AD/noq.json" >/dev/null 2>&1 && fail "brief over revising round 3 must refuse"
+printf "voltou" > "$AD/sum.md"; wfr stage-end plan --status blocked --workflow-dir "$A" --summary-file "$AD/sum.md" >/dev/null || fail "stage-end blocked"
+wfr stage-start plan --workflow-dir "$A"
+wfr brief plan --workflow-dir "$A" --file "$AD/r2.json" >/dev/null 2>&1 || fail "stage-start must clear a revising block that hit the round cap"
+agate "g['round']==1" "brief after a capped block restarts at round 1"
+python3 -c "
+import json,sys; r=json.load(open(sys.argv[1])); s=[s for s in r['stages'] if s['stage']=='plan'][0]
+s['gate']['status']='revising'; s['gate']['round']=3
+r['stages'].append({'stage':'complete','status':'blocked','artifacts':[],'decisions':[],'gate':dict(s['gate'])})
+json.dump(r,open(sys.argv[1],'w'),indent=2)" "$A/report.json"
+wfr stage-start complete --workflow-dir "$A"
+python3 -c "
+import json,sys; s=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='complete'][0]
+assert s.get('gate',{}).get('status')=='revising' and s['gate']['round']==3, s" "$A/report.json" || fail "stage-start complete must keep a revising pr block at round 3"
+R=$(tmp)
+printf '{"feature":"Feat Rj","start_date":"2026-06-02T00:00:00Z"}' > "$R/current.json"
+wfr stage-start plan --workflow-dir "$R"
+wfr brief plan --workflow-dir "$R" --file "$AD/noq.json" >/dev/null
+wfr answer plan --workflow-dir "$R" --text-file "$AD/free.md"
+python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert g['status']=='revising' and g['answer']=={'text':'Prefiro um terceiro caminho.\n'}, g" "$R/report.json" || fail "--text-file alone adjusts a block without questions"
+mka noq2 "d['questions']=[]; d['changes']=['Ajuste aplicado']"
+wfr brief plan --workflow-dir "$R" --file "$AD/noq2.json" >/dev/null
+python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert g['round']==2 and g['history']==[{'round':1,'questions':[],'answer':{'text':'Prefiro um terceiro caminho.\n'}}] and 'answer' not in g, g" "$R/report.json" || fail "the adjust text moves to history"
+wfr answer plan --workflow-dir "$R" --approve
+python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert g['status']=='approved', g" "$R/report.json" || fail "--approve without pending approves"
+wfr brief plan --workflow-dir "$R" --file "$AD/noq.json" >/dev/null 2>&1 && fail "another file over approved round 2 must refuse"
+R2=$(tmp)
+printf '{"feature":"Feat Rj2","start_date":"2026-06-03T00:00:00Z"}' > "$R2/current.json"
+wfr stage-start plan --workflow-dir "$R2"
+wfr brief plan --workflow-dir "$R2" --file "$AD/two.json" >/dev/null
+wfr answer plan --workflow-dir "$R2" --reject
+python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert g['status']=='rejected', g" "$R2/report.json" || fail "--reject writes rejected"
+wfr answer plan --workflow-dir "$R2" --reject
+got=0; wfr answer plan --workflow-dir "$R2" --question Q1 --option a >/dev/null 2>&1 || got=$?
+[ "$got" = 2 ] || fail "answer on a rejected block: expected exit 2, got $got"
+got=0; wfr answer tasks --workflow-dir "$R2" --approve >/dev/null 2>"$AD/err" || got=$?
+[ "$got" = 2 ] && grep -qF "answer tasks: bloco ausente" "$AD/err" || fail "answer without a block"
+
+echo "- wf-report: pr change reopens the cycle"
+P=$(tmp); PD=$(tmp)
+BASE=1111111111111111111111111111111111111111
+TREE=2222222222222222222222222222222222222222
+cat > "$P/current.json" <<JSON
+{"feature":"Feat Pr","start_date":"2026-07-01T00:00:00Z","exec":{"base_checkpoint":"$BASE"},
+ "tasks":{"total":1,"completed":1,"items":[{"id":"T1","title":"Base","description":"**Contexto:** c\n**O que fazer:** f\n**Testes:** t\n**Concluído quando:** d",
+  "complexity":"S","risk":"low","tier0":"haiku","affects":["bin/x.py"],"tests":[],"status":"done"}]}}
+JSON
+printf '# Tasks\n\n- [x] `S` `haiku` #T1 — Base\n' > "$P/tasks.md"
+printf '%s\n' "$TREE" > "$PD/pr.tree"
+printf 'not-a-sha\n' > "$PD/bad.tree"
+wfr stage-start complete --workflow-dir "$P"
+cat > "$PD/pr.json" <<'JSON'
+{"summary": "Dois pontos do diff.", "artifact": "pr.diff",
+ "questions": [
+  {"id": "Q1", "text": "O lock do reopen está certo?", "why": "Inverter a ordem trava o relatório",
+   "anchor": {"path": "bin/wf-report.py", "start": 10, "end": 20},
+   "options": [{"id": "ok", "label": "Está ok", "consequence": "Segue para o PR"},
+               {"id": "change", "label": "Mudar", "consequence": "Vira task P"}],
+   "assumed": "ok", "prefers": {"author": "ok", "critic": "ok"}},
+  {"id": "Q2", "text": "O nome do campo serve?", "why": "O app lê o campo",
+   "anchor": {"path": "bin/b.py", "start": 3, "end": 3},
+   "options": [{"id": "ok", "label": "Está ok", "consequence": "Segue para o PR"},
+               {"id": "change", "label": "Mudar", "consequence": "Vira task P"}],
+   "assumed": "ok"},
+  {"id": "Q3", "text": "A mensagem de erro basta?", "why": "O crítico reenvia o stderr",
+   "anchor": {"path": "tests/bin.test.sh", "start": 1, "end": 2},
+   "options": [{"id": "ok", "label": "Está ok", "consequence": "Segue para o PR"},
+               {"id": "change", "label": "Renomear", "consequence": "Nome curto"}],
+   "assumed": "ok"}]}
+JSON
+mkp() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); exec(sys.argv[2]); json.dump(d,open(sys.argv[3],'w'),ensure_ascii=False)" "$PD/pr.json" "$2" "$PD/$1.json"; }
+pgate() {
+  python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='complete'][0].get('gate')
+assert $1, g" "$P/report.json" || fail "$2"
+}
+prefused() {
+  local label=$1 want=$2 got=0; shift 2
+  report_snap "$P"
+  wfr "$@" >/dev/null 2>"$PD/err" || got=$?
+  [ "$got" = 2 ] || fail "$label: expected exit 2, got $got"
+  report_untouched "$P" "$label"
+  grep -qF -- "$want" "$PD/err" || fail "$label: stderr '$(cat "$PD/err")' lacks '$want'"
+}
+prefused "brief pr without --tree" "--tree: obrigatório no gate pr" brief pr --workflow-dir "$P" --file "$PD/pr.json"
+prefused "brief pr with a typed sha" "--tree: obrigatório no gate pr" brief pr --workflow-dir "$P" --file "$PD/pr.json" --tree "$TREE"
+prefused "brief pr with a bad tree file" "não contém um sha de 40 hex" brief pr --workflow-dir "$P" --file "$PD/pr.json" --tree "@$PD/bad.tree"
+prefused "--tree outside the pr gate" "--tree: só vale no gate pr" brief plan --workflow-dir "$P" --file "$BRIEF_OK" --tree "@$PD/pr.tree"
+mkp nowhy "del d['questions'][1]['why']"
+prefused "pr question without why" "questions[1].why: precisa ser texto não vazio" brief pr --workflow-dir "$P" --file "$PD/nowhy.json" --tree "@$PD/pr.tree"
+mkp longwhy "d['questions'][0]['why']='w'*161"
+prefused "why above its cap" "questions[0].why: 161 caracteres, teto 160" brief pr --workflow-dir "$P" --file "$PD/longwhy.json" --tree "@$PD/pr.tree"
+mkp anchor "d['questions'][0]['anchor']['start']=30"
+prefused "anchor start after end" "questions[0].anchor: start 30 maior que end 20" brief pr --workflow-dir "$P" --file "$PD/anchor.json" --tree "@$PD/pr.tree"
+mkp noanchor "del d['questions'][2]['anchor']"
+prefused "pr question without anchor" "questions[2].anchor: precisa ser objeto" brief pr --workflow-dir "$P" --file "$PD/noanchor.json" --tree "@$PD/pr.tree"
+mkp opts "d['questions'][0]['options'][1]['id']='fix'; d['questions'][0]['prefers']={}"
+prefused "pr options other than ok and change" "no gate pr são exatamente ok e change" brief pr --workflow-dir "$P" --file "$PD/opts.json" --tree "@$PD/pr.tree"
+mkp assumed "d['questions'][0]['assumed']='change'"
+prefused "pr assumed other than ok" "questions[0].assumed: change; no gate pr é sempre ok" brief pr --workflow-dir "$P" --file "$PD/assumed.json" --tree "@$PD/pr.tree"
+python3 -c "
+import json,sys; c=json.load(open(sys.argv[1])); c['exec']={}; json.dump(c,open(sys.argv[2],'w'))" "$P/current.json" "$PD/nobase.json"
+cp "$P/current.json" "$PD/current.keep"; cp "$PD/nobase.json" "$P/current.json"
+prefused "brief pr without exec.base_checkpoint" "exec.base_checkpoint" brief pr --workflow-dir "$P" --file "$PD/pr.json" --tree "@$PD/pr.tree"
+cp "$PD/current.keep" "$P/current.json"
+
+wfr brief pr --workflow-dir "$P" --file "$PD/pr.json" --tree "@$PD/pr.tree" >/dev/null
+pgate "g['round']==1 and g['status']=='open' and g['base']=='$BASE' and g['tree']=='$TREE'" "brief pr records base from current.json and tree from the file"
+pgate "g['questions'][0]['why']=='Inverter a ordem trava o relatório' and g['questions'][0]['anchor']=={'path':'bin/wf-report.py','start':10,'end':20}" "brief pr keeps why and anchor"
+pshow() { python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert $1, d" "$(wfr show pr --workflow-dir "$P")" || fail "$2"; }
+pshow "d['questions'][0]['why']=='Inverter a ordem trava o relatório' and d['questions'][0]['anchor']=={'path':'bin/wf-report.py','start':10,'end':20}" "show pr carries why and anchor on each question"
+pshow "'Pontos:\n- Q1 \`bin/wf-report.py:10-20\`: Inverter a ordem trava o relatório\n- Q2 \`bin/b.py:3-3\`: O app lê o campo\n' in d['text_md']" "show pr lists the pending points with path, lines and why"
+wfr show plan --workflow-dir "$B" | grep -q 'Pontos:' && fail "Pontos: only in the pr gate"
+prefused "reopen pr on an open block" "reopen pr: bloco open, só vale com revising" reopen pr --workflow-dir "$P"
+printf 'Inverter a ordem dos locks no reopen.\n' > "$PD/change.md"
+wfr answer pr --workflow-dir "$P" --question Q1 --text-file "$PD/change.md"
+wfr answer pr --workflow-dir "$P" --question Q2 --option ok
+wfr answer pr --workflow-dir "$P" --question Q3 --option change
+pgate "g['status']=='revising'" "a change answer leaves the pr block revising"
+cp "$P/current.json" "$PD/c0.json"; cp "$P/tasks.md" "$PD/t0.md"
+prefused "reopen pr with a change answer without text" "resposta change sem texto do ajuste em Q3" reopen pr --workflow-dir "$P"
+cmp -s "$P/current.json" "$PD/c0.json" && cmp -s "$P/tasks.md" "$PD/t0.md" || fail "a refused reopen leaves current.json and tasks.md intact"
+printf 'Encurtar a mensagem para caber no stderr do crítico.\n' > "$PD/q3.md"
+prefused "text with option ok" "o texto do ajuste só vale no gate pr com change" answer pr --workflow-dir "$P" --question Q2 --option ok --text-file "$PD/q3.md"
+prefused "text with approve" "--text-file não vai com --approve/--reject" answer pr --workflow-dir "$P" --approve --text-file "$PD/q3.md"
+wfr answer pr --workflow-dir "$P" --question Q3 --option change --text-file "$PD/q3.md"
+pgate "g['status']=='revising' and g['questions'][2]['answer']=='change' and g['questions'][2]['answer_text']=='Encurtar a mensagem para caber no stderr do crítico.\n'" "answer pr records the change option and its text together"
+report_snap "$P"
+wfr answer pr --workflow-dir "$P" --question Q3 --option change --text-file "$PD/q3.md"
+report_untouched "$P" "repeating option and text is a no-op"
+wfr show pr --workflow-dir "$P" | grep -qF 'Renomear: Encurtar a mensagem' || fail "show renders the change text next to the label"
+
+report_snap "$P"
+OUT=$(wfr reopen pr --workflow-dir "$P")
+report_untouched "$P" "reopen pr never writes report.json"
+[ "$OUT" = '{"tasks":["P1.1","P1.2"],"added":["P1.1","P1.2"]}' ] || fail "reopen prints the tasks and the added ids: $OUT"
+python3 -c "
+import json,sys; t=json.load(open(sys.argv[1]))['tasks']; it={x['id']:x for x in t['items']}
+assert [x['id'] for x in t['items']]==['T1','P1.1','P1.2'] and t['total']==3, t
+p=it['P1.1']
+assert (p['status'],p['risk'],p['complexity'],p['tier0'],p['tier'],p['attempts'],p['tests'],p['affects'])==('pending','high','M','opus','opus',0,[],['bin/wf-report.py']), p
+assert 'Inverter a ordem trava o relatório' in p['description'] and 'Inverter a ordem dos locks no reopen.' in p['description'], p['description']
+q=it['P1.2']
+assert q['affects']==['tests/bin.test.sh'] and 'O crítico reenvia o stderr' in q['description'], q
+assert '**O que fazer:**\nEncurtar a mensagem para caber no stderr do crítico.\n\n' in q['description'] and 'Nome curto' not in q['description'], q['description']
+" "$P/current.json" || fail "reopen pr appends P1.1 and P1.2 for the answers other than ok"
+grep -qF '#P1.1 — Ajuste do gate pr: O lock do reopen está certo?' "$P/tasks.md" || fail "reopen pr appends P1.1 to tasks.md"
+grep -qF '#P1.2 — ' "$P/tasks.md" && ! grep -q '#P1\.3' "$P/tasks.md" || fail "only change answers become tasks in tasks.md"
+HOME="$HOME_BIN_SHIM" python3 "$BIN/wf_gate.py" tasks-check --workflow-dir "$P" >/dev/null || fail "tasks-check accepts the P tasks"
+cp "$P/current.json" "$PD/c1.json"; cp "$P/tasks.md" "$PD/t1.md"
+OUT=$(wfr reopen pr --workflow-dir "$P")
+[ "$OUT" = '{"tasks":["P1.1","P1.2"],"added":[]}' ] || fail "repeated reopen adds nothing: $OUT"
+cmp -s "$P/current.json" "$PD/c1.json" && cmp -s "$P/tasks.md" "$PD/t1.md" || fail "repeated reopen does not duplicate"
+printf 'PR travado por ajuste.\n' > "$PD/sum.md"
+wfr stage-end complete --workflow-dir "$P" --summary-file "$PD/sum.md" --status blocked >/dev/null
+python3 -c "
+import json,sys; r=json.load(open(sys.argv[1])); s=[x for x in r['stages'] if x['stage']=='complete'][0]
+assert 'pr' not in r and s['status']=='blocked', (r.get('pr'), s['status'])" "$P/report.json" || fail "no pr in the report and complete blocked"
+
+wfr stage-start complete --workflow-dir "$P"
+pgate "g is not None and g['status']=='revising' and g['round']==1" "stage-start keeps a revising block"
+mkp r2 "d['changes']=['Locks na ordem report e current']; d['questions']=[dict(d['questions'][0], id='Q4')]"
+wfr brief pr --workflow-dir "$P" --file "$PD/r2.json" --tree "@$PD/pr.tree" >/dev/null
+pgate "g['round']==2 and g['status']=='open' and g['history'][0]['round']==1 and [q['id'] for q in g['history'][0]['questions']]==['Q1','Q2','Q3']" "the next brief writes round 2 with history"
+
+printf 'Trocar a ordem também no brief.\n' > "$PD/q4.md"
+wfr answer pr --workflow-dir "$P" --question Q4 --option change --text-file "$PD/q4.md"
+pgate "g['status']=='revising' and g['round']==2" "a change answer in round 2 leaves the block revising"
+OUT=$(wfr reopen pr --workflow-dir "$P")
+[ "$OUT" = '{"tasks":["P2.1"],"added":["P2.1"]}' ] || fail "reopen in round 2 numbers the task P2.1: $OUT"
+python3 -c "
+import json,sys; t=json.load(open(sys.argv[1]))['tasks']
+assert [x['id'] for x in t['items']]==['T1','P1.1','P1.2','P2.1'] and t['total']==4, t
+p=t['items'][3]
+assert 'rodada 2' in p['description'] and 'Trocar a ordem também no brief.' in p['description'], p['description']
+" "$P/current.json" || fail "reopen in round 2 appends P2.1 without duplicating P1.*"
+for id in P1.1 P1.2 P2.1; do
+  [ "$(grep -cF "#$id — " "$P/tasks.md")" = 1 ] || fail "tasks.md carries #$id exactly once after the round 2 reopen"
+done
+wfr answer pr --workflow-dir "$P" --question Q4 --option ok
+pgate "g['status']=='approved' and g['round']==2 and 'answer_text' not in g['questions'][0]" "a revising block returns to approved when every answer equals assumed"
+python3 -c "
+import json,sys; r=json.load(open(sys.argv[1])); [s for s in r['stages'] if s['stage']=='complete'][0]['gate']['status']='passed'
+json.dump(r,open(sys.argv[1],'w'),indent=2)" "$P/report.json"
+prefused "answer on a passed block" "answer pr: bloco já está passed" answer pr --workflow-dir "$P" --question Q4 --option change --text-file "$PD/q4.md"
+wfr stage-start complete --workflow-dir "$P"
+pgate "g is None" "stage-start drops a passed block"
+
+PN=$(tmp)
+cp "$PD/current.keep" "$PN/current.json"
+printf '# Tasks\n\n- [x] `S` `haiku` #T1 — Base\n' > "$PN/tasks.md"
+wfr stage-start complete --workflow-dir "$PN"
+mkp noq "d['questions']=[]"
+wfr brief pr --workflow-dir "$PN" --file "$PD/noq.json" --tree "@$PD/pr.tree" >/dev/null
+wfr answer pr --workflow-dir "$PN" --text-file "$PD/change.md"
+cp "$PN/current.json" "$PD/cn.json"; cp "$PN/tasks.md" "$PD/tn.md"
+report_snap "$PN"; got=0
+wfr reopen pr --workflow-dir "$PN" >/dev/null 2>"$PD/err" || got=$?
+[ "$got" = 2 ] && grep -qF "nenhuma pergunta com resposta diferente de ok" "$PD/err" || fail "reopen pr on a revising block without a change answer exits 2 (got $got)"
+report_untouched "$PN" "reopen pr without a change answer"
+cmp -s "$PN/current.json" "$PD/cn.json" && cmp -s "$PN/tasks.md" "$PD/tn.md" || fail "reopen pr without a change answer leaves current.json and tasks.md intact"
+
+PX=$(tmp)
+cp "$PD/current.keep" "$PX/current.json"
+printf '# Tasks\n\n- [x] `S` `haiku` #T1 — Base\n- [ ] `M` `opus` #P1.10 — Ajuste anterior\n' > "$PX/tasks.md"
+wfr stage-start complete --workflow-dir "$PX"
+wfr brief pr --workflow-dir "$PX" --file "$PD/pr.json" --tree "@$PD/pr.tree" >/dev/null
+wfr answer pr --workflow-dir "$PX" --question Q1 --option change --text-file "$PD/change.md"
+wfr answer pr --workflow-dir "$PX" --question Q2 --option ok
+wfr answer pr --workflow-dir "$PX" --question Q3 --option ok
+OUT=$(wfr reopen pr --workflow-dir "$PX")
+[ "$OUT" = '{"tasks":["P1.1"],"added":["P1.1"]}' ] || fail "reopen next to #P1.10 adds P1.1: $OUT"
+grep -qF '#P1.1 — Ajuste do gate pr: O lock do reopen está certo?' "$PX/tasks.md" || fail "#P1.10 in tasks.md is not taken for #P1.1"
+grep -qF '#P1.10 — Ajuste anterior' "$PX/tasks.md" || fail "the #P1.10 line is kept"
+wfr stage-start plan --workflow-dir "$B"
+python3 -c "
+import json,sys; s=[x for x in json.load(open(sys.argv[1]))['stages'] if x['stage']=='plan'][0]
+assert 'gate' not in s, s" "$B/report.json" || fail "stage-start drops an open block of its own stage"
+
 echo "- wf-report: session_id comes from --session or CLAUDE_FLOW_SESSION_ID (--session wins)"
 S=$(tmp)
 printf '{"feature":"Feat S","start_date":"2026-02-01T00:00:00Z"}' > "$S/current.json"
@@ -301,23 +792,96 @@ printf '{"feature":"Feat Z","start_date":"2026-03-03T00:00:00Z"}' > "$D/current.
 wfr stage-start plan --workflow-dir "$D"
 [ -f "$D/report.2026-03-03T00:00:00Z.json" ] || fail "different feature must archive"
 
-echo "- wf-report: gate asks with autopilot off, follows gates.json with it on, exit 2 on unknown name"
+echo "- wf-report: gate follows the stop table"
 GATE_HOME=$(tmp); mkdir -p "$GATE_HOME/.claude/workflow"; ln -s "$BIN" "$GATE_HOME/.claude/bin"
-gate() { HOME="$GATE_HOME" python3 "$BIN/wf-report.py" gate "$1"; }
-gates_are() { local want="$1" got=""; for g in spec plan tasks pr; do got="$got$g=$(gate "$g") "; done; [ "$got" = "$want" ] || fail "gate: want '$want', got '$got' ($2)"; }
-gates_are "spec=ask plan=ask tasks=ask pr=ask " "autopilot off"
-printf '{"required":["plan"]}' > "$GATE_HOME/.claude/workflow/gates.json"
-gates_are "spec=ask plan=ask tasks=ask pr=ask " "autopilot off ignores gates.json"
-rm "$GATE_HOME/.claude/workflow/gates.json"; touch "$GATE_HOME/.claude/workflow/auto_mode.flag"
-gates_are "spec=ask plan=skip tasks=skip pr=ask " "no gates.json"
-printf '{"required":["plan"]}' > "$GATE_HOME/.claude/workflow/gates.json"
-gates_are "spec=skip plan=ask tasks=skip pr=skip " "required plan"
-for bad in '{not json' '[]' '{"required":"plan"}' '{"required":[1]}' '{}'; do
-  printf '%s' "$bad" > "$GATE_HOME/.claude/workflow/gates.json"
-  gates_are "spec=ask plan=skip tasks=skip pr=ask " "invalid gates.json: $bad"
+GW=$(tmp); GT=$(tmp)
+printf '{"feature":"Feat Gt","start_date":"2026-08-01T00:00:00Z"}' > "$GW/current.json"
+python3 - "$GT" <<'PY'
+import json, sys
+q = lambda answer: {"id": "Q1", "text": "Qual?", "options": [{"id": "a", "label": "A", "consequence": "c"},
+    {"id": "b", "label": "B", "consequence": "c"}], "assumed": "a", "prefers": {}, "answer": answer}
+blocks = {"absent": None, "open-pending": ("open", [q(None)]), "open-clear": ("open", []),
+          "revising": ("revising", [q("b")]), "rejected": ("rejected", [q(None)]),
+          "approved": ("approved", [q("a")]), "passed": ("passed", [])}
+owners = {"spec": "challenge", "plan": "plan", "tasks": "tasks", "pr": "complete"}
+for state, b in blocks.items():
+    stages = []
+    for name, owner in owners.items():
+        s = {"stage": owner, "status": "done", "attempt": 1, "summary_md": "", "decisions": [], "findings": [],
+             "artifacts": [], "run_ids": []}
+        if b:
+            s["gate"] = {"name": name, "round": 1, "status": b[0], "summary": "S.", "risks": [], "questions": b[1],
+                         "history": [], "changes": [], "cut": [], "omitted": {"risks": 0, "questions": 0, "candidates": 0},
+                         "artifact": "x.md"}
+        stages.append(s)
+    r = {"version": 1, "cycle": {"feature": "Feat Gt", "started_at": "2026-08-01T00:00:00Z"}, "stages": stages}
+    json.dump(r, open(f"{sys.argv[1]}/{state}.json", "w"), indent=2)
+PY
+gate() { HOME="$GATE_HOME" python3 "$BIN/wf-report.py" gate "$1" --workflow-dir "${2:-$GW}"; }
+gate_status() {
+  python3 -c "
+import json,sys; s=[x for x in json.load(open(sys.argv[1]))['stages'] if x['stage']==sys.argv[2]][0]
+print(s['gate']['status'])" "$GW/report.json" "$1"
+}
+owner_of() { case $1 in spec) echo challenge ;; pr) echo complete ;; *) echo "$1" ;; esac; }
+table() {
+  case $1 in
+    approved|passed) echo skip ;;
+    open-clear) case $2 in plan|tasks) echo skip ;; *) echo ask ;; esac ;;
+    *) echo ask ;;
+  esac
+}
+for flag in off on; do
+  if [ "$flag" = on ]; then touch "$GATE_HOME/.claude/workflow/auto_mode.flag"; else rm -f "$GATE_HOME/.claude/workflow/auto_mode.flag"; fi
+  for state in absent open-pending open-clear revising rejected approved passed; do
+    for g in spec plan tasks pr; do
+      cp "$GT/$state.json" "$GW/report.json"; report_snap "$GW"
+      got=$(gate "$g"); want=$(table "$state" "$g")
+      [ "$got" = "$want" ] || fail "gate $g, $state, autopilot $flag: want $want, got $got"
+      if [ "$state" = open-clear ] && [ "$want" = skip ]; then
+        [ "$(gate_status "$(owner_of "$g")")" = passed ] || fail "gate $g, $state, autopilot $flag: skip writes passed"
+      else
+        report_untouched "$GW" "gate $g, $state, autopilot $flag"
+      fi
+    done
+  done
 done
+rm -f "$GATE_HOME/.claude/workflow/auto_mode.flag"
+
+gates_clear() {
+  local want="$1" got=""
+  for g in spec plan tasks pr; do cp "$GT/open-clear.json" "$GW/report.json"; got="$got$g=$(gate "$g") "; done
+  [ "$got" = "$want" ] || fail "gate: want '$want', got '$got' ($2)"
+}
+printf '{"required":["plan"]}' > "$GATE_HOME/.claude/workflow/gates.json"
+gates_clear "spec=ask plan=ask tasks=skip pr=ask " "gates.json adds plan to spec and pr"
+for bad in '{"required":[]}' '{not json' '[]' '{"required":"plan"}' '{"required":[1]}' '{}'; do
+  printf '%s' "$bad" > "$GATE_HOME/.claude/workflow/gates.json"
+  gates_clear "spec=ask plan=skip tasks=skip pr=ask " "empty or invalid gates.json: $bad"
+done
+rm "$GATE_HOME/.claude/workflow/gates.json"
+
+cp "$GT/open-clear.json" "$GW/report.json"
+printf '{"feature":"Outro ciclo","start_date":"2026-08-02T00:00:00Z"}' > "$GW/current.json"
+report_snap "$GW"
+[ "$(gate plan)" = ask ] || fail "gate on a report from another cycle asks"
+report_untouched "$GW" "gate on a report from another cycle"
+printf '{"feature":"Feat Gt","start_date":"2026-08-01T00:00:00Z"}' > "$GW/current.json"
+rm "$GW/report.json"
+[ "$(gate plan)" = ask ] && [ ! -e "$GW/report.json" ] || fail "gate without report.json asks and writes nothing"
+GN=$(tmp)
+[ "$(gate plan "$GN")" = ask ] && [ -z "$(ls -A "$GN")" ] || fail "gate without current.json asks and writes nothing"
+
+printf '{"summary": "Sem decisão.", "artifact": "plan.md", "questions": []}' > "$GT/noq.json"
+wfr stage-start plan --workflow-dir "$GW"
+wfr brief plan --workflow-dir "$GW" --file "$GT/noq.json" >/dev/null
+[ "$(gate plan)" = skip ] && [ "$(gate_status plan)" = passed ] || fail "plan without questions passes"
+wfr stage-start plan --workflow-dir "$GW"
+[ "$(gate plan)" = ask ] || fail "stage-start plan after passed drops the block and the gate asks"
+
+got=0; HOME="$GATE_HOME" python3 "$BIN/wf-report.py" gate plan >/dev/null 2>&1 || got=$?; [ "$got" = 2 ] || fail "gate without --workflow-dir: expected exit 2, got $got"
 got=0; gate deploy >/dev/null 2>&1 || got=$?; [ "$got" = 2 ] || fail "gate deploy: expected exit 2, got $got"
-got=0; HOME="$GATE_HOME" python3 "$BIN/wf-report.py" gate >/dev/null 2>&1 || got=$?; [ "$got" = 2 ] || fail "gate without name: expected exit 2, got $got"
+got=0; HOME="$GATE_HOME" python3 "$BIN/wf-report.py" gate --workflow-dir "$GW" >/dev/null 2>&1 || got=$?; [ "$got" = 2 ] || fail "gate without name: expected exit 2, got $got"
 
 echo "- wf-report: shell metacharacters in text files are stored verbatim and never run"
 rm -f /tmp/pwn-wfr
@@ -533,18 +1097,36 @@ grep -q -- '--from-complete' "$SKILLS/pr-open/SKILL.md" || fail "pr-open: no --f
 PRIV='Grupo''OTG\|loss''-control\|r10''-mobile\|R10 Score Dev\|/development/r10\|/development/abm'
 [ -z "$(grep -rn "$PRIV" "$SKILLS" || true)" ] || fail "private names in skills"
 
-echo "- skills: gates are AskUserQuestion with the three options, no 'Seguir para', stage-start carries --session"
-for f in "$SKILLS"/*/SKILL.md; do
-  for n in $(grep -n 'wf-report.py gate ' "$f" | cut -d: -f1); do
-    win=$(sed -n "${n},$((n + 15))p" "$f")
-    for opt in 'Aprovar (Recommended)' 'Ajustar' 'Rejeitar'; do
-      printf '%s\n' "$win" | grep -q "$opt" || fail "$f:$n: gate without '$opt' within 15 lines"
-    done
+echo "- skills: gates ask the brief's decisions, no 'Seguir para', stage-start carries --session"
+for pair in challenge-spec:spec plan:plan tasks:tasks complete:pr; do
+  s=${pair%%:*}; g=${pair#*:}; f="$SKILLS/$s/SKILL.md"; prev=0
+  for pat in 'gate-critic' "wf-report.py brief $g " "wf-report.py gate $g --workflow-dir" "wf-report.py answer $g "; do
+    n=$(ln_of "$pat" "$f"); [ -n "$n" ] || fail "$s: missing '$pat'"
+    [ "$n" -gt "$prev" ] || fail "$s: '$pat' out of order"
+    prev=$n
   done
+  [ "$(grep -c 'wf-report.py gate ' "$f")" = "1" ] || fail "$s: expected exactly one gate"
+  grep -q "\.gate-$g\.candidates\.json" "$f" || fail "$s: candidates file missing"
+  [ "$(grep -c 'Aprovar (Recomendado)' "$f")" = "1" ] || fail "$s: the single approval question must appear once"
+  [ "$(grep -c '`ask` sem perguntas' "$f")" = "1" ] || fail "$s: no single branch without questions"
+  m=$(ln_of '`ask` sem perguntas' "$f"); a=$(ln_of 'Aprovar (Recomendado)' "$f")
+  [ "$a" -gt "$m" ] && [ "$a" -le $((m + 4)) ] || fail "$s: the single approval question outside the branch without questions"
+  for opt in 'Ajustar' 'Rejeitar'; do
+    sed -n "${m},$((m + 8))p" "$f" | grep -q "$opt" || fail "$s: branch without questions lacks '$opt'"
+  done
+  [ "$(ln_of '`ask` com perguntas' "$f")" -lt "$m" ] || fail "$s: branch with questions must come first"
+  st=$s; [ "$s" = challenge-spec ] && st=challenge
+  for pat in 'resumo indisponível' 'rodadas esgotadas' 'Aprovar como está' 'Voltar à etapa anterior' 'Abortar' \
+             "Gate $g: passed, sem decisão em aberto" "wf-report.py show $g " "wf-report.py decision $st --workflow-dir \"\$WF_DIR\" --by user"; do
+    grep -qF -- "$pat" "$f" || fail "$s: missing '$pat'"
+  done
+  ! grep -E 'wf-report\.py (brief|answer) ' "$f" | grep -q '|| true' || fail "$s: brief and answer run without || true"
 done
-for s in challenge-spec plan tasks; do
-  [ "$(grep -c 'wf-report.py gate ' "$SKILLS/$s/SKILL.md")" = "1" ] || fail "$s: expected exactly one gate"
-done
+[ -z "$(grep -rn 'wf-report.py gate ' "$SKILLS" | grep -v -- '--workflow-dir' || true)" ] || fail "gate called without --workflow-dir"
+grep -q 'wf-report.py reopen pr ' "$C" || fail "complete: change branch without reopen pr"
+[ "$(ln_of 'wf-report.py reopen pr ' "$C")" -gt "$(ln_of 'archive-cycle.sh completed' "$C")" ] || fail "complete: change branch must come after step 10"
+[ "$(ln_of 'wf-report.py show pr ' "$C")" -lt "$(ln_of 'routing-stats.py' "$C")" ] || fail "complete: re-entry check must come before ADR, lessons and routing"
+grep -q 'pr\.diff' "$C" && grep -q 'pr\.tree' "$C" || fail "complete: pr.diff and pr.tree from shell"
 [ -z "$(grep -ln 'Seguir para' "$SKILLS"/{specify,challenge-spec,plan,tasks}/SKILL.md || true)" ] || fail "'Seguir para' still in skills"
 for s in kickoff specify challenge-spec plan tasks implement verify; do
   grep 'wf-report.py stage-start ' "$SKILLS/$s/SKILL.md" | grep -qv -- '--session "\$CLAUDE_FLOW_SESSION_ID"' && fail "$s: stage-start without --session"

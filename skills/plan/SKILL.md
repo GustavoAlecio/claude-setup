@@ -153,17 +153,72 @@ python3 ~/.claude/bin/wf-report.py stage-end plan --workflow-dir "$WF_DIR" --sum
 
 Apresente o resumo do plano em 3-5 linhas.
 
-Gate `plan` (decisão determinística; nunca leia `gates.json`):
+O gate pergunta só as decisões em aberto do plano, não a aprovação do documento. Nunca leia `gates.json` nem o `report.json`: o script decide e entrega a pergunta pronta.
 
-```bash
-python3 ~/.claude/bin/wf-report.py gate plan
+### 9a. Candidatas
+
+Escreva com **Write** em `$WF_DIR/.gate-plan.candidates.json` uma lista JSON com as escolhas do plano que o usuário pode querer mudar (decisões da seção "Decisoes" com alternativa real, riscos cuja mitigação depende de preferência, desvios declarados da spec). Lista vazia (`[]`) se não houver:
+
+```json
+[{"id": "C1", "text": "<a decisão, em uma frase>",
+  "options": [{"id": "a", "label": "<curto>", "consequence": "<o que muda>"}, {"id": "b", "label": "...", "consequence": "..."}],
+  "assumed": "a", "prefers": {"author": "a"}}]
 ```
 
-- `skip`: atualize `status` para `"plan_approved"` no `current.json`, informe em 1 linha e execute `/tasks`.
-- `ask`: o `stage-end` acima já rodou; faça um `AskUserQuestion` ("Plano aprovado para gerar as tasks?") com as opções:
-  - **Aprovar (Recommended)**: atualize `status` para `"plan_approved"` no `current.json`, execute `/tasks` na mesma sessão.
-  - **Ajustar**: o usuário escreve o ajuste em Other; aplique o texto e repita este mesmo gate.
-  - **Rejeitar**: rode `stage-end plan --status blocked` (mesmo `--summary-file`), mantenha o `status` do `current.json` e encerre o turno.
-- A resposta do usuário vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision plan --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.
+`assumed` é a opção que o `plan.md` já assume.
+
+### 9b. Crítico
+
+Spawne o agente `gate-critic` (Agent tool, `subagent_type: gate-critic`) com: gate `plan`, artefato `plan.md` (em `$WF_DIR`), candidatas `$WF_DIR/.gate-plan.candidates.json` e saída `$WF_DIR/.gate-plan.json`. Não resuma o plano no prompt; ele lê.
+
+### 9c. Brief
+
+Sem `|| true`: a recusa é o sinal para o reenvio.
+
+```bash
+python3 ~/.claude/bin/wf-report.py brief plan --workflow-dir "$WF_DIR" --file "$WF_DIR/.gate-plan.json" --candidates "$WF_DIR/.gate-plan.candidates.json"
+```
+
+- Saída 0: siga ao gate.
+- Saída 2 com `rodadas esgotadas` no stderr: vá para "Rodadas esgotadas" (9f).
+- Outra saída 2: reenvie o stderr ao `gate-critic` uma única vez (mesmo prompt + o stderr) e rode o `brief` de novo. Na segunda recusa siga sem bloco: o gate devolve `ask` e você faz a pergunta única do ramo sem perguntas, avisando "resumo indisponível".
+
+### 9d. Gate
+
+```bash
+python3 ~/.claude/bin/wf-report.py gate plan --workflow-dir "$WF_DIR"
+```
+
+Qualquer saída diferente de `skip` é `ask`. Nos dois casos leia o bloco pronto:
+
+```bash
+python3 ~/.claude/bin/wf-report.py show plan --workflow-dir "$WF_DIR"
+```
+
+- `skip`: imprima o `text_md` do `show` e a linha `Gate plan: passed, sem decisão em aberto`; atualize `status` para `"plan_approved"` no `current.json` e execute `/tasks`.
+- **`ask` com perguntas** (`questions` do `show` não vazio): imprima o `text_md` e faça um `AskUserQuestion` com as `questions` do `show` como vieram (`header`, `question`, `options` com `label`/`description`, `multiSelect: false`); não reescreva, não reordene e não marque recomendação, o script já resolveu. Para cada resposta, ache o `id` da opção pelo `label` escolhido e grave:
+  ```bash
+  python3 ~/.claude/bin/wf-report.py answer plan --workflow-dir "$WF_DIR" --question <id da pergunta> --option <id da opção>
+  ```
+  Texto livre (Other): escreva-o com **Write** em `$WF_DIR/.gate-answer.md` e troque `--option <id>` por `--text-file "$WF_DIR/.gate-answer.md"`. Depois rode o `show` de novo: `approved` → atualize `status` para `"plan_approved"` e execute `/tasks`; `revising` → 9e.
+- **`ask` sem perguntas** (`questions` vazio, ou `{"status":"absent"}`): imprima o `text_md` (ou "resumo indisponível" sem bloco) e faça a pergunta única `AskUserQuestion` ("Plano aprovado para gerar as tasks?"):
+  - **Aprovar (Recomendado)**: `answer plan --workflow-dir "$WF_DIR" --approve`, atualize `status` para `"plan_approved"` no `current.json` e execute `/tasks` na mesma sessão.
+  - **Ajustar**: o usuário escreve o ajuste em Other; grave-o com **Write** em `$WF_DIR/.gate-answer.md`, rode `answer plan --workflow-dir "$WF_DIR" --text-file "$WF_DIR/.gate-answer.md"` (leva a `revising`) e siga para 9e.
+  - **Rejeitar**: `answer plan --workflow-dir "$WF_DIR" --reject`, rode `stage-end plan --status blocked` (mesmo `--summary-file`), mantenha o `status` do `current.json` e encerre o turno.
+  - Sem bloco ("resumo indisponível") não há o que gravar com `answer`: Aprovar e Rejeitar seguem igual sem ele, e Ajustar aplica o texto no `plan.md` e repete o gate desde 9a.
+- Toda resposta do usuário também vira decisão: escreva-a com **Write** em `$WF_DIR/.decision.md` e rode `python3 ~/.claude/bin/wf-report.py decision plan --workflow-dir "$WF_DIR" --by user --text-file "$WF_DIR/.decision.md" || true`.
+
+### 9e. Revising
+
+Revise o `plan.md` com as respostas (opções diferentes de `assumed` e textos livres), reescreva as candidatas (9a) e chame o `gate-critic` (9b) dizendo o que mudou desde a rodada anterior, que vira `changes` (1 a 3 linhas). Rode o `brief` (9c), que grava a rodada seguinte, e o gate (9d) de novo.
+
+### 9f. Rodadas esgotadas
+
+O `brief` recusou a quarta rodada. Faça um `AskUserQuestion` com:
+- **Aprovar como está**: siga sem chamar o gate de novo; atualize `status` para `"plan_approved"` e execute `/tasks`.
+- **Voltar à etapa anterior**: rode `stage-end plan --status blocked` (mesmo `--summary-file`) e indique `/challenge-spec` para rever a spec.
+- **Abortar**: rode `stage-end plan --status blocked` e encerre o turno.
+
+A escolha vira `decision --by user` como acima.
 
 > **Nota:** quando o usuario aprovar o plano (confirmando ou executando `/tasks`), o `/tasks` deve setar `status` para `"plan_approved"` antes de iniciar.
