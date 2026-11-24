@@ -111,11 +111,92 @@ StageReport _parseStage(Stage stage, Map<String, dynamic> raw) => StageReport(
   ],
   artifacts: _strings(raw['artifacts']),
   sessionId: _string(raw['session_id']),
+  gate: _parseGate(raw['gate']),
 );
+
+/// `null` without `name` or a known `status`; malformed items inside are dropped, never thrown.
+ReportGate? _parseGate(Object? raw) {
+  if (raw is! Map) return null;
+  final name = _string(raw['name']);
+  final status = GateStatus.values.where((s) => s.name == raw['status']).firstOrNull;
+  if (name == null || name.isEmpty || status == null) return null;
+  final omitted = raw['omitted'];
+  return ReportGate(
+    name: name,
+    status: status,
+    round: _int(raw['round']) ?? 1,
+    summary: _string(raw['summary']) ?? '',
+    risks: [
+      for (final r in _maps(raw['risks']))
+        if (_string(r['id']) != null && _string(r['text']) != null)
+          GateRisk(id: r['id'] as String, text: r['text'] as String, source: _string(r['source'])),
+    ],
+    questions: _questions(raw['questions']),
+    history: [
+      for (final h in _maps(raw['history']))
+        if (_int(h['round']) != null)
+          GateRound(
+            round: _int(h['round'])!,
+            questions: _questions(h['questions']),
+            answer: _answer(h['answer'], null),
+          ),
+    ],
+    changes: _strings(raw['changes']),
+    cut: [
+      for (final c in _maps(raw['cut']))
+        if (_string(c['id']) != null && _string(c['text']) != null)
+          GateCut(id: c['id'] as String, text: c['text'] as String),
+    ],
+    omitted: omitted is Map
+        ? GateOmitted(
+            risks: _int(omitted['risks']) ?? 0,
+            questions: _int(omitted['questions']) ?? 0,
+            candidates: _int(omitted['candidates']) ?? 0,
+          )
+        : const GateOmitted(),
+    artifact: _string(raw['artifact']),
+    answer: _answer(raw['answer'], null),
+  );
+}
+
+List<GateQuestion> _questions(Object? raw) => [
+  for (final q in _maps(raw))
+    if (_string(q['id']) != null && _string(q['text']) != null)
+      GateQuestion(
+        id: q['id'] as String,
+        text: q['text'] as String,
+        header: _string(q['header']),
+        options: [
+          for (final o in _maps(q['options']))
+            if (_string(o['id']) != null && _string(o['label']) != null)
+              GateOption(
+                id: o['id'] as String,
+                label: o['label'] as String,
+                consequence: _string(o['consequence']) ?? '',
+              ),
+        ],
+        assumed: _string(q['assumed']),
+        prefers: {
+          if (q['prefers'] is Map)
+            for (final e in (q['prefers'] as Map).entries)
+              if (e.key is String && e.value is String) e.key as String: e.value as String,
+        },
+        answer: _answer(q['answer'], _string(q['answer_text'])),
+      ),
+];
+
+/// `wf-report.py` records an option id as a bare string and free text as `{text}`; `answer_text` rides along an option.
+GateAnswer? _answer(Object? raw, String? note) {
+  if (raw is String) return GateAnswer(optionId: raw, text: note);
+  if (raw is Map && raw['text'] is String) return GateAnswer(text: raw['text'] as String);
+  return null;
+}
 
 Stage? _stage(Object? v) => v is String ? Stage.values.where((s) => s.name == v).firstOrNull : null;
 
 String? _string(Object? v) => v is String ? v : null;
+
+int? _int(Object? v) => v is int ? v : null;
 
 List<String> _strings(Object? v) => [if (v is List) ...v.whereType<String>()];
 

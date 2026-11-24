@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:claude_flow/data/docs_repository.dart';
 import 'package:claude_flow/data/file_docs_repository.dart';
+import 'package:claude_flow/data/report_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void _write(String path, String content) {
@@ -33,6 +34,19 @@ void main() {
   tearDown(() => tmp.deleteSync(recursive: true));
 
   group('list', () {
+    test('artifact do gate é o rel da aba Artefatos', () async {
+      final report = parseReport(File('test/fixtures/workflow/gamma/report.json').readAsStringSync())!;
+      final artifacts = [for (final s in report.stages) ?s.gate?.artifact];
+      for (final rel in artifacts) {
+        _write('$proj/$rel', rel);
+      }
+
+      final listing = await repo.list('demo');
+
+      expect(artifacts, isNotEmpty);
+      expect(listing.artifacts.map((e) => e.rel), containsAll(artifacts));
+    });
+
     test('groups root artifacts alphabetically and details newest first, ignoring hidden', () async {
       _write('$proj/tasks.md', 't');
       _write('$proj/plan.md', 'p');

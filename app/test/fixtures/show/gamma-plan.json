@@ -1,0 +1,61 @@
+{
+  "status": "open",
+  "round": 1,
+  "text_md": "**Gate plan** (rodada 1)\n\nPlano em duas tasks, com a tela gamma atrás de um repositório novo.\n\nRiscos:\n- A tela depende de um contrato ainda não publicado. (critic)\n- Sem teste de regressão para a rota antiga. (author)\n\nFora do resumo: 1 perguntas, 1 candidatas.",
+  "questions": [
+    {
+      "id": "Q1",
+      "header": "Q1",
+      "question": "Onde guardar o estado da tela gamma?",
+      "options": [
+        {
+          "id": "a",
+          "label": "Opção A",
+          "description": "Segue o caminho mais simples. Preferida pelo autor."
+        },
+        {
+          "id": "b",
+          "label": "Opção B",
+          "description": "Custa mais e cobre mais casos. Preferida pelo crítico."
+        }
+      ],
+      "multiSelect": false
+    },
+    {
+      "id": "Q2",
+      "header": "Q2",
+      "question": "A rota nova substitui a antiga?",
+      "options": [
+        {
+          "id": "a",
+          "label": "Opção A",
+          "description": "Segue o caminho mais simples. Preferida pelo autor."
+        },
+        {
+          "id": "b",
+          "label": "Opção B",
+          "description": "Custa mais e cobre mais casos. Preferida pelo crítico."
+        }
+      ],
+      "multiSelect": false
+    },
+    {
+      "id": "Q3",
+      "header": "Q3",
+      "question": "O repositório lê do disco a cada abertura?",
+      "options": [
+        {
+          "id": "a",
+          "label": "Opção A",
+          "description": "Segue o caminho mais simples. Preferida pelo autor."
+        },
+        {
+          "id": "b",
+          "label": "Opção B",
+          "description": "Custa mais e cobre mais casos. Preferida pelo crítico."
+        }
+      ],
+      "multiSelect": false
+    }
+  ]
+}

@@ -79,7 +79,24 @@
       ],
       "artifacts": [],
       "run_ids": [],
-      "ended_at": "2026-03-10T07:40:00Z"
+      "ended_at": "2026-03-10T07:40:00Z",
+      "gate": {
+        "name": "spec",
+        "round": 1,
+        "status": "open",
+        "summary": "Spec com dois critérios de aceite e nenhuma decisão em aberto.",
+        "risks": [],
+        "questions": [],
+        "history": [],
+        "changes": [],
+        "cut": [],
+        "omitted": {
+          "risks": 0,
+          "questions": 0,
+          "candidates": 0
+        },
+        "artifact": "spec.md"
+      }
     },
     {
       "stage": "plan",
@@ -107,7 +124,107 @@
         "plan.md"
       ],
       "run_ids": [],
-      "ended_at": "2026-03-10T07:55:00Z"
+      "ended_at": "2026-03-10T07:55:00Z",
+      "gate": {
+        "name": "plan",
+        "round": 1,
+        "status": "open",
+        "summary": "Plano em duas tasks, com a tela gamma atrás de um repositório novo.",
+        "risks": [
+          {
+            "id": "R1",
+            "text": "A tela depende de um contrato ainda não publicado.",
+            "source": "critic"
+          },
+          {
+            "id": "R2",
+            "text": "Sem teste de regressão para a rota antiga.",
+            "source": "author"
+          }
+        ],
+        "questions": [
+          {
+            "id": "Q1",
+            "text": "Onde guardar o estado da tela gamma?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            },
+            "answer": null
+          },
+          {
+            "id": "Q2",
+            "text": "A rota nova substitui a antiga?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            },
+            "answer": null
+          },
+          {
+            "id": "Q3",
+            "text": "O repositório lê do disco a cada abertura?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            },
+            "answer": null
+          }
+        ],
+        "history": [],
+        "changes": [],
+        "cut": [
+          {
+            "id": "Q5",
+            "text": "Migrar os dados antigos?"
+          }
+        ],
+        "omitted": {
+          "risks": 0,
+          "questions": 1,
+          "candidates": 1
+        },
+        "artifact": "plan.md"
+      }
     },
     {
       "stage": "tasks",
@@ -121,7 +238,24 @@
         "tasks.md"
       ],
       "run_ids": [],
-      "ended_at": "2026-03-10T08:10:00Z"
+      "ended_at": "2026-03-10T08:10:00Z",
+      "gate": {
+        "name": "tasks",
+        "round": 1,
+        "status": "passed",
+        "summary": "Duas tasks ordenadas, sem decisão pendente.",
+        "risks": [],
+        "questions": [],
+        "history": [],
+        "changes": [],
+        "cut": [],
+        "omitted": {
+          "risks": 0,
+          "questions": 0,
+          "candidates": 0
+        },
+        "artifact": "tasks.md"
+      }
     },
     {
       "stage": "implement",

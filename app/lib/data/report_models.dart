@@ -55,6 +55,7 @@ class StageReport {
     this.findings = const [],
     this.artifacts = const [],
     this.sessionId,
+    this.gate,
   });
 
   final Stage stage;
@@ -69,6 +70,120 @@ class StageReport {
 
   /// Engine session that ran the stage; absent when it ran in a terminal.
   final String? sessionId;
+
+  /// Decision brief written by `wf-report.py brief`; the owner stage of `spec` is `challenge`.
+  final ReportGate? gate;
+}
+
+enum GateStatus { open, revising, approved, passed, rejected }
+
+/// `stages[].gate`. `why`, `anchor`, `base`, `tree` and `map` are not read.
+class ReportGate {
+  const ReportGate({
+    required this.name,
+    required this.status,
+    this.round = 1,
+    this.summary = '',
+    this.risks = const [],
+    this.questions = const [],
+    this.history = const [],
+    this.changes = const [],
+    this.cut = const [],
+    this.omitted = const GateOmitted(),
+    this.artifact,
+    this.answer,
+  });
+
+  /// `spec`, `plan`, `tasks` or `pr`.
+  final String name;
+  final GateStatus status;
+  final int round;
+  final String summary;
+  final List<GateRisk> risks;
+  final List<GateQuestion> questions;
+  final List<GateRound> history;
+  final List<String> changes;
+  final List<GateCut> cut;
+  final GateOmitted omitted;
+  final String? artifact;
+
+  /// Free-text adjust of a block without questions.
+  final GateAnswer? answer;
+}
+
+class GateRisk {
+  const GateRisk({required this.id, required this.text, this.source});
+
+  final String id;
+  final String text;
+
+  /// `author` or `critic`.
+  final String? source;
+}
+
+class GateQuestion {
+  const GateQuestion({
+    required this.id,
+    required this.text,
+    this.header,
+    this.options = const [],
+    this.assumed,
+    this.prefers = const {},
+    this.answer,
+  });
+
+  final String id;
+  final String text;
+  final String? header;
+  final List<GateOption> options;
+
+  /// Option id taken when the user just approves.
+  final String? assumed;
+
+  /// Option id each side prefers, by side (`author`, `critic`).
+  final Map<String, String> prefers;
+  final GateAnswer? answer;
+}
+
+class GateOption {
+  const GateOption({required this.id, required this.label, this.consequence = ''});
+
+  final String id;
+  final String label;
+  final String consequence;
+}
+
+/// An option, free text, or both (the `change` adjust of gate `pr`).
+class GateAnswer {
+  const GateAnswer({this.optionId, this.text});
+
+  final String? optionId;
+  final String? text;
+}
+
+class GateRound {
+  const GateRound({required this.round, this.questions = const [], this.answer});
+
+  final int round;
+  final List<GateQuestion> questions;
+
+  /// Free-text adjust of that round when it had no questions.
+  final GateAnswer? answer;
+}
+
+class GateCut {
+  const GateCut({required this.id, required this.text});
+
+  final String id;
+  final String text;
+}
+
+class GateOmitted {
+  const GateOmitted({this.risks = 0, this.questions = 0, this.candidates = 0});
+
+  final int risks;
+  final int questions;
+  final int candidates;
 }
 
 enum DecisionKind { decision, mistake }

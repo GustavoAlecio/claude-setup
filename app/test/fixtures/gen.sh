@@ -25,17 +25,18 @@ mkdir -p "$SHIM/.claude"
 ln -s "$REPO/bin" "$SHIM/.claude/bin"
 ln -s "$REPO/stacks" "$SHIM/.claude/stacks"
 
-rm -rf "$OUT/workflow" "$OUT/projects" "$OUT/stacks"
-mkdir -p "$OUT/workflow" "$OUT/projects" "$OUT/stacks"
+rm -rf "$OUT/workflow" "$OUT/projects" "$OUT/stacks" "$OUT/show"
+mkdir -p "$OUT/workflow" "$OUT/projects" "$OUT/stacks" "$OUT/show"
 cp "$REPO/stacks/flutter.json" "$OUT/stacks/flutter.json"
 
-HOME="$SHIM" python3 - "$HERE/src" "$OUT/workflow" "$REPO/bin/wf-event.py" "$OUT/projects" "$REPO/bin/wf-report.py" <<'PY'
+HOME="$SHIM" python3 - "$HERE/src" "$OUT/workflow" "$REPO/bin/wf-event.py" "$OUT/projects" "$REPO/bin/wf-report.py" "$OUT/show" <<'PY'
 import json, os, subprocess, sys, tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 src, out, persist, projects = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
 report_script = sys.argv[5]
+show_dir = Path(sys.argv[6])
 
 def dump(path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,13 +51,15 @@ def run_persist(run_dir, workflow_dir, result):
         check=True, stdout=subprocess.DEVNULL)
     os.unlink(tmp.name)
 
-def run_report(wf, steps):
+def run_report(wf, steps, project=None):
     """Runs wf-report.py steps against `wf` (which holds current.json) and pins the wall-clock stamps."""
     with tempfile.TemporaryDirectory() as scratch:
         for i, step in enumerate(steps):
             cmd = ["python3", report_script, step["cmd"]]
             if "stage" in step:
                 cmd.append(step["stage"])
+            if "name" in step:
+                cmd.append(step["name"])
             cmd += ["--workflow-dir", str(wf)]
             def text_file(name, text):
                 path = Path(scratch) / f"{i}-{name}"
@@ -89,7 +92,23 @@ def run_report(wf, steps):
                 cmd.append("--not-run")
             if "pr_url" in step:
                 cmd += ["--url", step["pr_url"]]
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+            if "file" in step:
+                cmd += ["--file", text_file("brief.json", json.dumps(step["file"], ensure_ascii=False))]
+            if "candidates" in step:
+                cmd += ["--candidates", text_file("candidates.json", json.dumps(step["candidates"], ensure_ascii=False))]
+            if "question" in step:
+                cmd += ["--question", step["question"]]
+            if "option" in step:
+                cmd += ["--option", step["option"]]
+            if "answer_text" in step:
+                cmd += ["--text-file", text_file("answer.md", step["answer_text"])]
+            if step.get("approve"):
+                cmd.append("--approve")
+            if step.get("reject"):
+                cmd.append("--reject")
+            done = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
+            if step["cmd"] == "show" and step.get("save"):
+                dump(show_dir / f"{project}-{step['name']}.json", json.loads(done.stdout))
     for leftover in (".report.json.lock", "report.json.tmp"):
         (wf / leftover).unlink(missing_ok=True)
     report = wf / "report.json"
@@ -123,7 +142,7 @@ for f in sorted(src.glob("*.json")):
         if run.get("result_raw") is not None:
             (run_dir / "result.json").write_text(run["result_raw"])
     if spec.get("report"):
-        run_report(proj, spec["report"])
+        run_report(proj, spec["report"], f.stem)
     (proj / ".current.json.lock").unlink(missing_ok=True)
     for t in (proj / "runs").glob("*/trace.jsonl"):
         t.unlink()
@@ -156,7 +175,7 @@ for f in sorted((src / "history").glob("*.json")):
 PY
 
 if [ "$MODE" = "--check" ]; then
-  for d in workflow projects stacks; do
+  for d in workflow projects stacks show; do
     diff -r "$OUT/$d" "$HERE/$d" || { echo "fixtures drift em $d/: rode app/test/fixtures/gen.sh" >&2; exit 1; }
   done
   echo "fixtures ok"

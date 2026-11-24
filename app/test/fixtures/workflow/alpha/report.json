@@ -48,7 +48,77 @@
       "decisions": [],
       "findings": [],
       "artifacts": [],
-      "run_ids": []
+      "run_ids": [],
+      "gate": {
+        "name": "spec",
+        "round": 2,
+        "status": "open",
+        "summary": "Spec revisada: o detalhe entrou no escopo da página alpha.",
+        "risks": [],
+        "questions": [
+          {
+            "id": "Q2",
+            "text": "O detalhe abre em rota própria?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            },
+            "answer": null
+          }
+        ],
+        "history": [
+          {
+            "round": 1,
+            "questions": [
+              {
+                "id": "Q1",
+                "text": "Incluir a tela de detalhe?",
+                "options": [
+                  {
+                    "id": "a",
+                    "label": "Opção A",
+                    "consequence": "Segue o caminho mais simples."
+                  },
+                  {
+                    "id": "b",
+                    "label": "Opção B",
+                    "consequence": "Custa mais e cobre mais casos."
+                  }
+                ],
+                "assumed": "a",
+                "prefers": {
+                  "author": "a",
+                  "critic": "b"
+                },
+                "answer": "b"
+              }
+            ]
+          }
+        ],
+        "changes": [
+          "Tela de detalhe incluída no escopo."
+        ],
+        "cut": [],
+        "omitted": {
+          "risks": 0,
+          "questions": 0,
+          "candidates": 0
+        },
+        "artifact": "spec.md"
+      }
     }
   ]
 }

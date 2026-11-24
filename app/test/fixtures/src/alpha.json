@@ -421,6 +421,77 @@
     {
       "cmd": "stage-start",
       "stage": "challenge"
+    },
+    {
+      "cmd": "brief",
+      "name": "spec",
+      "file": {
+        "summary": "Spec da página alpha com dois critérios e uma dúvida de escopo.",
+        "artifact": "spec.md",
+        "questions": [
+          {
+            "id": "Q1",
+            "text": "Incluir a tela de detalhe?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cmd": "answer",
+      "name": "spec",
+      "question": "Q1",
+      "option": "b"
+    },
+    {
+      "cmd": "brief",
+      "name": "spec",
+      "file": {
+        "summary": "Spec revisada: o detalhe entrou no escopo da página alpha.",
+        "artifact": "spec.md",
+        "changes": [
+          "Tela de detalhe incluída no escopo."
+        ],
+        "questions": [
+          {
+            "id": "Q2",
+            "text": "O detalhe abre em rota própria?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            }
+          }
+        ]
+      }
     }
   ]
 }

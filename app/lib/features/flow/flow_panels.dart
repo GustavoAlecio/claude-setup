@@ -55,6 +55,105 @@ class StageBanner extends StatelessWidget {
   }
 }
 
+/// An open gate: what it asks and the way to its screen. Built from the report alone, without the session stream.
+class GateDecideRow extends StatelessWidget {
+  const GateDecideRow({super.key, required this.project, required this.gate});
+
+  final String project;
+  final ReportGate gate;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
+      decoration: BoxDecoration(
+        color: c.awaiting.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.awaiting.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.help_outline, size: 18, color: c.awaiting),
+          const SizedBox(width: 10),
+          Mono(gate.name, color: c.textPrimary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              gateTitle(gate.name, gate.questions.length),
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12.5, color: c.textPrimary),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: c.awaiting, foregroundColor: Colors.white),
+            onPressed: () => context.go(gateLocation(project, gate.name)),
+            child: const Text('Decidir', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The request that asks an open gate of [gates] becomes a note without button (the one "Decidir" is the Fluxo row);
+/// any other question keeps its card.
+RequestOverride gateRequestOverride(ReportDoc? gates) => (detail, request) {
+  final gate = sessionGate(gates, detail.summary.id);
+  if (gate == null || matchGateRequest(gate, detail)?.requestId != request.requestId) return null;
+  return Padding(
+    key: ValueKey('flow-gate-request-${gate.name}'),
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: const Muted('decida na linha Decidir, acima da linha do tempo'),
+  );
+};
+
+/// "Passou sem você": gates that went through without asking, each opening its screen to read.
+class PassedGates extends StatelessWidget {
+  const PassedGates({super.key, required this.project, required this.stages});
+
+  final String project;
+  final List<StageReport> stages;
+
+  @override
+  Widget build(BuildContext context) {
+    if (stages.isEmpty) return const SizedBox.shrink();
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Muted('Passou sem você', size: 11),
+          const SizedBox(height: 4),
+          for (final s in stages)
+            Row(
+              key: ValueKey('flow-passed-${s.gate!.name}'),
+              children: [
+                Icon(Icons.check_circle_outline, size: 15, color: c.pass),
+                const SizedBox(width: 8),
+                Mono(s.gate!.name, color: c.textPrimary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    s.gate!.summary,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: c.textSecondary),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => context.go(gateLocation(project, s.gate!.name)),
+                  child: Text('ver', style: TextStyle(color: c.accent, fontSize: 12)),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// `/fix` corrects a blocked stage; it is not a stage of the timeline itself.
 bool _isSupport(String command) => command.trimLeft().startsWith('/fix');
 

@@ -8,6 +8,7 @@ import '../features/about/about_page.dart';
 import '../features/adrs/adrs_page.dart';
 import '../features/artifacts/artifacts_page.dart';
 import '../features/flow/flow_page.dart';
+import '../features/flow/gate_page.dart';
 import '../features/inbox/inbox_page.dart';
 import '../features/landing/landing_page.dart';
 import '../features/metrics/metrics_page.dart';
@@ -38,6 +39,18 @@ GoRouter buildRouter(EffectivePaths paths) {
       GoRoute(
         path: '/about',
         pageBuilder: (_, state) => _instant(state, AboutPage(backTo: () => lastShellRoute, paths: paths)),
+      ),
+      GoRoute(
+        path: '/p/:project/gate/:gate',
+        pageBuilder: (_, state) => _instant(
+          state,
+          GatePage(
+            key: ValueKey('${state.pathParameters['project']}/${state.pathParameters['gate']}'),
+            project: state.pathParameters['project']!,
+            gate: state.pathParameters['gate']!,
+            backTo: () => lastShellRoute,
+          ),
+        ),
       ),
       ShellRoute(
         builder: (context, state, child) => switch (state.uri.pathSegments.first) {
@@ -129,7 +142,8 @@ GoRouter buildRouter(EffectivePaths paths) {
       ),
     ],
   );
-  // `/settings` and `/about` sit outside the shell and `go` keeps no history, so "Voltar" needs the last shell route.
+  // `/settings`, `/about` and the gate sit outside the shell and `go` keeps no history, so "Voltar" needs the last
+  // shell route.
   router.routerDelegate.addListener(() {
     final uri = router.routerDelegate.currentConfiguration.uri;
     if (isShellLocation(uri.path)) lastShellRoute = uri.toString();

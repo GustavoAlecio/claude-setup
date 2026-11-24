@@ -215,6 +215,7 @@ Cycle parseCycle(
     runs: runs,
     stageMinutes: stageMinutes(phases),
     report: report,
+    reportIsCurrent: report != null && reportMatchesCycle(report, current),
     startedAt: current['start_date'] is String ? DateTime.tryParse(current['start_date'] as String) : null,
     // A paused cycle without a readable date still reads as paused: the flag is what the CLI sets.
     pausedAt: current['paused'] == true

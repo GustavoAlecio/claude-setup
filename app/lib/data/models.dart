@@ -196,6 +196,7 @@ class Cycle {
     this.tracker,
     this.branch,
     this.report,
+    this.reportIsCurrent = false,
     this.startedAt,
     this.pausedAt,
   });
@@ -220,6 +221,9 @@ class Cycle {
 
   /// `null` without a valid `report.json` (missing, over the size limit, invalid or `version != 1`).
   final ReportDoc? report;
+
+  /// [report] belongs to this cycle (`reportMatchesCycle`); only `parseCycle` sets it, so a hand-built cycle shows no gate.
+  final bool reportIsCurrent;
 
   Run? get latestRun => runs.isEmpty ? null : runs.first;
 }

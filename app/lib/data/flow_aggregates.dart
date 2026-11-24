@@ -186,6 +186,15 @@ List<SessionSummary> awaitingSessions(List<SessionSummary> pending, String? show
     if (s.id != shownSessionId) s,
 ];
 
+/// [sessions] minus those whose stage holds an open gate of [gates]: the Fluxo's "Decidir" row already asks it.
+List<SessionSummary> withoutOpenGateSessions(List<SessionSummary> sessions, ReportDoc? gates) {
+  final ids = {for (final s in openGates(gates)) s.sessionId};
+  return [
+    for (final s in sessions)
+      if (!ids.contains(s.id)) s,
+  ];
+}
+
 /// Ended stage sessions for the awaiting card, minus the one the side panel already shows with its Retomar button.
 List<EndedStageSession> awaitingEnded(List<EndedStageSession> ended, String? shownSessionId) => [
   for (final e in ended)
@@ -236,3 +245,160 @@ Map<String, int> withDecisions(Map<String, int> pending, List<Project> projects)
 /// Blocked-cycle decisions waiting in [org]'s projects.
 int decisionsInOrg(List<Project> projects, String org) =>
     projectsInOrg(projects, org).where((p) => !p.hidden && blockedDecision(p) != null).length;
+
+/// Stage that carries each gate the app decides (`GATE_OWNER` in `bin/wf-report.py`); `pr` is not decided here.
+const kGateOwner = {'spec': Stage.challenge, 'plan': Stage.plan, 'tasks': Stage.tasks};
+
+/// The report the gates read: only one from this cycle (`Cycle.reportIsCurrent`), the identity `wf-report.py` uses.
+ReportDoc? gateReport(Cycle? cycle) => cycle != null && cycle.reportIsCurrent ? cycle.report : null;
+
+/// Gate blocks on their owner stage, in pipeline order.
+Iterable<StageReport> _ownedGates(ReportDoc? report) => [...?report?.stages]
+  ..retainWhere((s) => s.gate != null && kGateOwner[s.gate!.name] == s.stage)
+  ..sort((a, b) => a.stage.index.compareTo(b.stage.index));
+
+/// Stages whose gate waits on the user, in pipeline order.
+List<StageReport> openGates(ReportDoc? report) => [
+  for (final s in _ownedGates(report))
+    if (s.gate!.status == GateStatus.open) s,
+];
+
+/// Stages whose gate passed without asking ("Passou sem você"), in pipeline order.
+List<StageReport> passedGates(ReportDoc? report) => [
+  for (final s in _ownedGates(report))
+    if (s.gate!.status == GateStatus.passed) s,
+];
+
+/// Open gate of session [sessionId]: one session runs several stages, so the first in pipeline order wins.
+ReportGate? sessionGate(ReportDoc? report, String sessionId) =>
+    openGates(report).where((s) => s.sessionId == sessionId).firstOrNull?.gate;
+
+String gateLocation(String project, String gate) => Uri(pathSegments: ['', 'p', project, 'gate', gate]).toString();
+
+String _normalized(String text) => text.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+const _approvalPrefixes = ['aprovar', 'ajustar', 'rejeitar'];
+
+bool _isApprovalRequest(QuestionRequest r) =>
+    r.questions.length == 1 &&
+    _approvalPrefixes.every(
+      (prefix) => r.questions.single.options.any((o) => o.label.trim().toLowerCase().startsWith(prefix)),
+    );
+
+/// The pending `AskUserQuestion` of the stage session that asks [gate]. The question text is the only link: the
+/// question id does not survive `AskUserQuestion`. With questions, the request must carry the unanswered ones in
+/// order; without, it is the session's only pending question, with Aprovar, Ajustar and Rejeitar. Expired requests
+/// never match; among several matches the highest `seq` wins.
+QuestionRequest? matchGateRequest(ReportGate gate, SessionDetail detail) {
+  if (gate.status != GateStatus.open) return null;
+  final asked = [
+    for (final r in pendingRequests(detail))
+      if (r is QuestionRequest) r,
+  ];
+  if (gate.questions.isEmpty) {
+    return asked.length == 1 && _isApprovalRequest(asked.single) ? asked.single : null;
+  }
+  final open = [
+    for (final q in gate.questions)
+      if (q.answer == null) _normalized(q.text),
+  ];
+  if (open.isEmpty) return null;
+  QuestionRequest? best;
+  for (final r in asked) {
+    final texts = [for (final q in r.questions) _normalized(q.question)];
+    if (texts.length == open.length && Iterable.generate(open.length).every((i) => texts[i] == open[i])) {
+      if (best == null || r.seq > best.seq) best = r;
+    }
+  }
+  return best;
+}
+
+/// What the gate screen answered in this visit.
+typedef GateSent = ({int round, String requestId});
+
+enum GateScreenState { deciding, sent, revising, reading, waiting }
+
+/// The screen state of [gate] given the request that asks it ([matched]) and what this visit sent. A send of the
+/// current round reads as sent while no other request asks: the skill writes one answer at a time, so a partially
+/// recorded gate no longer matches the request it just answered. A send of an older round is ignored.
+GateScreenState gateScreenState(ReportGate gate, QuestionRequest? matched, GateSent? sent) {
+  switch (gate.status) {
+    case GateStatus.revising:
+      return GateScreenState.revising;
+    case GateStatus.approved || GateStatus.passed || GateStatus.rejected:
+      return GateScreenState.reading;
+    case GateStatus.open:
+      final current = sent != null && sent.round == gate.round ? sent : null;
+      if (current != null && (matched == null || matched.requestId == current.requestId)) return GateScreenState.sent;
+      return matched != null ? GateScreenState.deciding : GateScreenState.waiting;
+  }
+}
+
+/// [questions] is the count of the matched request.
+String gateTitle(String gate, int questions) {
+  final (before, approve) = switch (gate) {
+    'spec' => ('planejar', 'Aprovar a spec?'),
+    'plan' => ('gerar as tasks', 'Aprovar o plano?'),
+    'tasks' => ('implementar', 'Aprovar as tasks?'),
+    _ => (null, 'Aprovar?'),
+  };
+  if (questions == 0) return approve;
+  final count = questions == 1 ? '1 decisão' : '$questions decisões';
+  return before == null ? count : '$count antes de $before';
+}
+
+/// Title of the gate screen: a decided gate names its outcome instead of asking again; open and revising keep
+/// [gateTitle].
+String gateReadingTitle(String gate, GateStatus status, int questions) {
+  final (approved, passed, rejected) = switch (gate) {
+    'spec' => ('Spec aprovada', 'Spec passou sem decisão', 'Spec rejeitada'),
+    'plan' => ('Plano aprovado', 'Plano passou sem decisão', 'Plano rejeitado'),
+    'tasks' => ('Tasks aprovadas', 'Tasks passaram sem decisão', 'Tasks rejeitadas'),
+    _ => (null, null, null),
+  };
+  final title = switch (status) {
+    GateStatus.approved => approved,
+    GateStatus.passed => passed,
+    GateStatus.rejected => rejected,
+    GateStatus.open || GateStatus.revising => null,
+  };
+  return title ?? gateTitle(gate, questions);
+}
+
+/// `challenger:<id>` → revisão adversarial, `critic` → crítico, `author` → autor; anything else as written.
+String? riskSourceLabel(String? source) => switch (source) {
+  null => null,
+  'critic' => 'crítico',
+  'author' => 'autor',
+  final s when s.startsWith('challenger:') => 'revisão adversarial',
+  final s => s,
+};
+
+enum GateWaitReason { otherRequest, sessionEnded, terminal, notArrived }
+
+/// Why an open gate has no request to answer. [sessionId] is the owner stage's session (`null`: it ran in a
+/// terminal); [detail] is that session's stream, `null` while it loads.
+GateWaitReason gateWaitReason(String? sessionId, SessionDetail? detail) {
+  if (sessionId == null) return GateWaitReason.terminal;
+  if (detail == null) return GateWaitReason.notArrived;
+  if (_ended(detail.summary.status)) return GateWaitReason.sessionEnded;
+  return pendingRequests(detail).isEmpty ? GateWaitReason.notArrived : GateWaitReason.otherRequest;
+}
+
+/// Where the gate screen goes once its send is approved: the pending route of the same project after the gate's own
+/// (wrapping), never the gate itself nor another project's or an org's, else the project's Fluxo.
+String afterGateRoute(List<String> pendingRoutes, String gateRoute, String project) {
+  final own = Uri.parse(gateRoute).path;
+  final prefix = Uri(pathSegments: ['', 'p', project, '']).path;
+  final inProject = [
+    for (final r in pendingRoutes)
+      if (Uri.parse(r).path.startsWith(prefix)) r,
+  ];
+  final at = inProject.indexWhere((r) => Uri.parse(r).path == own);
+  final others = [
+    for (final r in inProject)
+      if (Uri.parse(r).path != own) r,
+  ];
+  if (others.isEmpty) return Uri(pathSegments: ['', 'p', project, 'flow']).toString();
+  return others[at < 0 ? 0 : at % others.length];
+}

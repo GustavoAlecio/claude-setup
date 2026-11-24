@@ -28,9 +28,11 @@ String? routeProject(String location) {
   return segments.length >= 2 && segments.first == 'p' ? segments[1] : null;
 }
 
-/// `/p/<project>/…` and `/o/<org>/…`: the routes the shell wraps.
+/// `/p/<project>/…` and `/o/<org>/…`: the routes the shell wraps. The gate screen (`/p/<project>/gate/…`) lives
+/// outside the shell.
 bool isShellLocation(String location) {
   final segments = Uri.parse(location).pathSegments;
+  if (segments.length >= 3 && segments.first == 'p' && segments[2] == 'gate') return false;
   return segments.length >= 2 && (segments.first == 'p' || segments.first == 'o');
 }
 
@@ -77,6 +79,16 @@ String backTarget(String target, DashboardConfig? config, List<Project>? project
   if (config == null || projects == null) return target;
   final org = routeOrg(target, projects);
   return org == null || org == config.lastOrg ? target : '/';
+}
+
+/// Target of "Voltar" on [project]'s gate screen: [backTarget] of the last shell route, unless that lands on `/` or
+/// on another project, where the project's Fluxo is the way back.
+String gateBackTarget(String project, String lastShellRoute, DashboardConfig? config, List<Project>? projects) {
+  final target = backTarget(lastShellRoute, config, projects);
+  final other = routeProject(target);
+  return Uri.parse(target).path == '/' || (other != null && other != project)
+      ? Uri(pathSegments: ['', 'p', project, 'flow']).toString()
+      : target;
 }
 
 /// Org sessions of [org], resolved by [sessionOrg]: what its "Atividades da org" counts and lists.

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
@@ -8,6 +9,7 @@ import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/report_models.dart';
 import 'package:claude_flow/data/report_parser.dart';
 import 'package:claude_flow/data/session_models.dart';
+import 'package:claude_flow/features/sessions/session_events.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -131,6 +133,106 @@ final _card = find.byKey(const ValueKey('flow-awaiting'));
 final _side = find.byKey(const ValueKey('flow-side-panel'));
 
 Finder _inCard(Finder matching) => find.descendant(of: _card, matching: matching);
+
+const _gamma = 'gamma';
+
+/// The shell's sidebar, beside the Fluxo.
+const _sidebar = 232.0;
+
+/// The gamma fixture (`plan` and `spec` open, `tasks` passed) with the plan stage run by `s-plan` and the challenge
+/// stage by `s-spec`.
+/// [answered] records an answer on every plan question while the gate stays `open`, as the skill does mid-write.
+Project _gammaProject({bool current = true, bool answered = false}) {
+  final doc = jsonDecode(File('test/fixtures/workflow/gamma/report.json').readAsStringSync()) as Map<String, dynamic>;
+  final stages = (doc['stages'] as List).cast<Map<String, dynamic>>();
+  final plan = stages.firstWhere((s) => s['stage'] == 'plan');
+  plan['session_id'] = 's-plan';
+  if (answered) {
+    for (final q in ((plan['gate'] as Map<String, dynamic>)['questions'] as List).cast<Map<String, dynamic>>()) {
+      q['answer'] = ((q['options'] as List).first as Map<String, dynamic>)['id'];
+    }
+  }
+  stages.firstWhere((s) => s['stage'] == 'challenge')['session_id'] = 's-spec';
+  return Project(
+    name: _gamma,
+    path: '/synthetic/$_gamma',
+    cycle: Cycle(
+      stage: Stage.plan,
+      stageMinutes: const {},
+      runs: const [],
+      report: parseReport(jsonEncode(doc)),
+      reportIsCurrent: current,
+    ),
+  );
+}
+
+/// The request `wf-report.py show plan` makes the skill ask for the gamma fixture.
+QuestionRequest _planRequest() {
+  final show = jsonDecode(File('test/fixtures/show/gamma-plan.json').readAsStringSync()) as Map<String, dynamic>;
+  return QuestionRequest(
+    '2026-03-10T10:05:00Z',
+    requestId: 'rq-plan',
+    seq: 5,
+    questions: [
+      for (final q in (show['questions'] as List).cast<Map<String, dynamic>>())
+        Question(
+          question: q['question'] as String,
+          header: q['header'] as String,
+          options: [
+            for (final o in (q['options'] as List).cast<Map<String, dynamic>>())
+              QuestionOption(o['label'] as String, o['description'] as String),
+          ],
+        ),
+    ],
+  );
+}
+
+Future<void> _openGamma(
+  WidgetTester tester, {
+  Size size = const Size(1400, 1400),
+  bool current = true,
+  bool withSpec = false,
+  bool withOther = false,
+  bool answered = false,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final sessions = _Sessions(
+    [
+      _session('s-plan', command: '/plan', project: _gamma),
+      if (withSpec) _session('s-spec', project: _gamma, createdAt: '2026-03-10T09:00:00Z'),
+      if (withOther) _session('s-rev', project: _gamma, createdAt: '2026-03-10T08:00:00Z'),
+    ],
+    {
+      's-plan': [_planRequest()],
+      's-spec': [_question('q-spec')],
+      's-rev': [_question('q-rev', question: 'Pergunta do review?')],
+    },
+  );
+  await tester.pumpWidget(
+    ClaudeFlowApp(
+      repository: MockFlowRepository(
+        data: [_gammaProject(current: current, answered: answered)],
+      ),
+      sessions: sessions,
+      engine: const MockEngineController(),
+    ),
+  );
+  await tester.pump();
+  _router(tester).go('/p/$_gamma/flow');
+  await tester.pumpAndSettle();
+}
+
+Finder _byKey(String key) => find.byKey(ValueKey(key));
+
+/// Below the split width the side panel lives in the drawer.
+Future<void> _revealSide(WidgetTester tester) async {
+  final toggle = find.byKey(const ValueKey('flow-drawer-toggle'));
+  if (toggle.evaluate().isEmpty) return;
+  await tester.tap(toggle);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   group('card Aguardando você', () {
@@ -399,6 +501,111 @@ void main() {
       final older = tester.getTopLeft(_inCard(find.text('Pergunta antiga?'))).dy;
       final newer = tester.getTopLeft(_inCard(find.text('Pergunta nova?'))).dy;
       expect(older, lessThan(newer));
+    });
+  });
+
+  group('gate no Fluxo', () {
+    // Widths of the Fluxo itself: 1400 keeps the side panel next to the timeline, 1000 puts it in the drawer.
+    for (final width in [1400.0, 1000.0]) {
+      testWidgets('Fluxo com $width px: Decidir acima da linha do tempo e toque leva à rota', (tester) async {
+        await _openGamma(tester, size: Size(width + _sidebar, 1400));
+
+        final row = _byKey('flow-gate-row-plan');
+        expect(row, findsOneWidget);
+        expect(_byKey('flow-gate-row-spec'), findsOneWidget);
+        expect(_byKey('flow-gate-row-tasks'), findsNothing);
+        expect(
+          tester.getTopLeft(row).dy,
+          lessThan(tester.getTopLeft(find.byKey(const ValueKey('timeline-stage-kickoff'))).dy),
+        );
+        expect(find.descendant(of: row, matching: find.text('3 decisões antes de gerar as tasks')), findsOneWidget);
+
+        await tester.tap(find.descendant(of: row, matching: find.text('Decidir')));
+        await tester.pumpAndSettle();
+        expect(_location(tester), '/p/$_gamma/gate/plan');
+      });
+
+      testWidgets('Fluxo com $width px: perguntas todas respondidas com o gate open mantêm o título de decisões', (
+        tester,
+      ) async {
+        await _openGamma(tester, size: Size(width + _sidebar, 1400), answered: true);
+
+        final row = _byKey('flow-gate-row-plan');
+        expect(find.descendant(of: row, matching: find.text('3 decisões antes de gerar as tasks')), findsOneWidget);
+        expect(find.descendant(of: row, matching: find.text('Aprovar o plano?')), findsNothing);
+      });
+
+      testWidgets('Fluxo com $width px: a sessão da etapa mostra a nota sem botão no lugar do QuestionCard do gate', (
+        tester,
+      ) async {
+        await _openGamma(tester, size: Size(width + _sidebar, 1400));
+        expect(find.byKey(const ValueKey('flow-drawer-toggle')), width >= 1200 ? findsNothing : findsOneWidget);
+        await _revealSide(tester);
+
+        final request = find.descendant(of: _side, matching: _byKey('flow-gate-request-plan'));
+        expect(request, findsOneWidget);
+        expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsNothing);
+
+        expect(find.descendant(of: request, matching: find.text('Decidir')), findsNothing);
+        expect(
+          find.descendant(of: request, matching: find.text('decida na linha Decidir, acima da linha do tempo')),
+          findsOneWidget,
+        );
+      });
+
+      testWidgets('Fluxo com $width px: um só botão Decidir por gate na tela', (tester) async {
+        await _openGamma(tester, size: Size(width + _sidebar, 1400), withSpec: true);
+        await _revealSide(tester);
+
+        expect(find.text('Decidir'), findsNWidgets(2));
+        expect(find.descendant(of: _byKey('flow-gate-row-plan'), matching: find.text('Decidir')), findsOneWidget);
+        expect(find.descendant(of: _byKey('flow-gate-row-spec'), matching: find.text('Decidir')), findsOneWidget);
+      });
+    }
+
+    testWidgets('Aguardando você omite a sessão do gate; pergunta sem gate mantém o card', (tester) async {
+      await _openGamma(tester, withSpec: true, withOther: true);
+      await _revealSide(tester);
+
+      expect(_byKey('awaiting-s-spec'), findsNothing);
+      expect(_byKey('flow-gate-request-spec'), findsNothing);
+      expect(_inCard(find.text('Decidir')), findsNothing);
+      expect(_inCard(find.byType(QuestionCard)), findsOneWidget);
+      expect(_inCard(find.text('Pergunta do review?')), findsOneWidget);
+    });
+
+    testWidgets('aba Sessões mantém o QuestionCard do mesmo pedido', (tester) async {
+      await _openGamma(tester);
+      _router(tester).go('/p/$_gamma/sessions/s-plan');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(QuestionCard), findsOneWidget);
+      expect(_byKey('flow-gate-request-plan'), findsNothing);
+    });
+
+    testWidgets('Passou sem você lista o gate passed abaixo da linha do tempo e abre a tela dele', (tester) async {
+      await _openGamma(tester);
+
+      final passed = _byKey('flow-passed-tasks');
+      expect(passed, findsOneWidget);
+      expect(_byKey('flow-passed-plan'), findsNothing);
+      expect(
+        tester.getTopLeft(passed).dy,
+        greaterThan(tester.getTopLeft(find.byKey(const ValueKey('timeline-stage-kickoff'))).dy),
+      );
+
+      await tester.tap(find.descendant(of: passed, matching: find.text('ver')));
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/p/$_gamma/gate/tasks');
+    });
+
+    testWidgets('relatório de outro ciclo não mostra gate e mantém o card', (tester) async {
+      await _openGamma(tester, current: false);
+      await _revealSide(tester);
+
+      expect(_byKey('flow-gate-row-plan'), findsNothing);
+      expect(_byKey('flow-passed-tasks'), findsNothing);
+      expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsOneWidget);
     });
   });
 }

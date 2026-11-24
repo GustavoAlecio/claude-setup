@@ -24,16 +24,28 @@ import 'stage_timeline.dart';
 /// stages whose session ended, both sent to Sessões. The session the side panel shows is left out. Nothing to show →
 /// no space taken.
 class AwaitingPanel extends StatelessWidget {
-  const AwaitingPanel({super.key, required this.projectName, required this.report, required this.shownSessionId});
+  const AwaitingPanel({
+    super.key,
+    required this.projectName,
+    required this.report,
+    required this.gates,
+    required this.shownSessionId,
+  });
 
   final String projectName;
   final ReportDoc? report;
+
+  /// `gateReport` of the cycle: sessions whose stage holds an open gate are decided in the Fluxo's "Decidir" row.
+  final ReportDoc? gates;
   final String? shownSessionId;
 
   @override
   Widget build(BuildContext context) {
     final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
-    final pending = awaitingSessions(pendingProjectSessions(all, projectName), shownSessionId);
+    final pending = withoutOpenGateSessions(
+      awaitingSessions(pendingProjectSessions(all, projectName), shownSessionId),
+      gates,
+    );
     final ended = awaitingEnded(endedStageSessions(report, all), shownSessionId);
     if (pending.isEmpty && ended.isEmpty) return const SizedBox.shrink();
     final repository = SessionsScope.of(context);
@@ -88,9 +100,14 @@ class _SessionPendingState extends State<_SessionPending> with SessionLauncher<_
   @override
   Widget build(BuildContext context) {
     final detail = context.watch<SessionCubit>().state.data;
-    if (detail == null) return const SizedBox.shrink();
     final s = widget.session;
     final stage = stageOfSession(widget.report, s.id);
+    if (detail == null) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: _Source(session: s, stage: stage?.stage),
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

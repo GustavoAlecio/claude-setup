@@ -222,6 +222,7 @@ class _FlowMain extends StatelessWidget {
     final run = cycle.latestRun;
     final report = cycle.report;
     final decision = blockedDecision(project);
+    final gates = gateReport(cycle);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -231,6 +232,10 @@ class _FlowMain extends StatelessWidget {
         ],
         if (banner != null) ...[banner, const SizedBox(height: 16)],
         if (cycle.paused) PausedBanner(project: project) else _BudgetBanner(project: project, cycle: cycle),
+        for (final s in openGates(gates)) ...[
+          GateDecideRow(key: ValueKey('flow-gate-row-${s.gate!.name}'), project: project.name, gate: s.gate!),
+          const SizedBox(height: 12),
+        ],
         StageTimeline(
           report: report,
           derived: derivedStageStates(cycle),
@@ -241,6 +246,7 @@ class _FlowMain extends StatelessWidget {
             Uri(pathSegments: ['', 'p', projectName, 'flow'], queryParameters: {'stage': stage.name}).toString(),
           ),
         ),
+        PassedGates(project: project.name, stages: passedGates(gates)),
         const SizedBox(height: 16),
         LayoutBuilder(
           builder: (context, constraints) {
