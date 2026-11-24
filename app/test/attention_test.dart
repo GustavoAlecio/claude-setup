@@ -1,12 +1,15 @@
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/core/platform/attention.dart';
 import 'package:claude_flow/data/attention.dart';
+import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/report_models.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/mock_github_repository.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -39,6 +42,31 @@ StageReport _stage(Stage stage, String session, String gate, GateStatus status) 
   sessionId: session,
   gate: ReportGate(name: gate, status: status),
 );
+
+SessionSummary _new(String id) => SessionSummary(
+  id: id,
+  project: 'demo-app',
+  command: 'c',
+  title: 'título $id',
+  status: SessionStatus.waitingPermission,
+  createdAt: '2026-10-07T10:00:00Z',
+);
+
+/// The mock counts pending requests from the events, not from the summary.
+List<Map<String, Object?>> _waiting(String id, int n) => [
+  for (var i = 0; i < n; i++)
+    {
+      'kind': 'permission',
+      'requestId': '$id-$i',
+      'toolName': 'Bash',
+      'input': {'command': 'ls'},
+    },
+];
+
+class _NoConfigRepository extends MockFlowRepository {
+  @override
+  Stream<DashboardConfig> watchConfig() => const Stream.empty(broadcast: true).cast();
+}
 
 void main() {
   setUp(() {
@@ -201,6 +229,154 @@ void main() {
       final items = pendingAttention(waiting, [project]);
       expect(nextAttentionRoute(items, '/p/demo-app/gate/plan'), '/p/demo-app/gate/spec');
       expect(nextAttentionRoute(items, '/p/demo-app/gate/spec'), '/p/demo-app/gate/pr');
+    });
+  });
+
+  group('AttentionChannel.sound', () {
+    const channel = MethodChannel('claude_flow/attention');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('without the native side it did not play', () async {
+      expect(await const AttentionChannel().sound(), isFalse);
+    });
+
+    test('a PlatformException means it did not play', () async {
+      messenger.setMockMethodCallHandler(channel, (call) async => throw PlatformException(code: 'boom'));
+      expect(await const AttentionChannel().sound(), isFalse);
+    });
+
+    test('the native answer comes back', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return true;
+      });
+      expect(await const AttentionChannel().sound(), isTrue);
+      expect(calls.single.method, 'sound');
+    });
+
+    test('notify carries silent only when it is given', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return null;
+      });
+      const attention = AttentionChannel();
+      await attention.notify(id: 'a', title: 't', body: 'b', route: '/', silent: true);
+      await attention.notify(id: 'b', title: 't', body: 'b', route: '/');
+
+      expect((calls.first.arguments as Map)['silent'], isTrue);
+      expect((calls.last.arguments as Map).containsKey('silent'), isFalse);
+    });
+  });
+
+  group('alerta sonoro', () {
+    const channel = MethodChannel('claude_flow/attention');
+    late List<MethodCall> calls;
+    late bool active;
+    late DateTime clock;
+    late MockSessionsRepository sessions;
+
+    Iterable<MethodCall> named(String method) => calls.where((c) => c.method == method);
+    Iterable<Map<Object?, Object?>> notified(String prefix) =>
+        named('notify').map((c) => c.arguments as Map).where((a) => (a['id'] as String).startsWith(prefix));
+
+    Future<void> start(WidgetTester tester, MockFlowRepository repo, {bool settle = true}) async {
+      calls = [];
+      active = false;
+      clock = DateTime(2026, 11, 24, 10);
+      sessions = MockSessionsRepository();
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return switch (call.method) {
+          'isActive' => active,
+          'sound' => true,
+          _ => null,
+        };
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+      await tester.pumpWidget(
+        ClaudeFlowApp(repository: repo, sessions: sessions, engine: const MockEngineController(), now: () => clock),
+      );
+      if (settle) {
+        await tester.pumpAndSettle();
+      } else {
+        await tester.pump();
+        await tester.pump();
+      }
+    }
+
+    Future<void> add(WidgetTester tester, String id, int n, {bool settle = true}) async {
+      sessions.addSession(_new(id), _waiting(id, n), status: 'waiting_permission');
+      settle ? await tester.pumpAndSettle() : await tester.pump();
+    }
+
+    testWidgets('a new request plays in the foreground and in the background, not at the first load', (tester) async {
+      await start(tester, MockFlowRepository());
+      expect(named('sound'), isEmpty);
+
+      active = true;
+      await add(tester, 'x', 1);
+      expect(named('sound'), hasLength(1));
+      expect(named('notify'), isEmpty);
+
+      clock = clock.add(const Duration(seconds: 3));
+      active = false;
+      await add(tester, 'y', 1);
+      expect(named('sound'), hasLength(2));
+      expect(notified('pending:y').single['silent'], isTrue);
+    });
+
+    testWidgets('a finished turn and an answered request do not play; the turn keeps the notification sound', (
+      tester,
+    ) async {
+      await start(tester, MockFlowRepository());
+      sessions.addSession(_new('r'), const [], status: 'running');
+      await tester.pumpAndSettle();
+      await add(tester, 'z', 2);
+      expect(named('sound'), hasLength(1));
+
+      clock = clock.add(const Duration(seconds: 10));
+      await sessions.interrupt('r');
+      await tester.pumpAndSettle();
+      await sessions.answer('z', 'z-0', PermissionDecision.allow);
+      await tester.pumpAndSettle();
+
+      expect(named('sound'), hasLength(1));
+      expect(notified('done:r').single.containsKey('silent'), isFalse);
+    });
+
+    testWidgets('inside the interval a new request is dropped, still with a silent notification', (tester) async {
+      await start(tester, MockFlowRepository());
+      await add(tester, 'a', 1);
+      clock = clock.add(const Duration(seconds: 1));
+      await add(tester, 'b', 1);
+      expect(named('sound'), hasLength(1));
+      expect(notified('pending:b').single['silent'], isTrue);
+
+      clock = clock.add(const Duration(seconds: 2));
+      await add(tester, 'c', 1);
+      expect(named('sound'), hasLength(2));
+    });
+
+    testWidgets('turned off, nothing plays and the notification keeps its sound', (tester) async {
+      final repo = MockFlowRepository();
+      await repo.updateConfig(setAlertSound(false));
+      await start(tester, repo);
+      await add(tester, 'x', 1);
+
+      expect(named('sound'), isEmpty);
+      expect(notified('pending:x').single.containsKey('silent'), isFalse);
+    });
+
+    testWidgets('without a loaded config nothing plays', (tester) async {
+      await start(tester, _NoConfigRepository(), settle: false);
+      await add(tester, 'x', 1, settle: false);
+      await tester.pump();
+
+      expect(named('sound'), isEmpty);
+      expect(notified('pending:x').single.containsKey('silent'), isFalse);
     });
   });
 }

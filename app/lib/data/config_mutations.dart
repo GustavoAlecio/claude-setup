@@ -99,6 +99,10 @@ ConfigMutation setCycleBudget(double? budget) => (raw) {
 ConfigMutation setGlobalPermissionMode(PermissionMode mode) =>
     (raw) => _copy(raw)..['permissionMode'] = mode.wire;
 
+/// `alertSound` is written even when on, so the choice survives a default change.
+ConfigMutation setAlertSound(bool on) =>
+    (raw) => _copy(raw)..['alertSound'] = on;
+
 /// Replaces the org list. [renames] maps old name → new name so `projects[].org` and `lastOrg` follow;
 /// projects of a removed org lose their explicit `org` and fall back to the root rule.
 ConfigMutation saveOrgs(List<OrgConfig> orgs, {Map<String, String> renames = const {}}) => (raw) {

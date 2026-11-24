@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../app/config_cubit.dart';
 import '../../app/projects_cubit.dart';
+import '../../core/platform/attention.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
@@ -129,6 +130,19 @@ class _PermissionsSection extends StatefulWidget {
 
 class _PermissionsSectionState extends State<_PermissionsSection> {
   String? _error;
+  String? _soundError;
+
+  Future<void> _setSound(bool on) async {
+    setState(() => _soundError = null);
+    try {
+      await RepositoryScope.of(context).updateConfig(setAlertSound(on));
+    } on ConfigWriteException catch (e, st) {
+      log('alert sound write rejected', name: 'SettingsPage', error: e, stackTrace: st);
+      if (mounted) setState(() => _soundError = e.message);
+      return;
+    }
+    if (on) await const AttentionChannel().sound();
+  }
 
   Future<void> _write(PermissionMode mode) async {
     setState(() => _error = null);
@@ -188,6 +202,41 @@ class _PermissionsSectionState extends State<_PermissionsSection> {
                 child: Divider(height: 1, color: c.border),
               ),
               _GlobalBudget(key: ValueKey(widget.config.cycleBudget), budget: widget.config.cycleBudget),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Divider(height: 1, color: c.border),
+              ),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Alerta sonoro', style: TextStyle(fontSize: 13)),
+                        SizedBox(height: 2),
+                        Muted('toca quando algo novo espera você', size: 12),
+                      ],
+                    ),
+                  ),
+                  Material(
+                    type: MaterialType.transparency,
+                    child: Switch(
+                      key: const ValueKey('settings-alert-sound'),
+                      value: widget.config.alertSound,
+                      onChanged: _setSound,
+                    ),
+                  ),
+                ],
+              ),
+              if (_soundError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _soundError!,
+                    key: const ValueKey('settings-alert-sound-error'),
+                    style: TextStyle(fontSize: 12, color: c.fail),
+                  ),
+                ),
             ],
           ),
         ),
