@@ -63,13 +63,13 @@ void main() {
   group('listing', () {
     test('lists project dirs without dot entries, newest current.json first', () async {
       final base = DateTime(2026, 3, 1);
-      for (final (i, name) in ['legacy', 'gamma', 'alpha', 'beta', 'broken'].indexed) {
+      for (final (i, name) in ['legacy', 'gamma', 'alpha', 'beta', 'broken', 'delta'].indexed) {
         File('$root/$name/current.json').setLastModifiedSync(base.add(Duration(hours: i)));
       }
 
       final list = await loaded();
 
-      expect(list.map((p) => p.name), ['broken', 'beta', 'alpha', 'gamma', 'legacy']);
+      expect(list.map((p) => p.name), ['delta', 'broken', 'beta', 'alpha', 'gamma', 'legacy']);
     });
 
     test('path from project_path, runs newest first', () async {

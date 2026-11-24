@@ -162,12 +162,12 @@ void main() {
       _stage(Stage.complete, 's-pr', 'pr', GateStatus.open),
     ]);
 
-    test('spec and plan gates route to the gate screen; pr and sessions without an open gate stay', () {
+    test('spec, plan, tasks e pr vão para a tela do gate; sessões sem gate aberto ficam', () {
       final items = pendingAttention(waiting, [project]);
       expect(items.map((i) => i.route), [
         '/p/demo-app/gate/plan',
         '/p/demo-app/gate/spec',
-        '/p/demo-app/sessions/s-pr',
+        '/p/demo-app/gate/pr',
         '/p/demo-app/sessions/s-none',
       ]);
       expect(items.map((i) => i.key), ['pending:s-plan:1', 'pending:s-spec:1', 'pending:s-pr:1', 'pending:s-none:1']);
@@ -200,7 +200,7 @@ void main() {
     test('nextAttentionRoute from the gate screen goes to the next item', () {
       final items = pendingAttention(waiting, [project]);
       expect(nextAttentionRoute(items, '/p/demo-app/gate/plan'), '/p/demo-app/gate/spec');
-      expect(nextAttentionRoute(items, '/p/demo-app/gate/spec'), '/p/demo-app/sessions/s-pr');
+      expect(nextAttentionRoute(items, '/p/demo-app/gate/spec'), '/p/demo-app/gate/pr');
     });
   });
 }

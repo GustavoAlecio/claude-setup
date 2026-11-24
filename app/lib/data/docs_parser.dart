@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'docs_models.dart';
 import 'front_matter.dart';
+import 'report_models.dart';
 
 final _hunkPattern = RegExp(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@');
 
@@ -242,6 +244,57 @@ List<String> orderDetails(Iterable<String> names) {
 }
 
 DiffStats diffStats(List<DiffFile> files) => DiffStats.sum(files.length, files.map((f) => (f.additions, f.deletions)));
+
+const kExcerptMaxLines = 40;
+
+/// Context and added lines whose new number falls within 3 lines of [anchor], plus each run of removals whose
+/// non-removed neighbour in the same hunk does. A path absent from [files] (absolute ones included) gives nothing.
+DiffExcerpt diffExcerpt(List<DiffFile> files, GateAnchor anchor) {
+  final path = anchor.path.startsWith('./') ? anchor.path.substring(2) : anchor.path;
+  final file = files.where((f) => f.path == path).firstOrNull;
+  if (file == null) return (blocks: const [], omitted: 0);
+  final lo = max(1, anchor.start - 3);
+  final hi = anchor.end + 3;
+  bool inRange(DiffLine? l) {
+    final n = l?.newNumber;
+    return n != null && n >= lo && n <= hi;
+  }
+
+  final blocks = <List<DiffLine>>[];
+  var kept = 0;
+  var omitted = 0;
+  for (final hunk in file.hunks) {
+    final lines = [
+      for (final l in hunk.lines)
+        if (l.type != DiffLineType.noNewline) l,
+    ];
+    final block = <DiffLine>[];
+    var i = 0;
+    while (i < lines.length) {
+      if (lines[i].type != DiffLineType.del) {
+        if (inRange(lines[i])) block.add(lines[i]);
+        i++;
+        continue;
+      }
+      var end = i;
+      while (end < lines.length && lines[end].type == DiffLineType.del) {
+        end++;
+      }
+      if (inRange(i > 0 ? lines[i - 1] : null) || inRange(end < lines.length ? lines[end] : null)) {
+        block.addAll(lines.sublist(i, end));
+      }
+      i = end;
+    }
+    final room = kExcerptMaxLines - kept;
+    if (block.length > room) omitted += block.length - room;
+    if (room > 0 && block.isNotEmpty) {
+      final taken = block.length > room ? block.sublist(0, room) : block;
+      blocks.add(taken);
+      kept += taken.length;
+    }
+  }
+  return (blocks: blocks, omitted: omitted);
+}
 
 /// Lista achatada para uma única lista virtualizada. `collapsed` guarda paths; arquivo recolhido
 /// fica só com o cabeçalho (comentários dele também saem da lista).

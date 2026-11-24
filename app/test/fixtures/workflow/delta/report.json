@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "cycle": {
+    "feature": "Gate delta",
+    "started_at": "2026-03-12T08:00:00Z"
+  },
+  "stages": [
+    {
+      "stage": "complete",
+      "status": "running",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:00:00Z",
+      "summary_md": "",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [],
+      "run_ids": [],
+      "session_id": "s-complete",
+      "gate": {
+        "name": "pr",
+        "round": 1,
+        "status": "open",
+        "summary": "Delta com a view lendo o repositório novo e o legado removido.",
+        "risks": [],
+        "questions": [
+          {
+            "id": "Q1",
+            "text": "A view deve ler o repositório direto do contexto?",
+            "options": [
+              {
+                "id": "ok",
+                "label": "Aprovar",
+                "consequence": "Segue o trecho como está."
+              },
+              {
+                "id": "change",
+                "label": "Pedir ajuste",
+                "consequence": "Abre uma task de ajuste para este trecho."
+              }
+            ],
+            "assumed": "ok",
+            "prefers": {},
+            "answer": null,
+            "why": "O acesso direto acopla a view à camada de dados.",
+            "anchor": {
+              "path": "lib/delta/view.dart",
+              "start": 13,
+              "end": 13
+            }
+          },
+          {
+            "id": "Q2",
+            "text": "O repositório novo cobre o que o legado fazia?",
+            "options": [
+              {
+                "id": "ok",
+                "label": "Aprovar",
+                "consequence": "Segue o trecho como está."
+              },
+              {
+                "id": "change",
+                "label": "Pedir ajuste",
+                "consequence": "Abre uma task de ajuste para este trecho."
+              }
+            ],
+            "assumed": "ok",
+            "prefers": {},
+            "answer": null,
+            "why": "O legado some neste diff sem substituto explícito.",
+            "anchor": {
+              "path": "lib/delta/repository.dart",
+              "start": 1,
+              "end": 5
+            }
+          }
+        ],
+        "history": [],
+        "changes": [],
+        "cut": [],
+        "omitted": {
+          "risks": 0,
+          "questions": 0,
+          "candidates": 0
+        },
+        "artifact": "pr.diff",
+        "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  ]
+}

@@ -246,8 +246,8 @@ Map<String, int> withDecisions(Map<String, int> pending, List<Project> projects)
 int decisionsInOrg(List<Project> projects, String org) =>
     projectsInOrg(projects, org).where((p) => !p.hidden && blockedDecision(p) != null).length;
 
-/// Stage that carries each gate the app decides (`GATE_OWNER` in `bin/wf-report.py`); `pr` is not decided here.
-const kGateOwner = {'spec': Stage.challenge, 'plan': Stage.plan, 'tasks': Stage.tasks};
+/// Stage that carries each gate (`GATE_OWNER` in `bin/wf-report.py`).
+const kGateOwner = {'spec': Stage.challenge, 'plan': Stage.plan, 'tasks': Stage.tasks, 'pr': Stage.complete};
 
 /// The report the gates read: only one from this cycle (`Cycle.reportIsCurrent`), the identity `wf-report.py` uses.
 ReportDoc? gateReport(Cycle? cycle) => cycle != null && cycle.reportIsCurrent ? cycle.report : null;
@@ -336,6 +336,13 @@ GateScreenState gateScreenState(ReportGate gate, QuestionRequest? matched, GateS
 
 /// [questions] is the count of the matched request.
 String gateTitle(String gate, int questions) {
+  if (gate == 'pr') {
+    return switch (questions) {
+      0 => 'Abrir o PR?',
+      1 => '1 ponto antes do PR',
+      _ => '$questions pontos antes do PR',
+    };
+  }
   final (before, approve) = switch (gate) {
     'spec' => ('planejar', 'Aprovar a spec?'),
     'plan' => ('gerar as tasks', 'Aprovar o plano?'),
@@ -354,6 +361,7 @@ String gateReadingTitle(String gate, GateStatus status, int questions) {
     'spec' => ('Spec aprovada', 'Spec passou sem decisão', 'Spec rejeitada'),
     'plan' => ('Plano aprovado', 'Plano passou sem decisão', 'Plano rejeitado'),
     'tasks' => ('Tasks aprovadas', 'Tasks passaram sem decisão', 'Tasks rejeitadas'),
+    'pr' => ('PR aprovado', 'PR passou sem decisão', 'PR rejeitado'),
     _ => (null, null, null),
   };
   final title = switch (status) {
@@ -363,6 +371,59 @@ String gateReadingTitle(String gate, GateStatus status, int questions) {
     GateStatus.open || GateStatus.revising => null,
   };
   return title ?? gateTitle(gate, questions);
+}
+
+/// The block question a request question asks: the text is the only link, as in [matchGateRequest].
+GateQuestion? blockQuestion(ReportGate gate, String text) {
+  final wanted = _normalized(text);
+  return gate.questions.where((q) => _normalized(q.text) == wanted).firstOrNull;
+}
+
+/// `RECOMMENDED` in `bin/wf-report.py`: `show` appends it to the label both sides agree on.
+const _recommended = ' (Recomendado)';
+
+/// Label, as the request carries it, of the option that asks a change on a `pr` point: the one that reads as the
+/// `change` option of [block]. `null` when none does; the point then is an ordinary question.
+String? prChangeOption(Question asked, GateQuestion? block) {
+  final change = block?.options.where((o) => o.id == 'change').firstOrNull?.label;
+  if (change == null) return null;
+  String bare(String label) =>
+      label.endsWith(_recommended) ? label.substring(0, label.length - _recommended.length) : label;
+  return asked.options.where((o) => bare(o.label) == change).firstOrNull?.label;
+}
+
+/// Answers of the `pr` points decided so far, by question text. [picked] and [texts] are by question text;
+/// [changeLabels] holds the change option of each point that has one. A change sends its trimmed text and stays out
+/// while that text is blank; any other label is sent as it came.
+Map<String, String> prAnswers(
+  List<Question> asked,
+  Map<String, String> picked,
+  Map<String, String> texts,
+  Map<String, String> changeLabels,
+) {
+  final out = <String, String>{};
+  for (final q in asked) {
+    final label = picked[q.question];
+    if (label == null) continue;
+    if (label != changeLabels[q.question]) {
+      out[q.question] = label;
+      continue;
+    }
+    final text = (texts[q.question] ?? '').trim();
+    if (text.isNotEmpty) out[q.question] = text;
+  }
+  return out;
+}
+
+/// How many `pr` points of [round] became tasks (`P<round>.<n>` in the plan); empty while none did.
+String prTaskCountLine(List<TaskRun> plan, int round) {
+  final id = RegExp('^P$round\\.\\d+\$');
+  final n = plan.where((t) => id.hasMatch(t.id)).length;
+  return switch (n) {
+    0 => '',
+    1 => '1 ponto virou task; o gate reabre depois do verify',
+    _ => '$n pontos viraram tasks; o gate reabre depois do verify',
+  };
 }
 
 /// `challenger:<id>` → revisão adversarial, `critic` → crítico, `author` → autor; anything else as written.

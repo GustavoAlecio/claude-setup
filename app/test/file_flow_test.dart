@@ -15,7 +15,7 @@ import 'package:go_router/go_router.dart';
 
 const _fixtures = 'test/fixtures/workflow';
 final _stacksDir = Directory('test/fixtures/stacks').absolute.path;
-const _names = ['alpha', 'beta', 'broken', 'gamma', 'legacy'];
+const _names = ['alpha', 'beta', 'broken', 'delta', 'gamma', 'legacy'];
 
 void _copyTree(Directory from, Directory to) {
   to.createSync(recursive: true);

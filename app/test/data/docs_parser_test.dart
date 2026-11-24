@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:claude_flow/data/docs_models.dart';
 import 'package:claude_flow/data/docs_parser.dart';
+import 'package:claude_flow/data/report_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _diff = '''diff --git a/lib/a.dart b/lib/a.dart
@@ -51,6 +53,16 @@ diff --git a/run.sh b/run.sh
 old mode 100644
 new mode 100755
 ''';
+
+/// One file whose single hunk starts at old and new line [start] with [body] (unified diff lines with their prefix).
+String _file(String path, List<String> body, {int start = 1}) =>
+    'diff --git a/$path b/$path\n--- a/$path\n+++ b/$path\n@@ -$start +$start @@\n${body.join('\n')}\n';
+
+List<String> _context(int from, int to) => [for (var i = from; i <= to; i++) ' l$i'];
+
+List<List<String>> _texts(DiffExcerpt e) => [
+  for (final b in e.blocks) [for (final l in b) l.text],
+];
 
 ReviewComment _c(String path, int? line, {String sev = 'major', String body = 'b'}) =>
     ReviewComment(path: path, line: line, severity: sev, agent: 'ag', body: body);
@@ -201,6 +213,119 @@ void main() {
       );
       final s = diffStats(big);
       expect((s.files, s.additions, s.deletions, s.partial), (150, 300, 150, false));
+    });
+
+    test('pr.diff delta', () {
+      final s = diffStats(parseUnifiedDiff(File('test/fixtures/workflow/delta/pr.diff').readAsStringSync()));
+      expect((s.files, s.additions, s.deletions), (3, 8, 4));
+    });
+  });
+
+  group('diffExcerpt', () {
+    GateAnchor at(String path, int start, int end) => GateAnchor(path: path, start: start, end: end);
+
+    test('anchor inside a hunk takes 3 lines on each side', () {
+      final files = parseUnifiedDiff(_file('a.dart', _context(1, 20)));
+      final e = diffExcerpt(files, at('a.dart', 10, 10));
+      expect(_texts(e), [
+        ['l7', 'l8', 'l9', 'l10', 'l11', 'l12', 'l13'],
+      ]);
+      expect(e.omitted, 0);
+    });
+
+    test('the range never starts before line 1', () {
+      final files = parseUnifiedDiff(_file('a.dart', _context(1, 20)));
+      expect(_texts(diffExcerpt(files, at('a.dart', 2, 3))), [
+        ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'],
+      ]);
+    });
+
+    test('a removal right before the first line of the range comes in', () {
+      final files = parseUnifiedDiff(_file('a.dart', [..._context(1, 5), '-gone', '-gone too', ..._context(6, 12)]));
+      expect(_texts(diffExcerpt(files, at('a.dart', 9, 9))), [
+        ['gone', 'gone too', 'l6', 'l7', 'l8', 'l9', 'l10', 'l11', 'l12'],
+      ]);
+    });
+
+    test('a removal separated from the range by a context line outside it stays out', () {
+      final files = parseUnifiedDiff(_file('a.dart', [..._context(1, 5), '-gone', ..._context(6, 14)]));
+      expect(_texts(diffExcerpt(files, at('a.dart', 10, 10))), [
+        ['l7', 'l8', 'l9', 'l10', 'l11', 'l12', 'l13'],
+      ]);
+    });
+
+    test('a removal between lines of the range comes in, in diff order', () {
+      final files = parseUnifiedDiff(_file('a.dart', [..._context(1, 3), '-old', '+new', ..._context(5, 6)]));
+      final e = diffExcerpt(files, at('a.dart', 4, 4));
+      expect(_texts(e), [
+        ['l1', 'l2', 'l3', 'old', 'new', 'l5', 'l6'],
+      ]);
+      expect(e.blocks.single.map((l) => l.type), [
+        DiffLineType.context,
+        DiffLineType.context,
+        DiffLineType.context,
+        DiffLineType.del,
+        DiffLineType.add,
+        DiffLineType.context,
+        DiffLineType.context,
+      ]);
+    });
+
+    test('an anchor across two hunks keeps one block per hunk', () {
+      const raw =
+          'diff --git a/a.dart b/a.dart\n--- a/a.dart\n+++ b/a.dart\n'
+          '@@ -1,3 +1,3 @@\n l1\n l2\n l3\n'
+          '@@ -10,3 +10,3 @@\n l10\n l11\n l12\n';
+      final e = diffExcerpt(parseUnifiedDiff(raw), at('a.dart', 4, 8));
+      expect(_texts(e), [
+        ['l1', 'l2', 'l3'],
+        ['l10', 'l11'],
+      ]);
+    });
+
+    test('an anchor with no line in the range is empty', () {
+      final e = diffExcerpt(parseUnifiedDiff(_file('a.dart', _context(1, 20))), at('a.dart', 50, 52));
+      expect(e.blocks, isEmpty);
+      expect(e.omitted, 0);
+    });
+
+    test('a path absent from the diff, or absolute, is empty; a leading ./ matches', () {
+      final files = parseUnifiedDiff(_file('lib/a.dart', _context(1, 5)));
+      expect(diffExcerpt(files, at('lib/b.dart', 1, 1)).blocks, isEmpty);
+      expect(diffExcerpt(files, at('/lib/a.dart', 1, 1)).blocks, isEmpty);
+      expect(_texts(diffExcerpt(files, at('./lib/a.dart', 1, 1))), [
+        ['l1', 'l2', 'l3', 'l4'],
+      ]);
+    });
+
+    test('the no-newline marker does not count', () {
+      final files = parseUnifiedDiff(
+        _file('a.dart', [' l1', '-old', r'\ No newline at end of file', '+new', r'\ No newline at end of file']),
+      );
+      final e = diffExcerpt(files, at('a.dart', 2, 2));
+      expect(_texts(e), [
+        ['l1', 'old', 'new'],
+      ]);
+      expect(e.blocks.single.where((l) => l.type == DiffLineType.noNewline), isEmpty);
+    });
+
+    test('above 40 lines keeps 40 and counts the rest', () {
+      final files = parseUnifiedDiff(_file('a.dart', [for (var i = 1; i <= 60; i++) '+a$i']));
+      final e = diffExcerpt(files, at('a.dart', 1, 60));
+      expect(e.blocks.single, hasLength(40));
+      expect(e.blocks.single.last.text, 'a40');
+      expect(e.omitted, 20);
+    });
+
+    test('the cap spans blocks: the second hunk is cut and a third is only counted', () {
+      const raw = 'diff --git a/a.dart b/a.dart\n--- a/a.dart\n+++ b/a.dart\n';
+      final hunks = [
+        for (final start in [1, 100, 200])
+          '@@ -$start,30 +$start,30 @@\n${[for (var i = start; i < start + 30; i++) ' l$i'].join('\n')}\n',
+      ].join();
+      final e = diffExcerpt(parseUnifiedDiff(raw + hunks), at('a.dart', 1, 229));
+      expect(e.blocks.map((b) => b.length), [30, 10]);
+      expect(e.omitted, 20 + 30);
     });
   });
 

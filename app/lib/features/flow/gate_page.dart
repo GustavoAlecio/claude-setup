@@ -10,6 +10,8 @@ import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/attention.dart';
+import '../../data/docs_models.dart';
+import '../../data/docs_repository.dart';
 import '../../data/flow_aggregates.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
@@ -17,13 +19,16 @@ import '../../data/report_models.dart';
 import '../../data/session_models.dart';
 import '../../data/session_reducer.dart';
 import '../../data/sessions_repository.dart';
+import '../reviews/reviews_diff.dart';
 import '../sessions/session_cubit.dart';
 import '../sessions/session_view.dart';
+import 'gate_diff.dart';
+import 'report_extras.dart';
 
 const _kMinTarget = 44.0;
 const _kMaxWidth = 760.0;
 
-/// A spec, plan or tasks gate in focus, outside the shell: summary and risks before the choices. It draws and sends
+/// A gate in focus, outside the shell: summary and risks before the choices. It draws and sends
 /// the options of the session's pending `AskUserQuestion`, never the block's, so the labels match what the skill
 /// expects back.
 class GatePage extends StatefulWidget {
@@ -41,9 +46,32 @@ class GatePage extends StatefulWidget {
   State<GatePage> createState() => _GatePageState();
 }
 
+typedef _DiffKey = ({String project, String gate, int round});
+
 class _GatePageState extends State<GatePage> {
   GateSent? _sent;
   bool _leaving = false;
+
+  /// `pr.diff` of the round on screen: `null` data once read means unavailable. Kept here, above the screen states,
+  /// so rebuilds and a recreated form never read it again; only a new round does, since `/complete` rewrites it.
+  _DiffKey? _diffKey;
+  AsyncSnapshot<List<DiffFile>?> _diff = const AsyncSnapshot.nothing();
+
+  void _watchDiff(String project, ReportGate gate) {
+    final key = (project: project, gate: gate.name, round: gate.round);
+    if (key == _diffKey) return;
+    _diffKey = key;
+    _diff = const AsyncSnapshot.waiting();
+    final repository = DocsScope.of(context);
+    unawaited(() async {
+      final files = switch (await repository.read(project, 'pr.diff')) {
+        DocText(:final String text) => await parseDiffText(text, text.length),
+        _ => null,
+      };
+      if (!mounted || _diffKey != key) return;
+      setState(() => _diff = AsyncSnapshot.withData(ConnectionState.done, files));
+    }());
+  }
 
   String get _location => gateLocation(widget.project, widget.gate);
 
@@ -75,6 +103,7 @@ class _GatePageState extends State<GatePage> {
     if (project == null || stage == null || gate == null || gate.name != widget.gate) {
       return _Frame(header: header, child: const _Unavailable());
     }
+    if (gate.name == 'pr') _watchDiff(project.name, gate);
     final sessionId = stage.sessionId;
     Widget body(SessionDetail? detail) =>
         _body(project, stage, gate, sessionId, detail, [for (final i in items) i.route]);
@@ -123,6 +152,16 @@ class _GatePageState extends State<GatePage> {
       if (gate.risks.isNotEmpty) ...[const SizedBox(height: 20), _Risks(gate.risks)],
       if (gate.round >= 2) ..._previousRound(gate),
     ];
+    final pr = gate.name == 'pr';
+    final points = pr && gate.questions.isNotEmpty;
+    final link = pr ? gateReport(project.cycle)?.pr : null;
+    final files = pr ? _diff.data : null;
+    final full = [
+      if (files != null) ...[
+        const SizedBox(height: 24),
+        GateDiffFull(key: const ValueKey('gate-diff-full'), files: files),
+      ],
+    ];
     return switch (state) {
       GateScreenState.deciding => _GateForm(
         key: ValueKey(matched!.requestId),
@@ -130,12 +169,15 @@ class _GatePageState extends State<GatePage> {
         approval: gate.questions.isEmpty,
         leading: leading,
         omitted: gate.omitted,
-        artifactLocation: gate.artifact == null
+        artifactLocation: pr || gate.artifact == null
             ? null
             : Uri(
                 pathSegments: ['', 'p', project.name, 'artifacts'],
                 queryParameters: {'doc': gate.artifact},
               ).toString(),
+        points: points ? [for (final q in matched.questions) blockQuestion(gate, q.question)] : null,
+        diff: _diff,
+        trailing: full,
         onSend: (answers) => _send(sessionId!, matched, gate.round, answers),
       ),
       GateScreenState.sent => _Scroll([
@@ -143,17 +185,29 @@ class _GatePageState extends State<GatePage> {
         const SizedBox(height: 24),
         const _Notice(key: ValueKey('gate-sent'), icon: Icons.hourglass_empty, text: 'registrando suas respostas'),
       ]),
+      GateScreenState.revising when pr => _Scroll([
+        ...leading,
+        const SizedBox(height: 24),
+        ..._prRevising(gate, project.cycle?.plan ?? const [], link),
+      ]),
       GateScreenState.revising => _Scroll([
         ...leading,
         const SizedBox(height: 24),
         const _Notice(key: ValueKey('gate-revising'), icon: Icons.edit_note, text: 'revisando com as suas escolhas'),
         ..._answered(gate),
       ]),
-      GateScreenState.reading => _Scroll([...leading, ..._answered(gate)]),
+      GateScreenState.reading => _Scroll([
+        ...leading,
+        if (points) ..._points(gate, answers: true) else ..._answered(gate),
+        if (link != null) ...[const SizedBox(height: 20), PrPanel(pr: link)],
+        ...full,
+      ]),
       GateScreenState.waiting => _Scroll([
         ...leading,
         const SizedBox(height: 24),
         _WaitReason(reason: gateWaitReason(sessionId, detail), session: detail?.summary),
+        if (points) ..._points(gate, answers: false),
+        ...full,
       ]),
     };
   }
@@ -194,6 +248,75 @@ class _GatePageState extends State<GatePage> {
           title: 'O que mudou',
           children: [for (final line in gate.changes) _Bullet(line)],
         ),
+      ],
+    ];
+  }
+
+  /// The block's `pr` points, read-only: no options, and with [answers] the answer given to each.
+  List<Widget> _points(ReportGate gate, {required bool answers}) => [
+    const SizedBox(height: 24),
+    Column(
+      key: const ValueKey('gate-points'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (i, q) in gate.questions.indexed) ...[
+          if (i > 0) const SizedBox(height: 16),
+          Panel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _PointHead(index: i, text: q.text, block: q, diff: _diff, color: context.colors.textSecondary),
+                if (answers)
+                  if (_answerLabel(q) case final label?) ...[
+                    const SizedBox(height: 12),
+                    _AnswerRow(key: ValueKey('gate-point-$i-answer'), question: 'Resposta', answer: label),
+                  ],
+              ],
+            ),
+          ),
+        ],
+      ],
+    ),
+  ];
+
+  /// After the send: the PR link when there is one, else that the cycle went back to implementation; then what was
+  /// asked. Without questions the adjustment goes through `/fix`, so no task is counted.
+  List<Widget> _prRevising(ReportGate gate, List<TaskRun> plan, ReportPr? link) {
+    final c = context.colors;
+    if (gate.questions.isEmpty) {
+      return [
+        if (link != null) ...[PrPanel(pr: link), const SizedBox(height: 16)],
+        const _Notice(key: ValueKey('gate-revising'), icon: Icons.edit_note, text: 'ajuste pedido'),
+        if (gate.answer?.text case final text? when text.trim().isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(
+            text,
+            key: const ValueKey('gate-adjust'),
+            style: TextStyle(fontSize: 13, color: c.textPrimary),
+          ),
+        ],
+        const SizedBox(height: 8),
+        const _Notice(icon: Icons.terminal, text: 'aplique com /fix na sessão'),
+      ];
+    }
+    final asked = [
+      for (final q in gate.questions)
+        if (q.answer?.optionId != 'ok')
+          if (_answerLabel(q) case final label?) _AnswerRow(question: q.text, answer: label),
+    ];
+    final count = prTaskCountLine(plan, gate.round);
+    return [
+      if (link != null)
+        PrPanel(pr: link)
+      else
+        const _Notice(key: ValueKey('gate-revising'), icon: Icons.edit_note, text: 'voltou à implementação'),
+      if (asked.isNotEmpty) ...[
+        const SizedBox(height: 20),
+        _Section(key: const ValueKey('gate-asked'), title: 'Pedido', children: asked),
+      ],
+      if (count.isNotEmpty) ...[
+        const SizedBox(height: 12),
+        Muted(count, key: const ValueKey('gate-task-count'), size: 12.5),
       ],
     ];
   }
@@ -393,7 +516,7 @@ class _Section extends StatelessWidget {
 }
 
 class _AnswerRow extends StatelessWidget {
-  const _AnswerRow({required this.question, required this.answer});
+  const _AnswerRow({super.key, required this.question, required this.answer});
 
   final String question;
   final String answer;
@@ -487,6 +610,64 @@ class _WaitReason extends StatelessWidget {
 
 bool _isAdjust(String label) => label.trim().toLowerCase().startsWith('ajustar');
 
+/// Number and text of a `pr` point, then its why, anchor and excerpt from the [block] question of the same text.
+class _PointHead extends StatelessWidget {
+  const _PointHead({
+    required this.index,
+    required this.text,
+    required this.block,
+    required this.diff,
+    required this.color,
+  });
+
+  final int index;
+  final String text;
+  final GateQuestion? block;
+  final AsyncSnapshot<List<DiffFile>?> diff;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final block = this.block;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${index + 1}',
+              key: ValueKey('gate-q-$index-number'),
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                text,
+                key: ValueKey('gate-point-$index-text'),
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.textPrimary),
+              ),
+            ),
+          ],
+        ),
+        if (block?.why case final why? when why.trim().isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            why,
+            key: ValueKey('gate-point-$index-why'),
+            style: TextStyle(fontSize: 13, height: 1.45, color: c.textSecondary),
+          ),
+        ],
+        if (block?.anchor case final anchor?) ...[
+          const SizedBox(height: 10),
+          GatePointDiff(index: index, anchor: anchor, diff: diff),
+        ],
+      ],
+    );
+  }
+}
+
 /// The questions of one request. Keyed by its `requestId`, so a new round starts with nothing picked.
 class _GateForm extends StatefulWidget {
   const _GateForm({
@@ -497,6 +678,9 @@ class _GateForm extends StatefulWidget {
     required this.omitted,
     required this.artifactLocation,
     required this.onSend,
+    this.points,
+    this.diff = const AsyncSnapshot.nothing(),
+    this.trailing = const [],
   });
 
   final QuestionRequest request;
@@ -507,6 +691,14 @@ class _GateForm extends StatefulWidget {
   final GateOmitted omitted;
   final String? artifactLocation;
   final Future<void> Function(Map<String, String> answers) onSend;
+
+  /// On a `pr` gate with questions, the block question of each request question, by position; `null` elsewhere.
+  /// A point has no free answer: its change option asks for text instead.
+  final List<GateQuestion?>? points;
+  final AsyncSnapshot<List<DiffFile>?> diff;
+
+  /// Below the questions; reading the full diff never changes what the send asks.
+  final List<Widget> trailing;
 
   @override
   State<_GateForm> createState() => _GateFormState();
@@ -525,8 +717,20 @@ class _GateFormState extends State<_GateForm> {
     super.dispose();
   }
 
+  /// The change option of each `pr` point that has one, by question text.
+  Map<String, String> get _changeLabels {
+    final points = widget.points;
+    if (points == null) return const {};
+    return {for (final (i, q) in widget.request.questions.indexed) q.question: ?prChangeOption(q, points[i])};
+  }
+
   Map<String, String> get _draft {
     final questions = widget.request.questions;
+    if (widget.points != null) {
+      return prAnswers(questions, _picked, {
+        for (final MapEntry(:key, :value) in _free.entries) key: value.text,
+      }, _changeLabels);
+    }
     final out = answersFor(
       questions,
       {
@@ -558,6 +762,7 @@ class _GateFormState extends State<_GateForm> {
   Widget build(BuildContext context) {
     final questions = widget.request.questions;
     final draft = _draft;
+    final changes = _changeLabels;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -571,10 +776,14 @@ class _GateFormState extends State<_GateForm> {
               children: [
                 for (final (i, q) in questions.indexed) ...[
                   if (i > 0) const SizedBox(height: 16),
-                  _question(i, q, decided: draft.containsKey(q.question)),
+                  if (widget.points case final points?)
+                    _point(i, q, points[i], changes[q.question], decided: draft.containsKey(q.question))
+                  else
+                    _question(i, q, decided: draft.containsKey(q.question)),
                 ],
               ],
             ),
+            ...widget.trailing,
           ]),
         ),
         _footer(draft.length, questions.length, draft),
@@ -621,6 +830,39 @@ class _GateFormState extends State<_GateForm> {
               hintText: widget.approval ? 'o ajuste, se escolher Ajustar' : 'outra resposta, no lugar da opção',
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _point(int index, Question q, GateQuestion? block, String? change, {required bool decided}) {
+    final c = context.colors;
+    return Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _PointHead(
+            index: index,
+            text: q.question,
+            block: block,
+            diff: widget.diff,
+            color: decided ? c.textSecondary : c.warn,
+          ),
+          const SizedBox(height: 12),
+          for (final (o, option) in q.options.indexed) ...[_option(index, o, q, option), const SizedBox(height: 6)],
+          if (change != null && _picked[q.question] == change) ...[
+            const SizedBox(height: 4),
+            TextField(
+              key: ValueKey('gate-change-$index'),
+              controller: _free[q.question],
+              onChanged: (_) => setState(() {}),
+              enabled: !_sending,
+              minLines: 2,
+              maxLines: 6,
+              style: TextStyle(fontSize: 13, color: c.textPrimary),
+              decoration: const InputDecoration(isDense: true, hintText: 'o que mudar neste trecho'),
+            ),
+          ],
         ],
       ),
     );

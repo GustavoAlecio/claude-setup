@@ -77,7 +77,7 @@ class StageReport {
 
 enum GateStatus { open, revising, approved, passed, rejected }
 
-/// `stages[].gate`. `why`, `anchor`, `base`, `tree` and `map` are not read.
+/// `stages[].gate`. `base`, `tree` and `map` are not read.
 class ReportGate {
   const ReportGate({
     required this.name,
@@ -130,6 +130,8 @@ class GateQuestion {
     this.assumed,
     this.prefers = const {},
     this.answer,
+    this.why,
+    this.anchor,
   });
 
   final String id;
@@ -143,6 +145,20 @@ class GateQuestion {
   /// Option id each side prefers, by side (`author`, `critic`).
   final Map<String, String> prefers;
   final GateAnswer? answer;
+  final String? why;
+
+  /// Lines of the new file in the diff the question points at.
+  final GateAnchor? anchor;
+}
+
+class GateAnchor {
+  const GateAnchor({required this.path, required this.start, required this.end});
+
+  final String path;
+  final int start;
+  final int end;
+
+  String get label => '$path:$start-$end';
 }
 
 class GateOption {

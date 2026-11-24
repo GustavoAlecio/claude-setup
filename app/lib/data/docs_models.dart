@@ -37,6 +37,10 @@ class DiffFile {
   final int deletions;
 }
 
+/// Lines of a diff around an anchor: one block per hunk that crosses the range, in diff order; [omitted] counts the
+/// lines past the cap.
+typedef DiffExcerpt = ({List<List<DiffLine>> blocks, int omitted});
+
 class DiffStats {
   const DiffStats({required this.files, required this.additions, required this.deletions, this.partial = false});
 
