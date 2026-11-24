@@ -1,0 +1,40 @@
+{
+  "phases": {},
+  "status": "verified",
+  "feature": "Gate delta",
+  "project": "delta",
+  "project_path": "/synthetic/delta",
+  "tracker": {
+    "kind": "ado",
+    "id": "2003"
+  },
+  "start_date": "2026-03-12T08:00:00Z",
+  "end_date": null,
+  "blockers": [],
+  "tags": [],
+  "exec": {
+    "base_checkpoint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "tasks": {
+    "total": 1,
+    "completed": 1,
+    "current_task_id": null,
+    "items": [
+      {
+        "id": "T1",
+        "title": "View delta",
+        "complexity": "M",
+        "risk": "low",
+        "tier0": "sonnet",
+        "affects": [
+          "lib/delta/view.dart"
+        ],
+        "tests": [],
+        "description": "Tarefa sintética T1.",
+        "tier": "sonnet",
+        "attempts": 1,
+        "status": "done"
+      }
+    ]
+  }
+}

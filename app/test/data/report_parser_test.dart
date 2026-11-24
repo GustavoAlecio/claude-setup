@@ -416,6 +416,54 @@ void main() {
     });
   });
 
+  group('gate pr', () {
+    test('bloco do delta na etapa complete traz why e anchor', () {
+      final gate = parseReport(_fixture('delta/report.json'))!.stage(Stage.complete)!.gate!;
+
+      expect(gate.name, 'pr');
+      expect(gate.status, GateStatus.open);
+      expect(gate.artifact, 'pr.diff');
+      expect([for (final q in gate.questions) q.id], ['Q1', 'Q2']);
+      expect(gate.questions[0].why, 'O acesso direto acopla a view à camada de dados.');
+      expect(gate.questions[0].anchor!.label, 'lib/delta/view.dart:13-13');
+      expect(gate.questions[1].why, 'O legado some neste diff sem substituto explícito.');
+      final anchor = gate.questions[1].anchor!;
+      expect((anchor.path, anchor.start, anchor.end), ('lib/delta/repository.dart', 1, 5));
+      expect(anchor.label, 'lib/delta/repository.dart:1-5');
+      expect([for (final o in gate.questions[0].options) o.id], ['ok', 'change']);
+    });
+
+    for (final (label, anchor) in <(String, Object?)>[
+      ('sem path', {'start': 1, 'end': 2}),
+      ('start maior que end', {'path': 'lib/a.dart', 'start': 5, 'end': 2}),
+      ('start não inteiro', {'path': 'lib/a.dart', 'start': 1.5, 'end': 2}),
+    ]) {
+      test('âncora malformada ($label) vira null e a pergunta é lida', () {
+        final gate = parseReport(
+          _report([
+            _stage(
+              'complete',
+              status: 'running',
+              extra: {
+                'gate': {
+                  'name': 'pr',
+                  'status': 'open',
+                  'questions': [
+                    {'id': 'Q1', 'text': 'Trecho?', 'why': 'porque', 'anchor': anchor},
+                  ],
+                },
+              },
+            ),
+          ]),
+        )!.stage(Stage.complete)!.gate!;
+
+        final q = gate.questions.single;
+        expect((q.id, q.text, q.why), ('Q1', 'Trecho?', 'porque'));
+        expect(q.anchor, isNull);
+      });
+    }
+  });
+
   group('fechamento do ciclo (qa, real_data, pr)', () {
     String closing(Map<String, Object?> extra) => jsonEncode({
       'version': 1,

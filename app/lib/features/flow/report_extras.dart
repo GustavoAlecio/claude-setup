@@ -20,7 +20,7 @@ class ReportExtras extends StatelessWidget {
     final panels = <Widget>[
       if (report.qa.isNotEmpty) _QaPanel(items: report.qa),
       if (report.hasRealData) _RealDataPanel(report: report),
-      if (report.pr case final pr?) _PrPanel(pr: pr),
+      if (report.pr case final pr?) PrPanel(pr: pr),
     ];
     if (panels.isEmpty) return const SizedBox.shrink();
     return Column(
@@ -80,8 +80,8 @@ class _RealDataPanel extends StatelessWidget {
   }
 }
 
-class _PrPanel extends StatelessWidget {
-  const _PrPanel({required this.pr});
+class PrPanel extends StatelessWidget {
+  const PrPanel({super.key, required this.pr});
 
   final ReportPr pr;
 

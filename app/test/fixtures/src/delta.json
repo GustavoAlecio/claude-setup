@@ -1,0 +1,115 @@
+{
+  "current": {
+    "phases": {},
+    "status": "verified",
+    "feature": "Gate delta",
+    "project": "delta",
+    "project_path": "/synthetic/delta",
+    "tracker": {
+      "kind": "ado",
+      "id": "2003"
+    },
+    "start_date": "2026-03-12T08:00:00Z",
+    "end_date": null,
+    "blockers": [],
+    "tags": [],
+    "exec": {
+      "base_checkpoint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "tasks": {
+      "total": 1,
+      "completed": 1,
+      "current_task_id": null,
+      "items": [
+        {
+          "id": "T1",
+          "title": "View delta",
+          "complexity": "M",
+          "risk": "low",
+          "tier0": "sonnet",
+          "affects": [
+            "lib/delta/view.dart"
+          ],
+          "tests": [],
+          "description": "Tarefa sintética T1.",
+          "tier": "sonnet",
+          "attempts": 1,
+          "status": "done"
+        }
+      ]
+    }
+  },
+  "runs": [],
+  "files": {
+    "pr.diff": "diff --git a/lib/delta/view.dart b/lib/delta/view.dart\nindex 1111111..2222222 100644\n--- a/lib/delta/view.dart\n+++ b/lib/delta/view.dart\n@@ -10,6 +10,7 @@ class DeltaView extends StatelessWidget {\n   const DeltaView({super.key});\n \n   Widget build(BuildContext context) {\n+    final repo = context.read<DeltaRepository>();\n     return const SizedBox();\n   }\n }\n@@ -40,4 +41,5 @@ class DeltaState {\n   final int count;\n \n-  const DeltaState(this.count);\n+  const DeltaState(this.count, {this.loading = false});\n+  final bool loading;\n }\ndiff --git a/lib/delta/repository.dart b/lib/delta/repository.dart\nnew file mode 100644\nindex 0000000..3333333\n--- /dev/null\n+++ b/lib/delta/repository.dart\n@@ -0,0 +1,5 @@\n+class DeltaRepository {\n+  const DeltaRepository();\n+\n+  Future<int> count() async => 0;\n+}\ndiff --git a/lib/delta/legacy.dart b/lib/delta/legacy.dart\ndeleted file mode 100644\nindex 4444444..0000000\n--- a/lib/delta/legacy.dart\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-class DeltaLegacy {\n-  const DeltaLegacy();\n-}\n"
+  },
+  "report": [
+    {
+      "cmd": "stage-start",
+      "stage": "complete",
+      "session": "s-complete"
+    },
+    {
+      "cmd": "brief",
+      "name": "pr",
+      "tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "file": {
+        "summary": "Delta com a view lendo o repositório novo e o legado removido.",
+        "artifact": "pr.diff",
+        "questions": [
+          {
+            "id": "Q1",
+            "text": "A view deve ler o repositório direto do contexto?",
+            "why": "O acesso direto acopla a view à camada de dados.",
+            "anchor": {
+              "path": "lib/delta/view.dart",
+              "start": 13,
+              "end": 13
+            },
+            "options": [
+              {
+                "id": "ok",
+                "label": "Aprovar",
+                "consequence": "Segue o trecho como está."
+              },
+              {
+                "id": "change",
+                "label": "Pedir ajuste",
+                "consequence": "Abre uma task de ajuste para este trecho."
+              }
+            ],
+            "assumed": "ok"
+          },
+          {
+            "id": "Q2",
+            "text": "O repositório novo cobre o que o legado fazia?",
+            "why": "O legado some neste diff sem substituto explícito.",
+            "anchor": {
+              "path": "lib/delta/repository.dart",
+              "start": 1,
+              "end": 5
+            },
+            "options": [
+              {
+                "id": "ok",
+                "label": "Aprovar",
+                "consequence": "Segue o trecho como está."
+              },
+              {
+                "id": "change",
+                "label": "Pedir ajuste",
+                "consequence": "Abre uma task de ajuste para este trecho."
+              }
+            ],
+            "assumed": "ok"
+          }
+        ]
+      }
+    },
+    {
+      "cmd": "show",
+      "name": "pr",
+      "save": true
+    }
+  ]
+}

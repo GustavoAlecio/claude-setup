@@ -182,8 +182,19 @@ List<GateQuestion> _questions(Object? raw) => [
               if (e.key is String && e.value is String) e.key as String: e.value as String,
         },
         answer: _answer(q['answer'], _string(q['answer_text'])),
+        why: _string(q['why']),
+        anchor: _anchor(q['anchor']),
       ),
 ];
+
+GateAnchor? _anchor(Object? raw) {
+  if (raw is! Map) return null;
+  final path = _string(raw['path']);
+  final start = _int(raw['start']);
+  final end = _int(raw['end']);
+  if (path == null || path.isEmpty || start == null || end == null || start < 1 || start > end) return null;
+  return GateAnchor(path: path, start: start, end: end);
+}
 
 /// `wf-report.py` records an option id as a bare string and free text as `{text}`; `answer_text` rides along an option.
 GateAnswer? _answer(Object? raw, String? note) {

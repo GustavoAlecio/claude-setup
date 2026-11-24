@@ -234,6 +234,85 @@ Future<void> _revealSide(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+const _delta = 'delta';
+
+/// The delta fixture (`pr` on the complete stage, run by `s-complete`) with gamma's tasks stage, run by `s-tasks`,
+/// whose gate is [tasks]; the `pr` gate is [pr].
+Project _deltaProject({required String tasks, required String pr}) {
+  Map<String, dynamic> read(String name) =>
+      jsonDecode(File('test/fixtures/workflow/$name/report.json').readAsStringSync()) as Map<String, dynamic>;
+  final doc = read(_delta);
+  final tasksStage = (read(_gamma)['stages'] as List).cast<Map<String, dynamic>>().firstWhere(
+    (s) => s['stage'] == 'tasks',
+  );
+  tasksStage['session_id'] = 's-tasks';
+  (tasksStage['gate'] as Map<String, dynamic>)['status'] = tasks;
+  final stages = (doc['stages'] as List).cast<Map<String, dynamic>>();
+  (stages.single['gate'] as Map<String, dynamic>)['status'] = pr;
+  doc['stages'] = [tasksStage, ...stages];
+  return Project(
+    name: _delta,
+    path: '/synthetic/$_delta',
+    cycle: Cycle(
+      stage: Stage.complete,
+      stageMinutes: const {},
+      runs: const [],
+      report: parseReport(jsonEncode(doc)),
+      reportIsCurrent: true,
+    ),
+  );
+}
+
+/// The request `wf-report.py show pr` makes the skill ask for the delta fixture.
+QuestionRequest _prRequest() {
+  final show = jsonDecode(File('test/fixtures/show/delta-pr.json').readAsStringSync()) as Map<String, dynamic>;
+  return QuestionRequest(
+    '2026-03-12T10:05:00Z',
+    requestId: 'rq-pr',
+    seq: 7,
+    questions: [
+      for (final q in (show['questions'] as List).cast<Map<String, dynamic>>())
+        Question(
+          question: q['question'] as String,
+          header: q['header'] as String,
+          options: [
+            for (final o in (q['options'] as List).cast<Map<String, dynamic>>())
+              QuestionOption(o['label'] as String, o['description'] as String),
+          ],
+        ),
+    ],
+  );
+}
+
+Future<void> _openDelta(WidgetTester tester, {required String tasks, required String pr, String? stage}) async {
+  tester.view.physicalSize = const Size(1400 + _sidebar, 1400);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final sessions = _Sessions(
+    [
+      _session('s-complete', command: '/complete', project: _delta),
+      _session('s-tasks', command: '/tasks', project: _delta, status: SessionStatus.done, pending: 0),
+      _session('s-rev', project: _delta, createdAt: '2026-03-10T08:00:00Z'),
+    ],
+    {
+      's-complete': [_prRequest()],
+      's-rev': [_question('q-rev', question: 'Pergunta do review?')],
+    },
+  );
+  await tester.pumpWidget(
+    ClaudeFlowApp(
+      repository: MockFlowRepository(
+        data: [_deltaProject(tasks: tasks, pr: pr)],
+      ),
+      sessions: sessions,
+      engine: const MockEngineController(),
+    ),
+  );
+  await tester.pump();
+  _router(tester).go(stage == null ? '/p/$_delta/flow' : '/p/$_delta/flow?stage=$stage');
+  await tester.pumpAndSettle();
+}
+
 void main() {
   group('card Aguardando você', () {
     testWidgets('pergunta pendente da sessão do projeto vira card; Aprovar responde pelo answer', (tester) async {
@@ -606,6 +685,51 @@ void main() {
       expect(_byKey('flow-gate-row-plan'), findsNothing);
       expect(_byKey('flow-passed-tasks'), findsNothing);
       expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsOneWidget);
+    });
+  });
+
+  group('gate pr no Fluxo', () {
+    testWidgets('Decidir mostra o pr depois do tasks e leva à tela do gate pr', (tester) async {
+      await _openDelta(tester, tasks: 'open', pr: 'open');
+
+      final tasks = _byKey('flow-gate-row-tasks');
+      final pr = _byKey('flow-gate-row-pr');
+      expect(tasks, findsOneWidget);
+      expect(pr, findsOneWidget);
+      expect(tester.getTopLeft(pr).dy, greaterThan(tester.getTopLeft(tasks).dy));
+      expect(find.descendant(of: pr, matching: find.text('2 pontos antes do PR')), findsOneWidget);
+
+      await tester.tap(find.descendant(of: pr, matching: find.text('Decidir')));
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/p/$_delta/gate/pr');
+    });
+
+    testWidgets('Passou sem você lista o pr depois do tasks', (tester) async {
+      await _openDelta(tester, tasks: 'passed', pr: 'passed');
+
+      final tasks = _byKey('flow-passed-tasks');
+      final pr = _byKey('flow-passed-pr');
+      expect(tasks, findsOneWidget);
+      expect(pr, findsOneWidget);
+      expect(tester.getTopLeft(pr).dy, greaterThan(tester.getTopLeft(tasks).dy));
+    });
+
+    testWidgets('a sessão do complete mostra a nota do pr no painel; o único QuestionCard é o do card', (tester) async {
+      await _openDelta(tester, tasks: 'passed', pr: 'open');
+
+      expect(find.descendant(of: _side, matching: _byKey('flow-gate-request-pr')), findsOneWidget);
+      expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsOneWidget);
+      expect(_inCard(find.byType(QuestionCard)), findsOneWidget);
+      expect(_inCard(find.text('Pergunta do review?')), findsOneWidget);
+    });
+
+    testWidgets('com o painel em outra etapa, Aguardando você omite a sessão do complete', (tester) async {
+      await _openDelta(tester, tasks: 'passed', pr: 'open', stage: 'tasks');
+
+      expect(_card, findsOneWidget);
+      expect(_byKey('awaiting-s-complete'), findsNothing);
+      expect(_inCard(find.byKey(const ValueKey('awaiting-s-rev'))), findsOneWidget);
+      expect(_byKey('flow-gate-request-pr'), findsNothing);
     });
   });
 }

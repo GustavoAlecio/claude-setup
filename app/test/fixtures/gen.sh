@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates workflow/, projects/ and stacks/ from src/*.json and src/history/*.json using the real `wf-event.py persist`
-# and `wf-report.py` (the optional "report" steps of a project or history cycle).
+# and `wf-report.py` (the optional "report" steps of a project or history cycle; a `brief` step may carry `tree`,
+# and a project may carry `files`, a name -> text map written into workflow/<project>/).
 # `--check` regenerates into a tmp dir and fails on any diff against the committed output.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -94,6 +95,8 @@ def run_report(wf, steps, project=None):
                 cmd += ["--url", step["pr_url"]]
             if "file" in step:
                 cmd += ["--file", text_file("brief.json", json.dumps(step["file"], ensure_ascii=False))]
+            if "tree" in step:
+                cmd += ["--tree", "@" + text_file("tree.txt", step["tree"] + "\n")]
             if "candidates" in step:
                 cmd += ["--candidates", text_file("candidates.json", json.dumps(step["candidates"], ensure_ascii=False))]
             if "question" in step:
@@ -141,6 +144,8 @@ for f in sorted(src.glob("*.json")):
             run_persist(run_dir, proj, run["result"])
         if run.get("result_raw") is not None:
             (run_dir / "result.json").write_text(run["result_raw"])
+    for name, text in spec.get("files", {}).items():
+        (proj / name).write_text(text)
     if spec.get("report"):
         run_report(proj, spec["report"], f.stem)
     (proj / ".current.json.lock").unlink(missing_ok=True)

@@ -21,8 +21,7 @@ String sessionRoute(SessionSummary s) =>
 
 String _where(SessionSummary s) => s.isOrgSession ? s.org! : s.project;
 
-/// A session stopped on an open spec, plan or tasks gate is answered on the gate screen; the `pr` gate and any other
-/// request stay in the session.
+/// A session stopped on an open gate is answered on the gate screen; any other request stays in the session.
 String _pendingRoute(SessionSummary s, List<Project> projects) {
   if (!s.isOrgSession) {
     final report = gateReport(projects.where((p) => p.name == s.project).firstOrNull?.cycle);

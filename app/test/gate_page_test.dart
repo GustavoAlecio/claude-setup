@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/theme/app_colors.dart';
+import 'package:claude_flow/data/mock_docs_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
@@ -13,6 +14,7 @@ import 'package:claude_flow/data/report_parser.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/sessions_repository.dart';
 import 'package:claude_flow/features/flow/gate_page.dart';
+import 'package:claude_flow/features/reviews/reviews_diff.dart';
 import 'package:claude_flow/features/shell/shell_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -223,6 +225,118 @@ Future<(_Flow, _Sessions)> _deciding(
   },
 );
 
+const _delta = 'delta';
+
+Map<String, dynamic> _deltaJson() =>
+    jsonDecode(File('test/fixtures/workflow/delta/report.json').readAsStringSync()) as Map<String, dynamic>;
+
+String _deltaDiff() => File('test/fixtures/workflow/delta/pr.diff').readAsStringSync();
+
+/// The delta fixture (`pr` open on the complete stage, run by `s-complete`), with [gate] and [doc] edited in place.
+ReportDoc _deltaReport({void Function(Map<String, dynamic> gate)? gate, void Function(Map<String, dynamic> doc)? doc}) {
+  final json = _deltaJson();
+  gate?.call(_stage(json, 'complete')['gate'] as Map<String, dynamic>);
+  doc?.call(json);
+  return parseReport(jsonEncode(json))!;
+}
+
+Project _deltaProject(ReportDoc report, {List<TaskRun> plan = const []}) => Project(
+  name: _delta,
+  path: '/synthetic/$_delta',
+  cycle: Cycle(
+    stage: Stage.complete,
+    runs: const [],
+    stageMinutes: const {},
+    plan: plan,
+    report: report,
+    reportIsCurrent: true,
+  ),
+);
+
+TaskRun _task(String id) =>
+    TaskRun(id: id, title: 'ajuste $id', complexity: Complexity.m, tier0: Tier.opus, status: Verdict.pending);
+
+SessionSummary _completeSession({SessionStatus status = SessionStatus.waitingPermission, int pending = 1}) =>
+    SessionSummary(
+      id: 's-complete',
+      project: _delta,
+      command: '/complete',
+      title: 'sessão s-complete',
+      status: status,
+      createdAt: '2026-03-12T10:00:00Z',
+      pendingPermissions: pending,
+    );
+
+/// The questions `wf-report.py show pr` hands the skill for the delta fixture.
+List<Question> _prQuestions() {
+  final show = jsonDecode(File('test/fixtures/show/delta-pr.json').readAsStringSync()) as Map<String, dynamic>;
+  return [
+    for (final q in (show['questions'] as List).cast<Map<String, dynamic>>())
+      Question(
+        question: q['question'] as String,
+        header: q['header'] as String,
+        options: [
+          for (final o in (q['options'] as List).cast<Map<String, dynamic>>())
+            QuestionOption(o['label'] as String, o['description'] as String),
+        ],
+      ),
+  ];
+}
+
+MockDocsRepository _docs([String? diff]) => MockDocsRepository.empty()..write('pr.diff', diff ?? _deltaDiff());
+
+/// Opens `/p/<project>/gate/<gate>` over [projects] (the delta fixture by default) with [docs] as the docs repository.
+Future<(_Flow, _Sessions, MockDocsRepository)> _openPr(
+  WidgetTester tester, {
+  ReportDoc? report,
+  List<Project>? projects,
+  MockDocsRepository? docs,
+  List<SessionSummary>? sessions,
+  Map<String, List<SessionEvent>>? events,
+  String project = _delta,
+  String gate = 'pr',
+  List<TaskRun> plan = const [],
+}) async {
+  tester.view.physicalSize = const Size(1400, 1000);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final flow = _Flow(projects ?? [_deltaProject(report ?? _deltaReport(), plan: plan)]);
+  final repo = _Sessions(
+    sessions ?? [_completeSession()],
+    events ??
+        {
+          's-complete': [_request(_prQuestions(), id: 'rq-pr')],
+        },
+  );
+  final repository = docs ?? _docs();
+  await tester.pumpWidget(
+    ClaudeFlowApp(repository: flow, sessions: repo, engine: const MockEngineController(), docs: repository),
+  );
+  await tester.pumpAndSettle();
+  _router(tester).go('/p/$project/gate/$gate');
+  await tester.pumpAndSettle();
+  return (flow, repo, repository);
+}
+
+Finder _lines(String key) => find.descendant(of: _key(key), matching: find.byType(DiffLineView));
+
+Finder _keyPrefix(String prefix) =>
+    find.byWidgetPredicate((w) => (w.key is ValueKey<String>) && (w.key! as ValueKey<String>).value.startsWith(prefix));
+
+/// [files] files of [lines] added lines each, the first one with [big] lines.
+String _bigDiff({int files = 33, int lines = 100, int big = 500}) => [
+  for (var f = 0; f < files; f++) ...[
+    'diff --git a/lib/big/f$f.dart b/lib/big/f$f.dart',
+    'new file mode 100644',
+    'index 0000000..1111111',
+    '--- /dev/null',
+    '+++ b/lib/big/f$f.dart',
+    '@@ -0,0 +1,${f == 0 ? big : lines} @@',
+    for (var l = 0; l < (f == 0 ? big : lines); l++) '+l$l',
+  ],
+  '',
+].join('\n');
+
 void main() {
   group('tela do gate', () {
     testWidgets('abre fora do shell, com contexto, título, resumo, riscos e perguntas nessa ordem', (tester) async {
@@ -245,7 +359,7 @@ void main() {
       }
     });
 
-    testWidgets('spec lê a etapa challenge; pr, gate desconhecido e relatório de outro ciclo ficam indisponíveis', (
+    testWidgets('spec lê a etapa challenge; pr sem bloco, gate desconhecido e outro ciclo ficam indisponíveis', (
       tester,
     ) async {
       final (flow, _) = await _open(tester, report: _report(), gate: 'spec');
@@ -682,6 +796,402 @@ void main() {
       for (final key in ['gate-option-0-0', 'gate-option-2-1', 'gate-back', 'gate-skip', 'gate-send']) {
         expect(tester.getSize(_key(key)).height, greaterThanOrEqualTo(44), reason: key);
       }
+    });
+  });
+
+  group('gate pr', () {
+    testWidgets('abre a tela com cada ponto em ordem: texto, porquê, âncora, trecho e opções; sem free nem artifact', (
+      tester,
+    ) async {
+      await _openPr(tester);
+      final questions = _prQuestions();
+
+      expect(_key('gate-unavailable'), findsNothing);
+      expect(tester.widget<Text>(_key('gate-title')).data, '2 pontos antes do PR');
+      for (var i = 0; i < 2; i++) {
+        final keys = [
+          'gate-point-$i-text',
+          'gate-point-$i-why',
+          'gate-point-$i-anchor',
+          'gate-point-$i-excerpt',
+          for (var o = 0; o < questions[i].options.length; o++) 'gate-option-$i-$o',
+        ];
+        final tops = [for (final k in keys) tester.getTopLeft(_key(k)).dy];
+        for (var k = 1; k < tops.length; k++) {
+          expect(tops[k], greaterThan(tops[k - 1]), reason: '${keys[k]} abaixo de ${keys[k - 1]}');
+        }
+        for (final (o, option) in questions[i].options.indexed) {
+          expect(find.descendant(of: _key('gate-option-$i-$o'), matching: find.text(option.label)), findsOneWidget);
+        }
+      }
+      expect(tester.widget<Text>(_key('gate-point-0-text')).data, questions[0].question);
+      expect(tester.widget<Text>(_key('gate-point-0-why')).data, 'O acesso direto acopla a view à camada de dados.');
+      expect(
+        find.descendant(of: _key('gate-point-0-anchor'), matching: find.text('lib/delta/view.dart:13-13')),
+        findsOneWidget,
+      );
+      expect(_lines('gate-point-0-excerpt'), findsNWidgets(7));
+      expect(_lines('gate-point-1-excerpt'), findsNWidgets(5));
+      expect(_keyPrefix('gate-free-'), findsNothing);
+      expect(_key('gate-artifact'), findsNothing);
+      expect(_keyPrefix('gate-change-'), findsNothing);
+    });
+
+    testWidgets('a opção Pedir ajuste abre o campo; o envio exige texto na mudança e habilita com ok nos dois', (
+      tester,
+    ) async {
+      await _openPr(tester);
+
+      await _tap(tester, 'gate-option-0-1');
+      expect(_key('gate-change-0'), findsOneWidget);
+      await _tap(tester, 'gate-option-1-0');
+      expect(_key('gate-change-1'), findsNothing);
+      expect(_send(tester).onPressed, isNull);
+      expect(find.text('1 de 2 decididas'), findsOneWidget);
+
+      await tester.enterText(_key('gate-change-0'), 'injetar pelo construtor');
+      await tester.pumpAndSettle();
+      expect(_send(tester).onPressed, isNotNull);
+
+      await tester.enterText(_key('gate-change-0'), '   ');
+      await tester.pumpAndSettle();
+      expect(_send(tester).onPressed, isNull);
+
+      await _tap(tester, 'gate-option-0-0');
+      expect(_key('gate-change-0'), findsNothing);
+      expect(_send(tester).onPressed, isNotNull);
+      expect(find.text('2 de 2 decididas'), findsOneWidget);
+    });
+
+    testWidgets('envia uma vez o rótulo do ok e o texto da mudança; enviado não mostra o diff completo', (
+      tester,
+    ) async {
+      final (_, sessions, _) = await _openPr(tester);
+      final questions = _prQuestions();
+
+      await _tap(tester, 'gate-option-0-0');
+      await _tap(tester, 'gate-option-1-1');
+      await tester.enterText(_key('gate-change-1'), '  cobrir o legado com teste  ');
+      await tester.pumpAndSettle();
+      await _tap(tester, 'gate-send');
+
+      expect(sessions.answerCalls, hasLength(1));
+      final (id, requestId, decision, answers) = sessions.answerCalls.single;
+      expect((id, requestId, decision), ('s-complete', 'rq-pr', PermissionDecision.answer));
+      expect(answers, {questions[0].question: 'Aprovar', questions[1].question: 'cobrir o legado com teste'});
+      expect(find.text('registrando suas respostas'), findsOneWidget);
+      expect(_key('gate-diff-full'), findsNothing);
+    });
+
+    testWidgets('trocar de mudança para ok depois de digitar envia o rótulo, não o texto', (tester) async {
+      final (_, sessions, _) = await _openPr(tester);
+      final questions = _prQuestions();
+
+      await _tap(tester, 'gate-option-0-0');
+      await _tap(tester, 'gate-option-1-1');
+      await tester.enterText(_key('gate-change-1'), 'cobrir o legado');
+      await tester.pumpAndSettle();
+      await _tap(tester, 'gate-option-1-0');
+      await _tap(tester, 'gate-send');
+
+      expect(sessions.answerCalls.single.$4, {questions[0].question: 'Aprovar', questions[1].question: 'Aprovar'});
+    });
+
+    testWidgets('sem perguntas: Abrir o PR?, Ajustar sem texto não envia e Aprovar envia o rótulo', (tester) async {
+      const question = 'Abrir o PR?';
+      final (_, sessions, _) = await _openPr(
+        tester,
+        report: _deltaReport(gate: (gate) => gate['questions'] = <Object>[]),
+        events: {
+          's-complete': [
+            _request(const [
+              Question(
+                question: question,
+                header: 'pr',
+                options: [
+                  QuestionOption('Aprovar (Recommended)', 'abre o PR'),
+                  QuestionOption('Ajustar', 'descreva o ajuste'),
+                  QuestionOption('Rejeitar', 'encerra a etapa'),
+                ],
+              ),
+            ], id: 'rq-pr'),
+          ],
+        },
+      );
+      expect(tester.widget<Text>(_key('gate-title')).data, question);
+      expect(_key('gate-diff-full'), findsOneWidget);
+
+      await _tap(tester, 'gate-option-0-1');
+      expect(_send(tester).onPressed, isNull);
+
+      await _tap(tester, 'gate-option-0-0');
+      await _tap(tester, 'gate-send');
+      expect(sessions.answerCalls.single.$4, {question: 'Aprovar (Recommended)'});
+    });
+
+    for (final (name, docs) in [
+      ('erro', MockDocsRepository.empty),
+      ('tooLarge', () => _docs('x' * (2 * 1024 * 1024 + 1))),
+    ]) {
+      testWidgets('diff indisponível ($name): trechos avisam, sem diff completo, e o envio funciona', (tester) async {
+        await _openPr(tester, docs: docs());
+
+        expect(_key('gate-diff-full'), findsNothing);
+        for (var i = 0; i < 2; i++) {
+          expect(
+            find.descendant(of: _key('gate-point-$i-excerpt'), matching: find.text('diff indisponível')),
+            findsOneWidget,
+          );
+        }
+        await _tap(tester, 'gate-option-0-0');
+        await _tap(tester, 'gate-option-1-0');
+        expect(_send(tester).onPressed, isNotNull);
+      });
+    }
+
+    testWidgets('âncora de caminho ausente do diff mostra trecho fora do diff e mantém o rótulo', (tester) async {
+      await _openPr(
+        tester,
+        report: _deltaReport(
+          gate: (gate) => ((gate['questions'] as List).first as Map<String, dynamic>)['anchor'] = {
+            'path': 'lib/delta/missing.dart',
+            'start': 4,
+            'end': 9,
+          },
+        ),
+      );
+
+      expect(
+        find.descendant(of: _key('gate-point-0-excerpt'), matching: find.text('trecho fora do diff')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: _key('gate-point-0-anchor'), matching: find.text('lib/delta/missing.dart:4-9')),
+        findsOneWidget,
+      );
+      expect(_lines('gate-point-1-excerpt'), findsNWidgets(5));
+    });
+
+    testWidgets('diff completo começa recolhido com a contagem e abre arquivo por arquivo', (tester) async {
+      await _openPr(tester);
+      final full = _key('gate-diff-full');
+
+      expect(find.descendant(of: full, matching: find.text('3 arquivos, +8 −4')), findsOneWidget);
+      expect(find.descendant(of: full, matching: find.byType(DiffLineView)), findsNothing);
+      expect(_key('gate-diff-file-0'), findsNothing);
+
+      await _tap(tester, 'gate-diff-full-toggle');
+      expect(_keyPrefix('gate-diff-file-'), findsNWidgets(3));
+      expect(find.descendant(of: full, matching: find.byType(DiffLineView)), findsNothing);
+
+      await _tap(tester, 'gate-diff-file-1');
+      expect(find.descendant(of: full, matching: find.byType(DiffLineView)), findsNWidgets(5));
+    });
+
+    testWidgets('diff de 33 arquivos e mais de 3 400 linhas: recolhido não desenha linhas e aberto para em 400', (
+      tester,
+    ) async {
+      final text = _bigDiff();
+      expect(text.length, lessThan(kIsolateParseThreshold));
+      expect('\n'.allMatches(text).length, greaterThan(3400));
+      await _openPr(tester, docs: _docs(text));
+      final enabled = _send(tester).onPressed != null;
+
+      expect(find.descendant(of: _key('gate-diff-full'), matching: find.text('33 arquivos, +3700 −0')), findsOneWidget);
+      expect(find.byType(DiffLineView), findsNothing);
+
+      await _tap(tester, 'gate-diff-full-toggle');
+      expect(find.byType(DiffLineView), findsNothing);
+      await _tap(tester, 'gate-diff-file-0');
+      expect(find.byType(DiffLineView), findsNWidgets(400));
+      expect(find.text('mais 100 linhas neste arquivo'), findsOneWidget);
+      expect(_send(tester).onPressed != null, enabled);
+    });
+
+    testWidgets('o pr.diff é lido uma vez por rodada', (tester) async {
+      final (flow, _, docs) = await _openPr(tester);
+
+      await _tap(tester, 'gate-option-0-0');
+      await _tap(tester, 'gate-option-1-1');
+      await _tap(tester, 'gate-diff-full-toggle');
+      await _tap(tester, 'gate-diff-file-0');
+      expect(docs.reads['pr.diff'], 1);
+
+      flow.current = [_deltaProject(_deltaReport(gate: (gate) => gate['round'] = 2))];
+      await tester.pumpAndSettle();
+      expect(docs.reads['pr.diff'], 2);
+    });
+
+    testWidgets('gate plan não lê o pr.diff', (tester) async {
+      final (_, _, docs) = await _openPr(
+        tester,
+        projects: [_gamma(_report())],
+        project: _project,
+        gate: 'plan',
+        sessions: [_session('s-plan')],
+        events: {
+          's-plan': [_request(_showQuestions())],
+        },
+      );
+      expect(_key('gate-questions'), findsOneWidget);
+      expect(docs.reads['pr.diff'] ?? 0, 0);
+    });
+
+    testWidgets('pr aberto com a sessão esperando outra pergunta: aguardando, pontos sem opções e diff completo', (
+      tester,
+    ) async {
+      await _openPr(
+        tester,
+        events: {
+          's-complete': [
+            _request(const [
+              Question(
+                question: 'Encerrar o ciclo agora?',
+                header: 'fim',
+                options: [QuestionOption('Sim', ''), QuestionOption('Não', '')],
+              ),
+            ], id: 'rq-end'),
+          ],
+        },
+      );
+
+      expect(find.text('a sessão espera outra resposta'), findsOneWidget);
+      expect(_key('gate-open-session'), findsOneWidget);
+      expect(_key('gate-send'), findsNothing);
+      expect(_keyPrefix('gate-option-'), findsNothing);
+      expect(_key('gate-point-1-why'), findsOneWidget);
+      expect(_lines('gate-point-0-excerpt'), findsNWidgets(7));
+      expect(_key('gate-diff-full'), findsOneWidget);
+    });
+  });
+
+  group('gate pr depois do envio', () {
+    void answerBoth(Map<String, dynamic> gate, {required bool optionForm, required String status}) {
+      gate['status'] = status;
+      final questions = (gate['questions'] as List).cast<Map<String, dynamic>>();
+      for (final (i, q) in questions.indexed) {
+        if (optionForm) {
+          q['answer'] = 'change';
+          q['answer_text'] = 'ajuste ${i + 1}';
+        } else {
+          q['answer'] = {'text': 'ajuste ${i + 1}'};
+        }
+      }
+    }
+
+    for (final optionForm in [false, true]) {
+      final form = optionForm ? 'change + answer_text' : 'answer {text}';
+      for (final (tasks, line) in [
+        (2, '2 pontos viraram tasks; o gate reabre depois do verify'),
+        (1, '1 ponto virou task; o gate reabre depois do verify'),
+        (0, null),
+      ]) {
+        testWidgets('revisando ($form, $tasks tasks): voltou à implementação, os pedidos e a contagem', (tester) async {
+          await _openPr(
+            tester,
+            report: _deltaReport(
+              gate: (gate) => answerBoth(gate, optionForm: optionForm, status: 'revising'),
+            ),
+            sessions: [_completeSession(status: SessionStatus.done, pending: 0)],
+            events: const {},
+            plan: [_task('T1'), for (var i = 1; i <= tasks; i++) _task('P1.$i'), _task('P2.1')],
+          );
+
+          expect(find.text('voltou à implementação'), findsOneWidget);
+          final asked = _key('gate-asked');
+          expect(find.descendant(of: asked, matching: find.text('ajuste 1')), findsOneWidget);
+          expect(find.descendant(of: asked, matching: find.text('ajuste 2')), findsOneWidget);
+          if (line == null) {
+            expect(_key('gate-task-count'), findsNothing);
+          } else {
+            expect(find.text(line), findsOneWidget);
+          }
+          expect(_key('gate-diff-full'), findsNothing);
+          expect(_key('flow-pr'), findsNothing);
+        });
+      }
+    }
+
+    testWidgets('revisando sem perguntas: ajuste pedido, o texto e /fix, sem contagem', (tester) async {
+      await _openPr(
+        tester,
+        report: _deltaReport(
+          gate: (gate) {
+            gate['status'] = 'revising';
+            gate['questions'] = <Object>[];
+            gate['answer'] = {'text': 'Renomear o repositório.'};
+          },
+        ),
+        sessions: [_completeSession(status: SessionStatus.done, pending: 0)],
+        events: const {},
+        plan: [_task('P1.1')],
+      );
+
+      expect(find.text('ajuste pedido'), findsOneWidget);
+      expect(find.text('Renomear o repositório.'), findsOneWidget);
+      expect(find.text('aplique com /fix na sessão'), findsOneWidget);
+      expect(_key('gate-task-count'), findsNothing);
+      expect(find.text('voltou à implementação'), findsNothing);
+      expect(_key('gate-diff-full'), findsNothing);
+    });
+
+    for (final status in ['approved', 'passed', 'revising']) {
+      testWidgets('com PR no relatório, $status mostra o link aberto pelo opener', (tester) async {
+        final (_, _, docs) = await _openPr(
+          tester,
+          report: _deltaReport(
+            gate: (gate) => answerBoth(gate, optionForm: false, status: status),
+            doc: (doc) => doc['pr'] = {'url': 'https://github.com/acme/delta/pull/7', 'number': 7},
+          ),
+          sessions: [_completeSession(status: SessionStatus.done, pending: 0)],
+          events: const {},
+        );
+
+        expect(_key('flow-pr'), findsOneWidget);
+        expect(find.text('voltou à implementação'), findsNothing);
+        expect(_key('gate-diff-full'), status == 'revising' ? findsNothing : findsOneWidget);
+        if (status != 'revising') {
+          expect(find.descendant(of: _key('gate-point-0-answer'), matching: find.text('ajuste 1')), findsOneWidget);
+          expect(_keyPrefix('gate-option-'), findsNothing);
+          expect(_lines('gate-point-0-excerpt'), findsNWidgets(7));
+        }
+        await _tap(tester, 'flow-pr-link');
+        expect(docs.opened, [Uri.parse('https://github.com/acme/delta/pull/7')]);
+      });
+    }
+
+    testWidgets('rodada 2: Você escolheu mostra o texto pedido e O que mudou lista as mudanças', (tester) async {
+      await _openPr(
+        tester,
+        report: _deltaReport(
+          gate: (gate) {
+            final questions = (gate['questions'] as List).cast<Map<String, dynamic>>();
+            gate['round'] = 2;
+            gate['history'] = [
+              {
+                'round': 1,
+                'questions': [
+                  {...questions[0], 'answer': 'change', 'answer_text': 'Injetar o repositório pelo construtor.'},
+                  {...questions[1], 'answer': 'ok'},
+                ],
+              },
+            ];
+            gate['changes'] = ['Repositório injetado pelo construtor.'];
+          },
+        ),
+      );
+
+      final history = _key('gate-history');
+      expect(
+        find.descendant(of: history, matching: find.text('Injetar o repositório pelo construtor.')),
+        findsOneWidget,
+      );
+      expect(find.descendant(of: history, matching: find.text('Aprovar')), findsOneWidget);
+      expect(
+        find.descendant(of: _key('gate-changes'), matching: find.text('· Repositório injetado pelo construtor.')),
+        findsOneWidget,
+      );
+      expect(_key('gate-point-0-text'), findsOneWidget);
     });
   });
 }

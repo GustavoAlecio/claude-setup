@@ -284,11 +284,11 @@ void main() {
         ],
       );
       expect(sessionGate(report, 's1')?.name, 'plan');
-      expect(sessionGate(report, 's2'), isNull);
+      expect(sessionGate(report, 's2')?.name, 'pr');
       expect(sessionGate(report, 'ghost'), isNull);
     });
 
-    test('withoutOpenGateSessions drops the sessions of open spec, plan and tasks gates', () {
+    test('withoutOpenGateSessions drops the sessions of open spec, plan, tasks and pr gates', () {
       const report = ReportDoc(
         feature: 'f',
         startedAt: null,
@@ -322,7 +322,7 @@ void main() {
         createdAt: '2026-03-10T08:00:00Z',
       );
       final all = [s('s-spec'), s('s-plan'), s('s-pr'), s('s-free')];
-      expect(withoutOpenGateSessions(all, report).map((x) => x.id), ['s-plan', 's-pr', 's-free']);
+      expect(withoutOpenGateSessions(all, report).map((x) => x.id), ['s-plan', 's-free']);
       expect(withoutOpenGateSessions(all, null), all);
     });
 
@@ -345,6 +345,150 @@ void main() {
       );
       expect(gateWaitReason('s1', _detail([permission])), GateWaitReason.otherRequest);
       expect(gateWaitReason('s1', _detail([permission], status: SessionStatus.done)), GateWaitReason.sessionEnded);
+    });
+  });
+
+  group('gate pr', () {
+    ReportGate delta() =>
+        parseReport(File('test/fixtures/workflow/delta/report.json').readAsStringSync())!.stage(Stage.complete)!.gate!;
+
+    List<Question> showQuestions() {
+      final show = jsonDecode(File('test/fixtures/show/delta-pr.json').readAsStringSync()) as Map<String, dynamic>;
+      return [
+        for (final q in (show['questions'] as List).cast<Map<String, dynamic>>())
+          Question(
+            question: q['question'] as String,
+            header: q['header'] as String,
+            options: [
+              for (final o in (q['options'] as List).cast<Map<String, dynamic>>())
+                QuestionOption(o['label'] as String, o['description'] as String),
+            ],
+          ),
+      ];
+    }
+
+    StageReport owned(Stage stage, String gate, GateStatus status) => StageReport(
+      stage: stage,
+      status: ReportStatus.running,
+      gate: ReportGate(name: gate, status: status),
+    );
+
+    TaskRun task(String id) =>
+        TaskRun(id: id, title: id, complexity: Complexity.s, tier0: Tier.sonnet, status: Verdict.pending);
+
+    test('kGateOwner puts pr on the complete stage', () {
+      expect(kGateOwner['pr'], Stage.complete);
+    });
+
+    test('titles', () {
+      expect(gateTitle('pr', 2), '2 pontos antes do PR');
+      expect(gateTitle('pr', 1), '1 ponto antes do PR');
+      expect(gateTitle('pr', 0), 'Abrir o PR?');
+      expect(gateReadingTitle('pr', GateStatus.approved, 2), 'PR aprovado');
+      expect(gateReadingTitle('pr', GateStatus.rejected, 2), 'PR rejeitado');
+      expect(gateReadingTitle('pr', GateStatus.passed, 0), 'PR passou sem decisão');
+      expect(gateReadingTitle('pr', GateStatus.open, 2), '2 pontos antes do PR');
+    });
+
+    test('openGates and passedGates list pr after tasks', () {
+      final open = ReportDoc(
+        feature: 'f',
+        startedAt: null,
+        stages: [owned(Stage.complete, 'pr', GateStatus.open), owned(Stage.tasks, 'tasks', GateStatus.open)],
+      );
+      expect(openGates(open).map((s) => s.gate!.name), ['tasks', 'pr']);
+      final passed = ReportDoc(
+        feature: 'f',
+        startedAt: null,
+        stages: [owned(Stage.complete, 'pr', GateStatus.passed), owned(Stage.tasks, 'tasks', GateStatus.passed)],
+      );
+      expect(passedGates(passed).map((s) => s.gate!.name), ['tasks', 'pr']);
+      expect(
+        openGates(ReportDoc(feature: 'f', startedAt: null, stages: [owned(Stage.verify, 'pr', GateStatus.open)])),
+        isEmpty,
+      );
+    });
+
+    test('blockQuestion finds the block question by text, up to whitespace', () {
+      final gate = delta();
+      expect(blockQuestion(gate, '  A view deve ler o repositório\ndireto do contexto? ')?.id, 'Q1');
+      expect(blockQuestion(gate, 'O repositório novo cobre o que o legado fazia?')?.id, 'Q2');
+      expect(blockQuestion(gate, 'Outra pergunta?'), isNull);
+    });
+
+    test('prChangeOption reads the change label of the block from the real show output', () {
+      final gate = delta();
+      for (final q in showQuestions()) {
+        expect(prChangeOption(q, blockQuestion(gate, q.question)), 'Pedir ajuste', reason: q.question);
+      }
+    });
+
+    test('prChangeOption ignores the Recomendado suffix and returns the label as asked', () {
+      final block = delta().questions.first;
+      final asked = _q(block.text, ['Pedir ajuste (Recomendado)', 'Aprovar']);
+      expect(prChangeOption(asked, block), 'Pedir ajuste (Recomendado)');
+    });
+
+    test('prChangeOption without a match is null', () {
+      final block = delta().questions.first;
+      expect(prChangeOption(_q(block.text, ['Aprovar', 'Mudar']), block), isNull);
+      expect(prChangeOption(_q(block.text, ['Aprovar', 'Pedir ajuste']), null), isNull);
+      expect(
+        prChangeOption(
+          _q(block.text, ['Aprovar', 'Pedir ajuste']),
+          GateQuestion(
+            id: 'Q1',
+            text: block.text,
+            options: const [GateOption(id: 'ok', label: 'Pedir ajuste')],
+          ),
+        ),
+        isNull,
+      );
+    });
+
+    group('prAnswers', () {
+      const a = 'Ponto A?';
+      const b = 'Ponto B?';
+      final asked = [
+        _q(a, ['Aprovar', 'Pedir ajuste']),
+        _q(b, ['Aprovar', 'Pedir ajuste']),
+      ];
+      const changes = {a: 'Pedir ajuste', b: 'Pedir ajuste'};
+
+      test('ok sends the label as asked and a change sends its trimmed text', () {
+        expect(
+          prAnswers(asked, {a: 'Aprovar', b: 'Pedir ajuste'}, {a: 'ignorado', b: '  trocar o acesso  '}, changes),
+          {a: 'Aprovar', b: 'trocar o acesso'},
+        );
+      });
+
+      test('a change with empty or blank text stays out, as do undecided points', () {
+        expect(prAnswers(asked, {a: 'Pedir ajuste', b: 'Pedir ajuste'}, {a: '', b: '  \n '}, changes), isEmpty);
+        expect(prAnswers(asked, {b: 'Aprovar'}, const {}, changes), {b: 'Aprovar'});
+      });
+
+      test('switching back to ok sends the label and drops the typed text', () {
+        expect(prAnswers(asked, {a: 'Aprovar'}, {a: 'texto digitado antes'}, changes), {a: 'Aprovar'});
+      });
+
+      test('a point without a matched change decides with any label', () {
+        expect(prAnswers(asked, {a: 'Pedir ajuste', b: 'Pedir ajuste'}, const {}, {b: 'Pedir ajuste'}), {
+          a: 'Pedir ajuste',
+        });
+      });
+    });
+
+    test('prTaskCountLine counts the P<round> tasks of the plan', () {
+      expect(prTaskCountLine([task('T1'), task('P2.1')], 1), '');
+      expect(
+        prTaskCountLine([task('T1'), task('P1.1'), task('P1.1x')], 1),
+        '1 ponto virou task; o gate reabre depois do verify',
+      );
+      expect(
+        prTaskCountLine([task('P1.1'), task('P1.2'), task('P2.1')], 1),
+        '2 pontos viraram tasks; o gate reabre depois do verify',
+      );
+      expect(prTaskCountLine(const [], 1), '');
     });
   });
 
