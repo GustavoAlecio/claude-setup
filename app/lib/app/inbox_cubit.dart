@@ -18,6 +18,9 @@ class InboxState {
 
   /// Tab badge: nothing while in error.
   int get badge => error == null ? inbox?.items.length ?? 0 : 0;
+
+  /// [inbox] items when it was listed for [requested]; another org's list never leaks in.
+  List<InboxItem> itemsFor(GithubScope requested) => scope == requested ? inbox?.items ?? const [] : const [];
 }
 
 /// Single source of the inbox tab and its badge; polls only while the engine has an endpoint and the

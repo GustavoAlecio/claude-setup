@@ -39,7 +39,7 @@ enum AppTab {
   adrs('ADRs'),
 
   /// Org scope only: every project of the org at once.
-  queue('Minha fila');
+  queue('Caixa de entrada');
 
   const AppTab(this.label);
   final String label;

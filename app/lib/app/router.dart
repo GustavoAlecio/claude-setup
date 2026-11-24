@@ -16,7 +16,7 @@ import '../features/prs/prs_page.dart';
 import '../features/reviews/reviews_page.dart';
 import '../features/runs/runs_page.dart';
 import '../features/runs/task_detail_page.dart';
-import '../features/queue/queue_page.dart';
+import '../features/queue/inbox_home_page.dart';
 import '../features/sessions/sessions_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/shell/shell_page.dart';
@@ -72,7 +72,7 @@ GoRouter buildRouter(EffectivePaths paths) {
         routes: [
           GoRoute(
             path: '/o/:org/fila',
-            pageBuilder: (_, state) => _instant(state, QueuePage(org: state.pathParameters['org']!)),
+            pageBuilder: (_, state) => _instant(state, InboxHomePage(org: state.pathParameters['org']!)),
           ),
           GoRoute(path: '/o/:org/revisar', pageBuilder: (_, state) => _instant(state, const InboxPage())),
           GoRoute(

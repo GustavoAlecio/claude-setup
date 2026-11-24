@@ -3,9 +3,18 @@ import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-AttentionItem _pending(String id, int n) => AttentionItem(key: 'pending:$id:$n', title: 't', body: 'b', route: '/');
+AttentionItem _pending(String id, int n) => AttentionItem(
+  key: 'pending:$id:$n',
+  title: 't',
+  body: 'b',
+  route: '/',
+  kind: AttentionKind.request,
+  sessionId: id,
+  pending: n,
+);
 
-AttentionItem _blocked(String k) => AttentionItem(key: 'blocked:$k', title: 't', body: 'b', route: '/');
+AttentionItem _blocked(String k) =>
+    AttentionItem(key: 'blocked:$k', title: 't', body: 'b', route: '/', kind: AttentionKind.blocked);
 
 SessionSummary _session(String id, int pending) => SessionSummary(
   id: id,
