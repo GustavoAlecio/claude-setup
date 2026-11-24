@@ -3,6 +3,8 @@ import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/data/attention.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
+import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/data/report_models.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/mock_github_repository.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +20,24 @@ SessionSummary _s(String id, SessionStatus status, {int pending = 0, String? org
   createdAt: '2026-10-07T10:00:00Z',
   pendingPermissions: pending,
   org: org,
+);
+
+Project _gated(List<StageReport> stages, {bool current = true}) => Project(
+  name: 'demo-app',
+  cycle: Cycle(
+    stage: Stage.plan,
+    runs: const [],
+    stageMinutes: const {},
+    report: ReportDoc(feature: 'f', startedAt: null, stages: stages),
+    reportIsCurrent: current,
+  ),
+);
+
+StageReport _stage(Stage stage, String session, String gate, GateStatus status) => StageReport(
+  stage: stage,
+  status: ReportStatus.running,
+  sessionId: session,
+  gate: ReportGate(name: gate, status: status),
 );
 
 void main() {
@@ -126,5 +146,61 @@ void main() {
     expect(nextAttentionRoute(const [a, b], '/o/demo/fila'), a.route);
     expect(nextAttentionRoute(const [a, b], '/p/x/sessions/1'), b.route);
     expect(nextAttentionRoute(const [a, b], '/p/x/flow?stage=plan'), a.route);
+  });
+
+  group('gate open aponta para a tela do gate', () {
+    final waiting = [
+      _s('s-plan', SessionStatus.waitingPermission, pending: 1),
+      _s('s-spec', SessionStatus.waitingPermission, pending: 1),
+      _s('s-pr', SessionStatus.waitingPermission, pending: 1),
+      _s('s-none', SessionStatus.waitingPermission, pending: 1),
+    ];
+    final project = _gated([
+      _stage(Stage.challenge, 's-spec', 'spec', GateStatus.open),
+      _stage(Stage.plan, 's-plan', 'plan', GateStatus.open),
+      _stage(Stage.tasks, 's-none', 'tasks', GateStatus.approved),
+      _stage(Stage.complete, 's-pr', 'pr', GateStatus.open),
+    ]);
+
+    test('spec and plan gates route to the gate screen; pr and sessions without an open gate stay', () {
+      final items = pendingAttention(waiting, [project]);
+      expect(items.map((i) => i.route), [
+        '/p/demo-app/gate/plan',
+        '/p/demo-app/gate/spec',
+        '/p/demo-app/sessions/s-pr',
+        '/p/demo-app/sessions/s-none',
+      ]);
+      expect(items.map((i) => i.key), ['pending:s-plan:1', 'pending:s-spec:1', 'pending:s-pr:1', 'pending:s-none:1']);
+    });
+
+    test('the first stage of the session in pipeline order wins', () {
+      final items = pendingAttention(
+        [_s('s1', SessionStatus.waitingPermission, pending: 1)],
+        [
+          _gated([
+            _stage(Stage.challenge, 's1', 'spec', GateStatus.approved),
+            _stage(Stage.plan, 's1', 'plan', GateStatus.open),
+            _stage(Stage.tasks, 's1', 'tasks', GateStatus.open),
+          ]),
+        ],
+      );
+      expect(items.single.route, '/p/demo-app/gate/plan');
+    });
+
+    test('a report of another cycle routes to the session', () {
+      final items = pendingAttention(
+        [waiting.first],
+        [
+          _gated([_stage(Stage.plan, 's-plan', 'plan', GateStatus.open)], current: false),
+        ],
+      );
+      expect(items.single.route, '/p/demo-app/sessions/s-plan');
+    });
+
+    test('nextAttentionRoute from the gate screen goes to the next item', () {
+      final items = pendingAttention(waiting, [project]);
+      expect(nextAttentionRoute(items, '/p/demo-app/gate/plan'), '/p/demo-app/gate/spec');
+      expect(nextAttentionRoute(items, '/p/demo-app/gate/spec'), '/p/demo-app/sessions/s-pr');
+    });
   });
 }

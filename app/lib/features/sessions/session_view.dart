@@ -48,13 +48,17 @@ Color statusColor(AppColors c, SessionStatus s) => switch (s) {
 
 const _interruptible = {SessionStatus.starting, SessionStatus.running, SessionStatus.waitingPermission};
 
+/// What a feed shows in place of a question's card; `null` keeps the card.
+typedef RequestOverride = Widget? Function(SessionDetail detail, QuestionRequest request);
+
 /// One session's detail: header (status, mode, Interromper), the feed with answerable cards, and the composer.
 /// Shared by Sessões and the Fluxo side panel; owns the session's stream.
 class SessionPanel extends StatelessWidget {
-  const SessionPanel({super.key, required this.session});
+  const SessionPanel({super.key, required this.session, this.requestOverride});
 
   /// List entry: shown until the session stream delivers its first detail.
   final SessionSummary session;
+  final RequestOverride? requestOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +66,7 @@ class SessionPanel extends StatelessWidget {
     return BlocProvider(
       key: ValueKey(session.id),
       create: (_) => SessionCubit(sessions, session.id),
-      child: _SessionBody(session: session),
+      child: _SessionBody(session: session, requestOverride: requestOverride),
     );
   }
 }
@@ -91,9 +95,10 @@ class LiveSessionSummary extends StatelessWidget {
 }
 
 class _SessionBody extends StatelessWidget {
-  const _SessionBody({required this.session});
+  const _SessionBody({required this.session, required this.requestOverride});
 
   final SessionSummary session;
+  final RequestOverride? requestOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -135,15 +140,17 @@ class _SessionBody extends StatelessWidget {
               for (final e in events)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: SessionEventView(
-                    e,
-                    onAnswer: answer,
-                    onLink: agy ? onLink : null,
-                    attachmentUri: (name) => sessions.attachmentUri(s.id, name),
-                    failureActions: identical(e, events.last) && s.status == SessionStatus.idle
-                        ? _FailureActions(session: s)
-                        : null,
-                  ),
+                  child:
+                      (e is QuestionRequest && detail != null ? requestOverride?.call(detail, e) : null) ??
+                      SessionEventView(
+                        e,
+                        onAnswer: answer,
+                        onLink: agy ? onLink : null,
+                        attachmentUri: (name) => sessions.attachmentUri(s.id, name),
+                        failureActions: identical(e, events.last) && s.status == SessionStatus.idle
+                            ? _FailureActions(session: s)
+                            : null,
+                      ),
                 ),
               if (partialThinking.isNotEmpty)
                 Padding(padding: const EdgeInsets.only(bottom: 12), child: Muted('pensando… $partialThinking')),

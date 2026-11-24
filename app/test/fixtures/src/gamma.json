@@ -560,6 +560,147 @@
       "cmd": "import-run",
       "stage": "verify",
       "run": "verify-20260310T113000Z"
+    },
+    {
+      "cmd": "brief",
+      "name": "plan",
+      "file": {
+        "summary": "Plano em duas tasks, com a tela gamma atrás de um repositório novo.",
+        "artifact": "plan.md",
+        "risks": [
+          {
+            "id": "R1",
+            "text": "A tela depende de um contrato ainda não publicado.",
+            "source": "critic"
+          },
+          {
+            "id": "R2",
+            "text": "Sem teste de regressão para a rota antiga.",
+            "source": "author"
+          }
+        ],
+        "questions": [
+          {
+            "id": "Q1",
+            "text": "Onde guardar o estado da tela gamma?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            }
+          },
+          {
+            "id": "Q2",
+            "text": "A rota nova substitui a antiga?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            }
+          },
+          {
+            "id": "Q3",
+            "text": "O repositório lê do disco a cada abertura?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            }
+          },
+          {
+            "id": "Q4",
+            "text": "Cobrir o modo offline nesta entrega?",
+            "options": [
+              {
+                "id": "a",
+                "label": "Opção A",
+                "consequence": "Segue o caminho mais simples."
+              },
+              {
+                "id": "b",
+                "label": "Opção B",
+                "consequence": "Custa mais e cobre mais casos."
+              }
+            ],
+            "assumed": "a",
+            "prefers": {
+              "author": "a",
+              "critic": "b"
+            }
+          }
+        ]
+      },
+      "candidates": [
+        {
+          "id": "Q1",
+          "text": "Onde guardar o estado da tela gamma?"
+        },
+        {
+          "id": "Q5",
+          "text": "Migrar os dados antigos?"
+        }
+      ]
+    },
+    {
+      "cmd": "show",
+      "name": "plan",
+      "save": true
+    },
+    {
+      "cmd": "brief",
+      "name": "spec",
+      "file": {
+        "summary": "Spec com dois critérios de aceite e nenhuma decisão em aberto.",
+        "artifact": "spec.md"
+      }
+    },
+    {
+      "cmd": "brief",
+      "name": "tasks",
+      "file": {
+        "summary": "Duas tasks ordenadas, sem decisão pendente.",
+        "artifact": "tasks.md"
+      }
+    },
+    {
+      "cmd": "gate",
+      "name": "tasks"
     }
   ]
 }

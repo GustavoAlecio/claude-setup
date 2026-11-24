@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/flow_aggregates.dart';
 import '../../data/models.dart';
 import '../../data/report_models.dart';
 import '../../data/session_models.dart';
@@ -9,6 +10,7 @@ import '../launcher/command_palette.dart';
 import '../launcher/kickoff_form.dart';
 import '../sessions/session_view.dart';
 import 'awaiting_panel.dart';
+import 'flow_panels.dart';
 
 /// Fluxo width from which it shows the side panel next to the timeline; below it the panel is a drawer.
 const kFlowSplitWidth = 1200.0;
@@ -38,6 +40,7 @@ class FlowSidePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = this.session;
+    final gates = gateReport(project?.cycle);
     return LayoutBuilder(
       key: const ValueKey('flow-side-panel'),
       builder: (context, constraints) => Column(
@@ -48,13 +51,13 @@ class FlowSidePanel extends StatelessWidget {
             constraints: BoxConstraints(maxHeight: constraints.maxHeight * (session == null ? 0.7 : 0.45)),
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: AwaitingPanel(projectName: projectName, report: report, shownSessionId: session?.id),
+              child: AwaitingPanel(projectName: projectName, report: report, gates: gates, shownSessionId: session?.id),
             ),
           ),
           Expanded(
             child: session == null
                 ? _NoSession(project: project, orphanStage: orphanStage)
-                : SessionPanel(session: session),
+                : SessionPanel(session: session, requestOverride: gateRequestOverride(gates)),
           ),
         ],
       ),

@@ -227,6 +227,195 @@ void main() {
     });
   });
 
+  group('gate no relatório', () {
+    test('bloco do plan da fixture gamma (wf-report.py real)', () {
+      final doc = parseReport(_fixture('gamma/report.json'))!;
+      final gate = doc.stage(Stage.plan)!.gate!;
+
+      expect(gate.name, 'plan');
+      expect(gate.status, GateStatus.open);
+      expect(gate.round, 1);
+      expect(gate.summary, isNotEmpty);
+      expect(gate.artifact, 'plan.md');
+      expect([for (final r in gate.risks) (r.id, r.source)], [('R1', 'critic'), ('R2', 'author')]);
+      expect([for (final q in gate.questions) q.id], ['Q1', 'Q2', 'Q3']);
+      final q1 = gate.questions.first;
+      expect(q1.text, 'Onde guardar o estado da tela gamma?');
+      expect([for (final o in q1.options) (o.id, o.label)], [('a', 'Opção A'), ('b', 'Opção B')]);
+      expect(q1.options.first.consequence, isNotEmpty);
+      expect(q1.assumed, 'a');
+      expect(q1.prefers, {'author': 'a', 'critic': 'b'});
+      expect(q1.answer, isNull);
+      expect([for (final c in gate.cut) c.id], ['Q5']);
+      expect(gate.omitted.questions, greaterThan(0));
+      expect(gate.history, isEmpty);
+      expect(gate.answer, isNull);
+    });
+
+    test('spec mora na etapa challenge e tasks passou', () {
+      final doc = parseReport(_fixture('gamma/report.json'))!;
+
+      expect(doc.stage(Stage.challenge)!.gate!.name, 'spec');
+      expect(doc.stage(Stage.challenge)!.gate!.questions, isEmpty);
+      expect(doc.stage(Stage.tasks)!.gate!.status, GateStatus.passed);
+    });
+
+    test('rodada 2 do alpha traz history com a resposta e changes', () {
+      final gate = parseReport(_fixture('alpha/report.json'))!.stage(Stage.challenge)!.gate!;
+
+      expect(gate.round, 2);
+      expect(gate.changes, ['Tela de detalhe incluída no escopo.']);
+      expect(gate.history.single.round, 1);
+      expect(gate.history.single.questions.single.answer!.optionId, 'b');
+    });
+
+    test('history: ajuste em texto de rodada sem perguntas é lido; answer malformado não derruba a rodada', () {
+      final gate = parseReport(
+        _report([
+          _stage(
+            'plan',
+            extra: {
+              'gate': {
+                'name': 'plan',
+                'status': 'open',
+                'round': 3,
+                'history': [
+                  {
+                    'round': 1,
+                    'questions': <Object>[],
+                    'answer': {'text': 'separar a migração'},
+                  },
+                  {
+                    'round': 2,
+                    'questions': <Object>[],
+                    'answer': {'text': 7},
+                  },
+                ],
+              },
+            },
+          ),
+        ]),
+      )!.stage(Stage.plan)!.gate!;
+
+      expect(gate.history.map((h) => h.round), [1, 2]);
+      expect(gate.history.first.answer!.text, 'separar a migração');
+      expect(gate.history.first.answer!.optionId, isNull);
+      expect(gate.history.last.answer, isNull);
+      expect(gate.history.last.questions, isEmpty);
+    });
+
+    test('respostas: opção, opção com texto e texto livre', () {
+      final doc = parseReport(
+        _report([
+          _stage(
+            'complete',
+            extra: {
+              'gate': {
+                'name': 'pr',
+                'status': 'revising',
+                'answer': {'text': 'ajuste geral'},
+                'questions': [
+                  {'id': 'Q1', 'text': 'a', 'header': 'Rota', 'answer': 'ok'},
+                  {'id': 'Q2', 'text': 'b', 'answer': 'change', 'answer_text': 'trocar', 'why': 'x', 'anchor': {}},
+                  {
+                    'id': 'Q3',
+                    'text': 'c',
+                    'answer': {'text': 'livre'},
+                  },
+                ],
+              },
+            },
+          ),
+        ]),
+      )!;
+      final gate = doc.stage(Stage.complete)!.gate!;
+
+      expect(gate.answer!.text, 'ajuste geral');
+      expect(gate.questions[0].header, 'Rota');
+      expect((gate.questions[0].answer!.optionId, gate.questions[0].answer!.text), ('ok', null));
+      expect((gate.questions[1].answer!.optionId, gate.questions[1].answer!.text), ('change', 'trocar'));
+      expect((gate.questions[2].answer!.optionId, gate.questions[2].answer!.text), (null, 'livre'));
+    });
+
+    for (final (label, gate) in <(String, Object?)>[
+      ('sem name', {'status': 'open'}),
+      ('status desconhecido', {'name': 'plan', 'status': 'pending'}),
+      ('não é objeto', 'open'),
+      (
+        'itens com tipos errados',
+        {
+          'name': 'plan',
+          'status': 'open',
+          'round': '2',
+          'risks': [
+            1,
+            {'id': 'R1'},
+          ],
+          'questions': [
+            {'id': 'Q1'},
+            {
+              'id': 'Q2',
+              'text': 't',
+              'options': [
+                {'id': 'a'},
+                3,
+              ],
+              'prefers': ['a'],
+              'answer': 5,
+            },
+          ],
+          'history': [
+            {'round': 'x'},
+          ],
+          'cut': [
+            {'id': 1, 'text': 't'},
+          ],
+          'omitted': 'muitas',
+          'changes': [1, 'ok'],
+        },
+      ),
+    ]) {
+      test('gate malformado ($label): etapa continua lida', () {
+        final doc = parseReport(
+          _report([
+            _stage('plan', status: 'running', extra: {'summary_md': 'resumo', 'session_id': 's1', 'gate': gate}),
+          ]),
+        )!;
+        final stage = doc.stage(Stage.plan)!;
+
+        expect(stage.status, ReportStatus.running);
+        expect(stage.summaryMd, 'resumo');
+        expect(stage.sessionId, 's1');
+        if (label != 'itens com tipos errados') {
+          expect(stage.gate, isNull);
+          return;
+        }
+        final g = stage.gate!;
+        expect(g.round, 1);
+        expect(g.risks, isEmpty);
+        expect(g.questions.single.id, 'Q2');
+        expect(g.questions.single.options, isEmpty);
+        expect(g.questions.single.prefers, isEmpty);
+        expect(g.questions.single.answer, isNull);
+        expect(g.history, isEmpty);
+        expect(g.cut, isEmpty);
+        expect(g.omitted.questions, 0);
+        expect(g.changes, ['ok']);
+      });
+    }
+
+    test('reportIsCurrent: verdadeiro só para o relatório do próprio ciclo', () {
+      final report = parseReport(_fixture('gamma/report.json'))!;
+      final current = jsonDecode(_fixture('gamma/current.json')) as Map<String, dynamic>;
+      final other = {...current, 'start_date': '2026-05-01T08:00:00Z'};
+
+      expect(parseCycle(current, projectName: 'gamma', report: report).reportIsCurrent, isTrue);
+      expect(parseCycle(other, projectName: 'gamma', report: report).reportIsCurrent, isFalse);
+      expect(parseCycle(current, projectName: 'gamma').reportIsCurrent, isFalse);
+      expect(const Cycle(stage: Stage.plan, runs: [], stageMinutes: {}).reportIsCurrent, isFalse);
+    });
+  });
+
   group('fechamento do ciclo (qa, real_data, pr)', () {
     String closing(Map<String, Object?> extra) => jsonEncode({
       'version': 1,

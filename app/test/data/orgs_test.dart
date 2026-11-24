@@ -113,6 +113,22 @@ void main() {
     });
   });
 
+  group('gateBackTarget', () {
+    const config = DashboardConfig(lastOrg: 'B');
+    const projects = [Project(name: 'x', org: 'B'), Project(name: 'y', org: 'B'), Project(name: 'a', org: 'A')];
+
+    test('goes back to the shell route the gate was opened from', () {
+      expect(gateBackTarget('x', '/p/x/runs', config, projects), '/p/x/runs');
+      expect(gateBackTarget('x', '/o/B/fila', config, projects), '/o/B/fila');
+    });
+
+    test('the landing or another project goes to the project Fluxo', () {
+      expect(gateBackTarget('x', '/', config, projects), '/p/x/flow');
+      expect(gateBackTarget('x', '/p/y/sessions', config, projects), '/p/x/flow');
+      expect(gateBackTarget('x', '/p/a/runs', config, projects), '/p/x/flow');
+    });
+  });
+
   group('orgOf', () {
     test('explicit org wins over the path', () {
       expect(orgOf('/Users/me/development/r10/score', explicit: 'abm', orgs: _orgs, canonical: _identity), 'abm');
@@ -921,6 +937,13 @@ void main() {
       expect(isShellLocation('/p'), isFalse);
       expect(isShellLocation('/settings'), isFalse);
       expect(isShellLocation('/about'), isFalse);
+    });
+
+    test('isShellLocation gate: the gate screen lives outside the shell', () {
+      expect(isShellLocation('/p/x/gate/plan'), isFalse);
+      expect(isShellLocation('/p/x/gate/pr'), isFalse);
+      expect(isShellLocation('/p/x/runs'), isTrue);
+      expect(isShellLocation('/p/gate'), isTrue);
     });
 
     test('orgConfigOf finds a configured org only', () {

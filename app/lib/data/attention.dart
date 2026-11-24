@@ -21,6 +21,16 @@ String sessionRoute(SessionSummary s) =>
 
 String _where(SessionSummary s) => s.isOrgSession ? s.org! : s.project;
 
+/// A session stopped on an open spec, plan or tasks gate is answered on the gate screen; the `pr` gate and any other
+/// request stay in the session.
+String _pendingRoute(SessionSummary s, List<Project> projects) {
+  if (!s.isOrgSession) {
+    final report = gateReport(projects.where((p) => p.name == s.project).firstOrNull?.cycle);
+    if (sessionGate(report, s.id) case final gate?) return gateLocation(s.project, gate.name);
+  }
+  return sessionRoute(s);
+}
+
 /// What is waiting on the user right now: sessions with pending requests and projects stopped on a decision.
 List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project> projects) => [
   for (final s in sessions)
@@ -29,7 +39,7 @@ List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project
         key: 'pending:${s.id}:${s.pendingPermissions}',
         title: 'Aguardando você · ${_where(s)}',
         body: s.title,
-        route: sessionRoute(s),
+        route: _pendingRoute(s, projects),
       ),
   for (final p in projects)
     if (!p.hidden)

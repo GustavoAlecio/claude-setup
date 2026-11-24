@@ -967,15 +967,18 @@ class _OrgFormState extends State<OrgForm> {
         },
         if (kind != null) ...[
           const SizedBox(height: 6),
-          CheckboxListTile(
-            key: const ValueKey('org-tracker-release'),
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            value: _releaseBase,
-            onChanged: _busy ? null : (v) => setState(() => _releaseBase = v ?? false),
-            title: const Text('Branch a partir da última release/*', style: TextStyle(fontSize: 13)),
-            subtitle: const Muted('desmarcado: a branch padrão do remoto', size: 11),
+          Material(
+            type: MaterialType.transparency,
+            child: CheckboxListTile(
+              key: const ValueKey('org-tracker-release'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: _releaseBase,
+              onChanged: _busy ? null : (v) => setState(() => _releaseBase = v ?? false),
+              title: const Text('Branch a partir da última release/*', style: TextStyle(fontSize: 13)),
+              subtitle: const Muted('desmarcado: a branch padrão do remoto', size: 11),
+            ),
           ),
           Muted(switch (kind) {
             TrackerKind.ado => 'PAT em ~/.claude/.ado_pat ou AZURE_DEVOPS_EXT_PAT',
