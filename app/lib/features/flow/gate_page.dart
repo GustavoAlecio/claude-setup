@@ -23,6 +23,7 @@ import '../reviews/reviews_diff.dart';
 import '../sessions/session_cubit.dart';
 import '../sessions/session_view.dart';
 import 'gate_diff.dart';
+import 'gate_map.dart';
 import 'report_extras.dart';
 
 const _kMinTarget = 44.0;
@@ -149,6 +150,7 @@ class _GatePageState extends State<GatePage> {
         key: const ValueKey('gate-summary'),
         style: TextStyle(fontSize: 14, height: 1.5, color: context.colors.textPrimary),
       ),
+      if (gate.map case final map?) ..._mapSections(map, sessionId == null ? null : detail?.summary),
       if (gate.risks.isNotEmpty) ...[const SizedBox(height: 20), _Risks(gate.risks)],
       if (gate.round >= 2) ..._previousRound(gate),
     ];
@@ -222,6 +224,114 @@ class _GatePageState extends State<GatePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.go(target);
     });
+  }
+
+  /// The map, then the ways to do it and their trade-offs on a plan map. [session] is the stage's session once its
+  /// detail arrived: only then the side question is offered.
+  List<Widget> _mapSections(GateMap map, SessionSummary? session) {
+    final c = context.colors;
+    final legend = mapLegend(map);
+    final diff = map.built ? builtDiffNodes(map) : const <MapNode>[];
+    final same = map.built ? builtSameLine(map) : null;
+    final approaches = [...map.approaches.where((a) => a.chosen), ...map.approaches.where((a) => !a.chosen)];
+    return [
+      const SizedBox(height: 20),
+      _Section(
+        key: const ValueKey('gate-map'),
+        title: map.built ? 'O que foi construído' : 'Como isso vai ser construído',
+        children: [
+          if (map.summary.isNotEmpty) ...[
+            Text(map.summary, style: TextStyle(fontSize: 13, height: 1.45, color: c.textPrimary)),
+            const SizedBox(height: 14),
+          ],
+          GateMapView(map: map),
+          if (map.edges.any((e) => e.label?.isNotEmpty ?? false)) ...[
+            const SizedBox(height: 12),
+            GateMapEdgeList(map: map),
+          ],
+          if (legend.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              key: const ValueKey('gate-map-legend'),
+              spacing: 16,
+              runSpacing: 6,
+              children: [for (final item in legend) _LegendItem(word: item.word, color: mapToneColor(c, item.tone))],
+            ),
+          ],
+          if (diff.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Column(
+              key: const ValueKey('gate-map-diff'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Muted('Diferente do plano', size: 11),
+                const SizedBox(height: 6),
+                for (final n in diff)
+                  _Bullet(
+                    [
+                      n.label,
+                      ?mapNodeLook(n).word,
+                      if (n.files.isNotEmpty) countLabel(n.files.length, 'arquivo'),
+                    ].join(' · '),
+                  ),
+              ],
+            ),
+          ],
+          if (same != null) ...[
+            const SizedBox(height: 10),
+            Column(
+              key: const ValueKey('gate-map-same'),
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Muted('Igual ao plano', size: 11),
+                const SizedBox(height: 6),
+                Text(same, style: TextStyle(fontSize: 13, color: c.textPrimary)),
+              ],
+            ),
+          ],
+          if (session != null && session.canAskAside)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                key: const ValueKey('gate-map-talk'),
+                style: TextButton.styleFrom(foregroundColor: c.textSecondary, minimumSize: const Size(0, _kMinTarget)),
+                onPressed: () => unawaited(showAsideQuestion(context, session)),
+                child: const Text('não entendi, quero perguntar', style: TextStyle(fontSize: 12.5)),
+              ),
+            )
+          else
+            const SizedBox(height: 8),
+        ],
+      ),
+      if (approaches.isNotEmpty) ...[
+        const SizedBox(height: 20),
+        _Section(
+          key: const ValueKey('gate-map-approaches'),
+          title: 'Formas de fazer',
+          children: [for (final a in approaches) _ApproachRow(approach: a)],
+        ),
+      ],
+      if (map.gains.isNotEmpty || map.costs.isNotEmpty) ...[
+        const SizedBox(height: 20),
+        _Section(
+          key: const ValueKey('gate-map-tradeoffs'),
+          title: 'O que você ganha e o que abre mão',
+          children: [
+            if (map.gains.isNotEmpty) ...[
+              const Muted('Ganha', size: 11.5),
+              const SizedBox(height: 4),
+              for (final g in map.gains) _Bullet(g),
+            ],
+            if (map.costs.isNotEmpty) ...[
+              if (map.gains.isNotEmpty) const SizedBox(height: 6),
+              const Muted('Abre mão', size: 11.5),
+              const SizedBox(height: 4),
+              for (final cost in map.costs) _Bullet(cost),
+            ],
+          ],
+        ),
+      ],
+    ];
   }
 
   List<Widget> _previousRound(ReportGate gate) {
@@ -548,6 +658,66 @@ class _Bullet extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: 6),
     child: Text('· $text', style: TextStyle(fontSize: 13, color: context.colors.textPrimary)),
   );
+}
+
+class _LegendItem extends StatelessWidget {
+  const _LegendItem({required this.word, required this.color});
+
+  final String word;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 12,
+        height: 12,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: color, width: 1.5),
+        ),
+      ),
+      const SizedBox(width: 6),
+      Text(word, style: TextStyle(fontSize: 12, color: context.colors.textSecondary)),
+    ],
+  );
+}
+
+class _ApproachRow extends StatelessWidget {
+  const _ApproachRow({required this.approach});
+
+  final MapApproach approach;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  approach.label,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.textPrimary),
+                ),
+                const SizedBox(height: 2),
+                Text(approach.text, style: TextStyle(fontSize: 12.5, height: 1.4, color: c.textSecondary)),
+              ],
+            ),
+          ),
+          if (approach.chosen) ...[
+            const SizedBox(width: 10),
+            Pill(label: 'escolhida', color: c.textSecondary, dot: false),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _Notice extends StatelessWidget {

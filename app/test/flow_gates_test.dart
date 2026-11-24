@@ -248,7 +248,7 @@ Project _deltaProject({required String tasks, required String pr}) {
   tasksStage['session_id'] = 's-tasks';
   (tasksStage['gate'] as Map<String, dynamic>)['status'] = tasks;
   final stages = (doc['stages'] as List).cast<Map<String, dynamic>>();
-  (stages.single['gate'] as Map<String, dynamic>)['status'] = pr;
+  (stages.firstWhere((s) => s['stage'] == 'complete')['gate'] as Map<String, dynamic>)['status'] = pr;
   doc['stages'] = [tasksStage, ...stages];
   return Project(
     name: _delta,

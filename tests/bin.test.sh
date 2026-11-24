@@ -1840,4 +1840,23 @@ ADRT=$(tmp); cp -R "$DOCS_ROOT/docs/adr" "$ADRT/adr"; mkdir -p "$ADRT/docs"; mv 
 python3 "$BIN/adr-index.py" reindex "$ADRT" >/dev/null || fail "reindex on a copy"
 cmp -s "$ADRT/docs/adr/INDEX.md" "$DOCS_ROOT/docs/adr/INDEX.md" || fail "docs/adr/INDEX.md is not what reindex writes"
 
+echo "- gen.sh: a project with repo whose gate pr has no map fails (sandbox, never the committed fixtures)"
+T=$(tmp); G="$T/app/test/fixtures"; mkdir -p "$G/src"
+cp "$DOCS_ROOT/app/test/fixtures/gen.sh" "$G/gen.sh"
+ln -s "$DOCS_ROOT/bin" "$T/bin"; ln -s "$DOCS_ROOT/stacks" "$T/stacks"
+cat > "$G/src/semmapa.json" <<'JSON'
+{"current": {"feature": "Sem mapa", "start_date": "2026-03-12T08:00:00Z", "exec": {}},
+ "runs": [],
+ "repo": {"base": {"lib/a.dart": "a\n"}, "tree": {"lib/a.dart": "b\n"}},
+ "files": {"pr.diff": ""},
+ "report": [
+  {"cmd": "stage-start", "stage": "plan"},
+  {"cmd": "brief", "name": "plan", "file": {"summary": "Plano sem mapa.", "artifact": "plan.md"}},
+  {"cmd": "stage-start", "stage": "complete"},
+  {"cmd": "brief", "name": "pr", "file": {"summary": "PR sem mapa.", "artifact": "pr.diff"}}
+ ]}
+JSON
+bash "$G/gen.sh" >/dev/null 2>"$T/err" && fail "gen.sh with repo and no map must fail"
+grep -q "semmapa.json tem repo e o gate pr ficou sem map" "$T/err" || fail "gen.sh guard message: $(cat "$T/err")"
+
 echo "OK"

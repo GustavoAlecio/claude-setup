@@ -2,6 +2,8 @@
 # Regenerates workflow/, projects/ and stacks/ from src/*.json and src/history/*.json using the real `wf-event.py persist`
 # and `wf-report.py` (the optional "report" steps of a project or history cycle; a `brief` step may carry `tree`,
 # and a project may carry `files`, a name -> text map written into workflow/<project>/).
+# A project's `repo` {base, tree} (path -> text maps) becomes two trees of a throwaway git repo: base goes to
+# exec.base_checkpoint, tree and the repo to `brief pr`, and the script fails if that gate pr has no map.
 # `--check` regenerates into a tmp dir and fails on any diff against the committed output.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -30,14 +32,23 @@ rm -rf "$OUT/workflow" "$OUT/projects" "$OUT/stacks" "$OUT/show"
 mkdir -p "$OUT/workflow" "$OUT/projects" "$OUT/stacks" "$OUT/show"
 cp "$REPO/stacks/flutter.json" "$OUT/stacks/flutter.json"
 
-HOME="$SHIM" python3 - "$HERE/src" "$OUT/workflow" "$REPO/bin/wf-event.py" "$OUT/projects" "$REPO/bin/wf-report.py" "$OUT/show" <<'PY'
+HOME="$SHIM" python3 - "$HERE/src" "$OUT/workflow" "$REPO/bin/wf-event.py" "$OUT/projects" "$REPO/bin/wf-report.py" "$OUT/show" "$REPO/bin/wf-checkpoint.sh" <<'PY'
 import json, os, subprocess, sys, tempfile
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# A hook or gate exports GIT_DIR/GIT_INDEX_FILE (git would act on the real repo), CLAUDE_FLOW_SESSION_ID becomes the
+# default stage session, and a global excludesFile/autocrlf would change the tree hashes.
+for key in [k for k in os.environ if k.startswith("GIT_")] + ["CLAUDE_FLOW_SESSION_ID"]:
+    os.environ.pop(key, None)
+os.environ["GIT_CONFIG_GLOBAL"] = "/dev/null"
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
 
 src, out, persist, projects = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
 report_script = sys.argv[5]
 show_dir = Path(sys.argv[6])
+checkpoint_script = sys.argv[7]
 
 def dump(path, obj):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +63,23 @@ def run_persist(run_dir, workflow_dir, result):
         check=True, stdout=subprocess.DEVNULL)
     os.unlink(tmp.name)
 
-def run_report(wf, steps, project=None):
+def checkpoint(repo, files, old=()):
+    for rel in old:
+        (repo / rel).unlink()
+    for rel, text in files.items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(text)
+    done = subprocess.run(["bash", checkpoint_script, "create", str(repo)], check=True, stdout=subprocess.PIPE, text=True)
+    return done.stdout.strip()
+
+def build_repo(repo, spec):
+    """(dir, base, tree): both trees of a project's `repo` key as git tree objects in a throwaway repo."""
+    subprocess.run(["git", "-c", "init.defaultBranch=main", "init", "-q", str(repo)], check=True)
+    base = checkpoint(repo, spec["base"])
+    tree = checkpoint(repo, spec["tree"], old=spec["base"])
+    return str(repo), base, tree
+
+def run_report(wf, steps, project=None, repo=None):
     """Runs wf-report.py steps against `wf` (which holds current.json) and pins the wall-clock stamps."""
     with tempfile.TemporaryDirectory() as scratch:
         for i, step in enumerate(steps):
@@ -95,8 +122,12 @@ def run_report(wf, steps, project=None):
                 cmd += ["--url", step["pr_url"]]
             if "file" in step:
                 cmd += ["--file", text_file("brief.json", json.dumps(step["file"], ensure_ascii=False))]
-            if "tree" in step:
-                cmd += ["--tree", "@" + text_file("tree.txt", step["tree"] + "\n")]
+            built = repo is not None and step["cmd"] == "brief" and step.get("name") == "pr"
+            tree = repo[2] if built else step.get("tree")
+            if tree:
+                cmd += ["--tree", "@" + text_file("tree.txt", tree + "\n")]
+            if built:
+                cmd += ["--repo", repo[0]]
             if "candidates" in step:
                 cmd += ["--candidates", text_file("candidates.json", json.dumps(step["candidates"], ensure_ascii=False))]
             if "question" in step:
@@ -133,21 +164,33 @@ for f in sorted(src.glob("*.json")):
         (out / "auto_mode.flag").write_text(spec["auto_mode"])
         continue
     proj = out / f.stem
-    dump(proj / "current.json", spec["current"])
-    for run in spec["runs"]:
-        run_dir = proj / "runs" / run["id"]
-        run_dir.mkdir(parents=True, exist_ok=True)
-        if run.get("events") is not None:
-            lines = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in run["events"])
-            (run_dir / "events.jsonl").write_text(lines + run.get("events_tail_raw", ""))
-        if run.get("result") is not None:
-            run_persist(run_dir, proj, run["result"])
-        if run.get("result_raw") is not None:
-            (run_dir / "result.json").write_text(run["result_raw"])
-    for name, text in spec.get("files", {}).items():
-        (proj / name).write_text(text)
-    if spec.get("report"):
-        run_report(proj, spec["report"], f.stem)
+    with ExitStack() as scope:
+        repo = None
+        if "repo" in spec:
+            # `brief pr` runs `git diff` in this repo, so it lives until the project's report is done.
+            repo = build_repo(Path(scope.enter_context(tempfile.TemporaryDirectory())), spec["repo"])
+            spec["current"].setdefault("exec", {})["base_checkpoint"] = repo[1]
+        dump(proj / "current.json", spec["current"])
+        for run in spec["runs"]:
+            run_dir = proj / "runs" / run["id"]
+            run_dir.mkdir(parents=True, exist_ok=True)
+            if run.get("events") is not None:
+                lines = "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in run["events"])
+                (run_dir / "events.jsonl").write_text(lines + run.get("events_tail_raw", ""))
+            if run.get("result") is not None:
+                run_persist(run_dir, proj, run["result"])
+            if run.get("result_raw") is not None:
+                (run_dir / "result.json").write_text(run["result_raw"])
+        for name, text in spec.get("files", {}).items():
+            (proj / name).write_text(text)
+        if spec.get("report"):
+            run_report(proj, spec["report"], f.stem, repo)
+    if repo is not None:
+        stages = json.loads((proj / "report.json").read_text())["stages"]
+        gate = next((s.get("gate") for s in stages if s["stage"] == "complete"), None)
+        if not isinstance(gate, dict) or not isinstance(gate.get("map"), dict):
+            sys.exit(f"gen.sh: {f.name} tem repo e o gate pr ficou sem map "
+                     "(confira o map do brief plan e as árvores base/tree)")
     (proj / ".current.json.lock").unlink(missing_ok=True)
     for t in (proj / "runs").glob("*/trace.jsonl"):
         t.unlink()

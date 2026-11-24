@@ -6,10 +6,105 @@
   },
   "stages": [
     {
+      "stage": "plan",
+      "status": "done",
+      "attempt": 1,
+      "started_at": "2026-03-10T07:00:00Z",
+      "summary_md": "Plano do delta aprovado.",
+      "decisions": [],
+      "findings": [],
+      "artifacts": [
+        "plan.md"
+      ],
+      "run_ids": [],
+      "gate": {
+        "name": "plan",
+        "round": 1,
+        "status": "approved",
+        "summary": "A view do delta passa a ler um repositório novo, que substitui o legado.",
+        "risks": [],
+        "questions": [],
+        "history": [],
+        "changes": [],
+        "cut": [],
+        "omitted": {
+          "risks": 0,
+          "questions": 0,
+          "candidates": 0
+        },
+        "artifact": "plan.md",
+        "map": {
+          "summary": "A view consome o repositório novo; um cache fica para depois do primeiro uso.",
+          "nodes": [
+            {
+              "id": "view",
+              "label": "View do delta",
+              "state": "changed",
+              "paths": [
+                "lib/delta/view.dart"
+              ]
+            },
+            {
+              "id": "repositorio",
+              "label": "Repositório do delta",
+              "state": "new",
+              "paths": [
+                "lib/delta/repository.dart",
+                "lib/delta/legacy.dart"
+              ]
+            },
+            {
+              "id": "cache",
+              "label": "Cache de contagem",
+              "state": "new",
+              "paths": [
+                "lib/delta/cache/**"
+              ]
+            },
+            {
+              "id": "rotas",
+              "label": "Rotas do app",
+              "state": "existing",
+              "paths": [
+                "lib/app/**"
+              ]
+            },
+            {
+              "id": "tema",
+              "label": "Tema compartilhado",
+              "state": "existing",
+              "paths": [
+                "lib/core/**"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "from": "rotas",
+              "to": "view"
+            },
+            {
+              "from": "view",
+              "to": "repositorio"
+            },
+            {
+              "from": "repositorio",
+              "to": "cache"
+            },
+            {
+              "from": "view",
+              "to": "tema"
+            }
+          ]
+        }
+      },
+      "ended_at": "2026-03-10T07:10:00Z"
+    },
+    {
       "stage": "complete",
       "status": "running",
       "attempt": 1,
-      "started_at": "2026-03-10T07:00:00Z",
+      "started_at": "2026-03-10T07:15:00Z",
       "summary_md": "",
       "decisions": [],
       "findings": [],
@@ -83,8 +178,97 @@
           "candidates": 0
         },
         "artifact": "pr.diff",
-        "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        "base": "a01ca45fe7117b1e0e5b91e8196b58a63f90405e",
+        "tree": "440b701a591903822b94ec6c6561fe2ba917e22e",
+        "map": {
+          "summary": "2 como planejado, 1 fora do plano, 1 sem tocar.",
+          "nodes": [
+            {
+              "id": "view",
+              "label": "View do delta",
+              "state": "changed",
+              "built": "planned",
+              "files": [
+                "lib/delta/view.dart"
+              ],
+              "paths": [
+                "lib/delta/view.dart"
+              ]
+            },
+            {
+              "id": "repositorio",
+              "label": "Repositório do delta",
+              "state": "new",
+              "built": "planned",
+              "files": [
+                "lib/delta/legacy.dart",
+                "lib/delta/repository.dart"
+              ],
+              "paths": [
+                "lib/delta/repository.dart",
+                "lib/delta/legacy.dart"
+              ]
+            },
+            {
+              "id": "cache",
+              "label": "Cache de contagem",
+              "state": "new",
+              "built": "untouched",
+              "files": [],
+              "paths": [
+                "lib/delta/cache/**"
+              ]
+            },
+            {
+              "id": "rotas",
+              "label": "Rotas do app",
+              "state": "existing",
+              "built": "existing",
+              "files": [],
+              "paths": [
+                "lib/app/**"
+              ]
+            },
+            {
+              "id": "tema",
+              "label": "Tema compartilhado",
+              "state": "existing",
+              "built": "touched",
+              "files": [
+                "lib/core/theme.dart"
+              ],
+              "paths": [
+                "lib/core/**"
+              ]
+            },
+            {
+              "id": "unplanned:lib/shared",
+              "label": "lib/shared",
+              "built": "unplanned",
+              "files": [
+                "lib/shared/format.dart"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "from": "rotas",
+              "to": "view"
+            },
+            {
+              "from": "view",
+              "to": "repositorio"
+            },
+            {
+              "from": "repositorio",
+              "to": "cache"
+            },
+            {
+              "from": "view",
+              "to": "tema"
+            }
+          ]
+        }
       }
     }
   ]

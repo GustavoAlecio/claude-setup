@@ -664,7 +664,88 @@
               "critic": "b"
             }
           }
-        ]
+        ],
+        "map": {
+          "summary": "Um atalho existente leva à tela nova, que lê as métricas por um estado próprio.",
+          "nodes": [
+            {
+              "id": "atalho",
+              "label": "Atalho na barra lateral",
+              "state": "existing",
+              "note": "Já leva a outras telas; ganha mais um destino."
+            },
+            {
+              "id": "tela",
+              "label": "Tela de métricas da semana",
+              "state": "new",
+              "note": "Mostra os números sem permitir edição.",
+              "paths": [
+                "lib/features/gamma/**"
+              ]
+            },
+            {
+              "id": "estado",
+              "label": "Estado das métricas",
+              "state": "new",
+              "paths": [
+                "lib/features/gamma/state/**"
+              ]
+            },
+            {
+              "id": "leitor",
+              "label": "Leitor de métricas",
+              "state": "changed",
+              "note": "Passa a devolver a semana inteira de uma vez.",
+              "paths": [
+                "lib/data/metrics_reader.dart"
+              ]
+            },
+            {
+              "id": "tema",
+              "label": "Tema do app",
+              "state": "existing"
+            }
+          ],
+          "edges": [
+            {
+              "from": "atalho",
+              "to": "tela",
+              "label": "abre ao tocar no ícone"
+            },
+            {
+              "from": "tela",
+              "to": "estado"
+            },
+            {
+              "from": "estado",
+              "to": "leitor"
+            },
+            {
+              "from": "tela",
+              "to": "tema"
+            }
+          ],
+          "approaches": [
+            {
+              "id": "sob-demanda",
+              "label": "Ler a cada abertura da tela",
+              "text": "A tela pede a semana ao leitor sempre que aparece; nada fica guardado entre aberturas.",
+              "chosen": true
+            },
+            {
+              "id": "em-memoria",
+              "label": "Guardar a semana em memória",
+              "text": "O leitor mantém a última semana lida e a tela reaproveita enquanto o app estiver aberto.",
+              "chosen": false
+            }
+          ],
+          "gains": [
+            "Os números da tela nunca ficam velhos."
+          ],
+          "costs": [
+            "Cada abertura custa uma leitura do disco."
+          ]
+        }
       },
       "candidates": [
         {

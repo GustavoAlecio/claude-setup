@@ -1,7 +1,7 @@
 {
   "status": "open",
   "round": 1,
-  "text_md": "**Gate plan** (rodada 1)\n\nPlano em duas tasks, com a tela gamma atrás de um repositório novo.\n\nRiscos:\n- A tela depende de um contrato ainda não publicado. (critic)\n- Sem teste de regressão para a rota antiga. (author)\n\nFora do resumo: 1 perguntas, 1 candidatas.",
+  "text_md": "**Gate plan** (rodada 1)\n\nPlano em duas tasks, com a tela gamma atrás de um repositório novo.\n\nArquitetura:\nUm atalho existente leva à tela nova, que lê as métricas por um estado próprio.\n- Atalho na barra lateral (já existe)\n- Tela de métricas da semana (nova)\n- Estado das métricas (nova)\n- Leitor de métricas (muda)\n- Tema do app (já existe)\n- Ler a cada abertura da tela: A tela pede a semana ao leitor sempre que aparece; nada fica guardado entre aberturas. (escolhida)\n- Guardar a semana em memória: O leitor mantém a última semana lida e a tela reaproveita enquanto o app estiver aberto.\n\nRiscos:\n- A tela depende de um contrato ainda não publicado. (critic)\n- Sem teste de regressão para a rota antiga. (author)\n\nFora do resumo: 1 perguntas, 1 candidatas.",
   "questions": [
     {
       "id": "Q1",

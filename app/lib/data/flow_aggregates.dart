@@ -463,3 +463,102 @@ String afterGateRoute(List<String> pendingRoutes, String gateRoute, String proje
   if (others.isEmpty) return Uri(pathSegments: ['', 'p', project, 'flow']).toString();
   return others[at < 0 ? 0 : at % others.length];
 }
+
+const mapMaxColumns = 4;
+
+/// Column and row of every node. Depth is the longest path from a source over a forward depth-first walk in `nodes`
+/// order (edges in `edges` order); back edges and self edges do not count, so a cycle opens at its first node.
+Map<String, ({int col, int row})> mapLayout(List<MapNode> nodes, List<MapEdge> edges) {
+  final ids = {for (final n in nodes) n.id};
+  final out = <String, List<String>>{};
+  for (final e in edges) {
+    if (e.from != e.to && ids.contains(e.from) && ids.contains(e.to)) (out[e.from] ??= []).add(e.to);
+  }
+
+  final onPath = <String>{};
+  final seen = <String>{};
+  final incoming = <String, List<String>>{};
+  void walk(String id) {
+    seen.add(id);
+    onPath.add(id);
+    for (final to in out[id] ?? const <String>[]) {
+      if (onPath.contains(to)) continue;
+      (incoming[to] ??= []).add(id);
+      if (!seen.contains(to)) walk(to);
+    }
+    onPath.remove(id);
+  }
+
+  for (final n in nodes) {
+    if (!seen.contains(n.id)) walk(n.id);
+  }
+
+  final depth = <String, int>{};
+  int columnOf(String id) => depth[id] ??= [
+    0,
+    for (final from in incoming[id] ?? const <String>[]) columnOf(from) + 1,
+  ].reduce((a, b) => a > b ? a : b);
+
+  final rows = <int, int>{};
+  return {
+    for (final n in nodes)
+      n.id: (() {
+        final col = columnOf(n.id).clamp(0, mapMaxColumns - 1);
+        final row = rows[col] ?? 0;
+        rows[col] = row + 1;
+        return (col: col, row: row);
+      })(),
+  };
+}
+
+enum MapTone { neutral, accent, warn, fail }
+
+/// State word and border tone of a node; [muted] dims the text. A node without state has no word and is neutral.
+({String? word, MapTone tone, bool muted}) mapNodeLook(MapNode node) {
+  final built = node.built;
+  if (built != null) {
+    return switch (built) {
+      BuiltState.planned => (word: 'como planejado', tone: MapTone.neutral, muted: false),
+      BuiltState.existing => (word: 'não foi tocada', tone: MapTone.neutral, muted: true),
+      BuiltState.unplanned => (word: 'não estava no plano', tone: MapTone.warn, muted: false),
+      BuiltState.untouched => (word: 'planejada e não tocada', tone: MapTone.fail, muted: false),
+      BuiltState.touched => (word: 'tocada sem estar no plano', tone: MapTone.warn, muted: false),
+    };
+  }
+  return switch (node.state) {
+    MapNodeState.added => (word: 'nova', tone: MapTone.accent, muted: false),
+    MapNodeState.changed => (word: 'muda', tone: MapTone.warn, muted: false),
+    MapNodeState.existing => (word: 'já existe', tone: MapTone.neutral, muted: false),
+    null => (word: null, tone: MapTone.neutral, muted: false),
+  };
+}
+
+/// States present in a plan map, in the order new, changed, existing; empty for a built map.
+List<({String word, MapTone tone})> mapLegend(GateMap map) {
+  if (map.built) return const [];
+  return [
+    for (final state in MapNodeState.values)
+      if (map.nodes.any((n) => n.state == state))
+        (() {
+          final look = mapNodeLook(MapNode(id: '', label: '', state: state));
+          return (word: look.word!, tone: look.tone);
+        })(),
+  ];
+}
+
+/// Nodes of a built map that came out different from the plan, in map order.
+List<MapNode> builtDiffNodes(GateMap map) => [
+  for (final n in map.nodes)
+    if (n.built == BuiltState.unplanned || n.built == BuiltState.untouched || n.built == BuiltState.touched) n,
+];
+
+/// "3 peças como planejado, 2 não foram tocadas"; `null` when both counts are zero.
+String? builtSameLine(GateMap map) {
+  final planned = map.nodes.where((n) => n.built == BuiltState.planned).length;
+  final existing = map.nodes.where((n) => n.built == BuiltState.existing).length;
+  final parts = [
+    if (planned > 0) '$planned ${planned == 1 ? 'peça' : 'peças'} como planejado',
+    if (existing > 0) '$existing ${existing == 1 ? 'não foi tocada' : 'não foram tocadas'}',
+  ];
+  return parts.isEmpty ? null : parts.join(', ');
+}

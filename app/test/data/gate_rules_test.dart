@@ -516,4 +516,144 @@ void main() {
       expect(afterGateRoute(const [gate], gate, 'gamma'), '/p/gamma/flow');
     });
   });
+
+  group('mapa', () {
+    List<MapNode> nodes(List<String> ids) => [for (final id in ids) MapNode(id: id, label: id)];
+    List<MapEdge> edges(List<(String, String)> pairs) => [for (final (a, b) in pairs) MapEdge(from: a, to: b)];
+    List<int> cols(Map<String, ({int col, int row})> l, List<String> ids) => [for (final id in ids) l[id]!.col];
+
+    test('chain of 3 goes one column per step', () {
+      final l = mapLayout(nodes(['A', 'B', 'C']), edges([('A', 'B'), ('B', 'C')]));
+      expect(cols(l, ['A', 'B', 'C']), [0, 1, 2]);
+    });
+
+    test('two sources of one target share column 0, rows in map order', () {
+      final l = mapLayout(nodes(['A', 'B', 'C']), edges([('A', 'C'), ('B', 'C')]));
+      expect(l['A'], (col: 0, row: 0));
+      expect(l['B'], (col: 0, row: 1));
+      expect(l['C'], (col: 1, row: 0));
+    });
+
+    test('a node without edges sits in column 0', () {
+      final l = mapLayout(nodes(['A', 'B', 'C']), edges([('A', 'B')]));
+      expect(l['C'], (col: 0, row: 1));
+    });
+
+    test('chain of 6 is capped at 4 columns', () {
+      final ids = ['A', 'B', 'C', 'D', 'E', 'F'];
+      final l = mapLayout(nodes(ids), edges([('A', 'B'), ('B', 'C'), ('C', 'D'), ('D', 'E'), ('E', 'F')]));
+      expect(cols(l, ids), [0, 1, 2, 3, 3, 3]);
+      expect(
+        [
+          for (final id in ['D', 'E', 'F']) l[id]!.row,
+        ],
+        [0, 1, 2],
+      );
+    });
+
+    test('a cycle opens at its first node', () {
+      final l = mapLayout(nodes(['A', 'B']), edges([('A', 'B'), ('B', 'A')]));
+      expect(cols(l, ['A', 'B']), [0, 1]);
+    });
+
+    test('a self edge does not move the node', () {
+      final l = mapLayout(nodes(['A']), edges([('A', 'A')]));
+      expect(l['A'], (col: 0, row: 0));
+    });
+
+    test('empty input gives empty layout', () {
+      expect(mapLayout(const [], const []), isEmpty);
+    });
+
+    test('same input gives same layout', () {
+      final n = nodes(['A', 'B', 'C', 'D']);
+      final e = edges([('A', 'B'), ('C', 'B'), ('B', 'D'), ('D', 'C')]);
+      expect(mapLayout(n, e), mapLayout(n, e));
+    });
+
+    test('node look table', () {
+      MapNode plan(MapNodeState s) => MapNode(id: 'x', label: 'x', state: s);
+      MapNode built(BuiltState b) => MapNode(id: 'x', label: 'x', built: b);
+      expect(mapNodeLook(plan(MapNodeState.added)), (word: 'nova', tone: MapTone.accent, muted: false));
+      expect(mapNodeLook(plan(MapNodeState.changed)), (word: 'muda', tone: MapTone.warn, muted: false));
+      expect(mapNodeLook(plan(MapNodeState.existing)), (word: 'já existe', tone: MapTone.neutral, muted: false));
+      expect(mapNodeLook(built(BuiltState.planned)), (word: 'como planejado', tone: MapTone.neutral, muted: false));
+      expect(mapNodeLook(built(BuiltState.existing)), (word: 'não foi tocada', tone: MapTone.neutral, muted: true));
+      expect(mapNodeLook(built(BuiltState.unplanned)), (word: 'não estava no plano', tone: MapTone.warn, muted: false));
+      expect(mapNodeLook(built(BuiltState.untouched)), (
+        word: 'planejada e não tocada',
+        tone: MapTone.fail,
+        muted: false,
+      ));
+      expect(mapNodeLook(built(BuiltState.touched)), (
+        word: 'tocada sem estar no plano',
+        tone: MapTone.warn,
+        muted: false,
+      ));
+      expect(mapNodeLook(const MapNode(id: 'x', label: 'x')), (word: null, tone: MapTone.neutral, muted: false));
+    });
+
+    test('legend lists the states present, in order, and is empty for a built map', () {
+      const all = GateMap(
+        nodes: [
+          MapNode(id: 'a', label: 'a', state: MapNodeState.existing),
+          MapNode(id: 'b', label: 'b', state: MapNodeState.changed),
+          MapNode(id: 'c', label: 'c', state: MapNodeState.added),
+          MapNode(id: 'd', label: 'd'),
+        ],
+      );
+      expect([for (final e in mapLegend(all)) e.word], ['nova', 'muda', 'já existe']);
+      final noChanged = GateMap(
+        nodes: [
+          for (final n in all.nodes)
+            if (n.state != MapNodeState.changed) n,
+        ],
+      );
+      expect([for (final e in mapLegend(noChanged)) e.word], ['nova', 'já existe']);
+      const built = GateMap(
+        nodes: [MapNode(id: 'a', label: 'a', built: BuiltState.planned)],
+      );
+      expect(mapLegend(built), isEmpty);
+    });
+
+    const builtMap = GateMap(
+      nodes: [
+        MapNode(id: 'a', label: 'a', built: BuiltState.planned),
+        MapNode(id: 'b', label: 'b', built: BuiltState.unplanned, files: ['x']),
+        MapNode(id: 'c', label: 'c', built: BuiltState.existing),
+        MapNode(id: 'd', label: 'd', built: BuiltState.untouched),
+        MapNode(id: 'e', label: 'e', built: BuiltState.touched),
+        MapNode(id: 'f', label: 'f', built: BuiltState.planned),
+        MapNode(id: 'g', label: 'g'),
+      ],
+    );
+
+    test('built diff nodes are the unplanned, untouched and touched, in map order', () {
+      expect([for (final n in builtDiffNodes(builtMap)) n.id], ['b', 'd', 'e']);
+      const same = GateMap(
+        nodes: [MapNode(id: 'a', label: 'a', built: BuiltState.planned)],
+      );
+      expect(builtDiffNodes(same), isEmpty);
+    });
+
+    test('built same line counts planned and existing', () {
+      expect(builtSameLine(builtMap), '2 peças como planejado, 1 não foi tocada');
+      const two = GateMap(
+        nodes: [
+          MapNode(id: 'a', label: 'a', built: BuiltState.planned),
+          MapNode(id: 'b', label: 'b', built: BuiltState.existing),
+          MapNode(id: 'c', label: 'c', built: BuiltState.existing),
+        ],
+      );
+      expect(builtSameLine(two), '1 peça como planejado, 2 não foram tocadas');
+      const onlyExisting = GateMap(
+        nodes: [MapNode(id: 'a', label: 'a', built: BuiltState.existing)],
+      );
+      expect(builtSameLine(onlyExisting), '1 não foi tocada');
+      const none = GateMap(
+        nodes: [MapNode(id: 'a', label: 'a', built: BuiltState.touched)],
+      );
+      expect(builtSameLine(none), isNull);
+    });
+  });
 }
