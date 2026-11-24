@@ -8,8 +8,14 @@ const _channel = MethodChannel('claude_flow/attention');
 class AttentionChannel {
   const AttentionChannel();
 
-  Future<void> notify({required String id, required String title, required String body, required String route}) =>
-      _call('notify', {'id': id, 'title': title, 'body': body, 'route': route});
+  /// `silent: true` posts the banner without the system sound; `null` keeps the default sound.
+  Future<void> notify({
+    required String id,
+    required String title,
+    required String body,
+    required String route,
+    bool? silent,
+  }) => _call('notify', {'id': id, 'title': title, 'body': body, 'route': route, 'silent': ?silent});
 
   Future<void> badge(int count) => _call('badge', {'count': count});
 
@@ -22,6 +28,24 @@ class AttentionChannel {
     } on PlatformException catch (e, st) {
       log('isActive failed', name: 'Attention', error: e, stackTrace: st);
       return true;
+    }
+  }
+
+  /// Plays the alert sound. `false` when it did not play, including without the native side.
+  Future<bool> sound() async {
+    final played = await _playSound();
+    log('sound played=$played', name: 'Attention');
+    return played;
+  }
+
+  Future<bool> _playSound() async {
+    try {
+      return await _channel.invokeMethod<bool>('sound') ?? false;
+    } on MissingPluginException {
+      return false;
+    } on PlatformException catch (e, st) {
+      log('sound failed', name: 'Attention', error: e, stackTrace: st);
+      return false;
     }
   }
 

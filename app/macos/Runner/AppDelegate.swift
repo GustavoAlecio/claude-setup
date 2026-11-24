@@ -57,8 +57,9 @@ class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate, NSWindo
     }
   }
 
-  /// `claude_flow/attention`: `notify {id, title, body, route}` posts a system notification (a click comes back as
-  /// `open {route}`), `badge {count}` sets the Dock badge, `isActive` says whether the app is frontmost.
+  /// `claude_flow/attention`: `notify {id, title, body, route, silent?}` posts a system notification (a click comes
+  /// back as `open {route}`), `badge {count}` sets the Dock badge, `isActive` says whether the app is frontmost,
+  /// `sound` plays the alert sound and says whether it played.
   private func registerAttentionChannel(_ messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: "claude_flow/attention", binaryMessenger: messenger)
     attention = channel
@@ -72,7 +73,7 @@ class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate, NSWindo
         let content = UNMutableNotificationContent()
         content.title = args["title"] as? String ?? ""
         content.body = args["body"] as? String ?? ""
-        content.sound = .default
+        content.sound = args["silent"] as? Bool == true ? nil : .default
         content.userInfo = ["route": args["route"] as? String ?? "/"]
         let id = args["id"] as? String ?? UUID().uuidString
         center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { _ in }
@@ -83,6 +84,14 @@ class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate, NSWindo
         result(nil)
       case "isActive":
         result(NSApp.isActive)
+      case "sound":
+        // The shared instance returns false from play() while it is still playing the previous alert.
+        guard let sound = NSSound(named: "Glass") else {
+          result(false)
+          return
+        }
+        sound.stop()
+        result(sound.play())
       default:
         result(FlutterMethodNotImplemented)
       }

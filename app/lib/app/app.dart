@@ -46,6 +46,7 @@ class ClaudeFlowApp extends StatefulWidget {
     this.docs,
     this.github,
     this.paths,
+    this.now = DateTime.now,
   });
 
   final FlowRepository repository;
@@ -63,6 +64,9 @@ class ClaudeFlowApp extends StatefulWidget {
 
   /// `null` reads the real environment.
   final EffectivePaths? paths;
+
+  /// Clock of the alert sound interval.
+  final DateTime Function() now;
 
   @override
   State<ClaudeFlowApp> createState() => _ClaudeFlowAppState();
@@ -144,6 +148,7 @@ class _ClaudeFlowAppState extends State<ClaudeFlowApp> {
                       routerConfig: _router,
                       builder: (context, child) => AttentionWatcher(
                         router: _router,
+                        now: widget.now,
                         child: TerminalHandoffListener(
                           router: _router,
                           child: _GlobalShortcuts(router: _router, child: child!),

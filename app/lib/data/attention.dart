@@ -51,6 +51,45 @@ List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project
         ),
 ];
 
+/// Pending requests per session id and the `blocked:*` keys, read back from the keys [pendingAttention] builds.
+class AttentionSnapshot {
+  const AttentionSnapshot({required this.pending, required this.blocked});
+
+  factory AttentionSnapshot.of(List<AttentionItem> items) {
+    final pending = <String, int>{};
+    final blocked = <String>{};
+    for (final item in items) {
+      if (item.key.startsWith(_pendingPrefix)) {
+        // Session ids may contain ':', the count is always the last segment.
+        final rest = item.key.substring(_pendingPrefix.length);
+        final cut = rest.lastIndexOf(':');
+        pending[rest.substring(0, cut)] = int.parse(rest.substring(cut + 1));
+      } else if (item.key.startsWith('blocked:')) {
+        blocked.add(item.key);
+      }
+    }
+    return AttentionSnapshot(pending: pending, blocked: blocked);
+  }
+
+  static const _pendingPrefix = 'pending:';
+
+  final Map<String, int> pending;
+  final Set<String> blocked;
+}
+
+/// Minimum gap between two alert sounds; a new item inside it is dropped, not queued.
+const kSoundInterval = Duration(seconds: 3);
+
+/// Whether the alert sound plays for [items] given the [before] snapshot: a new block or a session whose pending
+/// count rose. `null` [before] is the first load; a `null` [lastSound] never blocks.
+bool shouldSound(AttentionSnapshot? before, List<AttentionItem> items, {DateTime? lastSound, required DateTime at}) {
+  if (before == null) return false;
+  if (lastSound != null && at.difference(lastSound) < kSoundInterval) return false;
+  final now = AttentionSnapshot.of(items);
+  return now.blocked.any((k) => !before.blocked.contains(k)) ||
+      now.pending.entries.any((e) => e.value > (before.pending[e.key] ?? 0));
+}
+
 /// Where "próxima pendência" (⌘J) goes from [location]: the item after the one shown there, wrapping around, else
 /// the first; `null` when nothing waits.
 String? nextAttentionRoute(List<AttentionItem> items, String location) {

@@ -4,6 +4,7 @@ import 'dart:ui' show AppExitResponse;
 
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/flow_repository.dart';
 import 'package:claude_flow/data/github_models.dart';
 import 'package:claude_flow/data/github_parser.dart';
@@ -57,6 +58,13 @@ Future<void> _openSettings(
   await tester.pumpAndSettle();
   GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/settings');
   await tester.pumpAndSettle();
+}
+
+class _RejectingConfig extends MockFlowRepository {
+  _RejectingConfig({super.data, super.config});
+
+  @override
+  Future<void> updateConfig(ConfigMutation mutation) async => throw const ConfigWriteException('x');
 }
 
 class _EngineDown extends MockGitHubRepository {
@@ -407,6 +415,55 @@ void main() {
       await _tap(tester, _save('A'));
       expect((repo.rawConfig['orgs'][0] as Map).containsKey('permissionMode'), isFalse);
       expect(repo.config.orgs.first.name, 'A');
+    });
+  });
+
+  group('alerta sonoro', () {
+    const channel = MethodChannel('claude_flow/attention');
+    late int sounds;
+
+    Future<void> open(WidgetTester tester, MockFlowRepository repo) async {
+      sounds = 0;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'sound') sounds++;
+        return call.method == 'isActive' ? true : null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+      await _openSettings(tester, repo);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('settings-alert-sound')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    final toggle = find.byKey(const ValueKey('settings-alert-sound'));
+
+    testWidgets('desligar grava falso sem tocar; ligar grava verdadeiro e toca uma vez', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await open(tester, repo);
+      expect(_in('settings-permissions', find.text('toca quando algo novo espera você')), findsOneWidget);
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+
+      await _tap(tester, toggle);
+      expect(repo.rawConfig['alertSound'], isFalse);
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      expect(sounds, 0);
+
+      await _tap(tester, toggle);
+      expect(repo.rawConfig['alertSound'], isTrue);
+      expect(sounds, 1);
+    });
+
+    testWidgets('erro de escrita mostra a mensagem, mantém o valor e não toca', (tester) async {
+      await open(tester, _RejectingConfig(data: _data, config: _config()));
+
+      await _tap(tester, toggle);
+      expect(find.byKey(const ValueKey('settings-alert-sound-error')), findsOneWidget);
+      expect(find.text('x'), findsOneWidget);
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      expect(sounds, 0);
     });
   });
 

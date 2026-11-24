@@ -1300,6 +1300,32 @@ void main() {
     });
   });
 
+  group('alert sound', () {
+    test('only false turns it off; absent or another type is on', () {
+      expect(DashboardConfig.parse('{}').alertSound, isTrue);
+      expect(DashboardConfig.parse('{"alertSound":"sim"}').alertSound, isTrue);
+      expect(DashboardConfig.parse('{"alertSound":null}').alertSound, isTrue);
+      expect(DashboardConfig.parse('{"alertSound":true}').alertSound, isTrue);
+      expect(DashboardConfig.parse('{"alertSound":false}').alertSound, isFalse);
+      expect(DashboardConfig.empty.alertSound, isTrue);
+    });
+
+    test('setAlertSound writes the key either way and keeps the rest', () {
+      final raw = _raw()..['cwds'] = {'a': '/b'};
+      raw['unknown'] = {'keep': true};
+      for (final on in [false, true]) {
+        final out = setAlertSound(on)(raw);
+        expect(out['alertSound'], on);
+        expect(out['orgs'], raw['orgs']);
+        expect(out['cwds'], {'a': '/b'});
+        expect(out['unknown'], {'keep': true});
+        expect(out.keys.last, 'alertSound');
+      }
+      expect(raw.containsKey('alertSound'), isFalse, reason: 'the input map is not touched');
+      expect(applyConfigMutation({...raw, 'alertSound': true}, setAlertSound(true)), isNull);
+    });
+  });
+
   group('skillBlockedReason', () {
     SessionSummary s({AgentProvider provider = AgentProvider.anthropic, String? org}) => SessionSummary(
       id: 's',

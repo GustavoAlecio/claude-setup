@@ -294,6 +294,7 @@ class DashboardConfig {
     this.lastOrg,
     this.permissionMode = kDefaultPermissionMode,
     this.cycleBudget,
+    this.alertSound = true,
   });
 
   static const empty = DashboardConfig();
@@ -312,6 +313,9 @@ class DashboardConfig {
 
   /// US$ a cycle may cost before the Fluxo warns; `null` (absent, zero or invalid) means no budget.
   final double? cycleBudget;
+
+  /// Plays a sound when something new waits on the user; absent or not a boolean means on, only `false` turns it off.
+  final bool alertSound;
 
   /// Throws [FormatException] on invalid JSON; a non-object document yields [empty].
   static DashboardConfig parse(String source) {
@@ -354,6 +358,7 @@ class DashboardConfig {
       lastOrg: _nonEmpty(decoded['lastOrg']),
       permissionMode: PermissionMode.parseConfig(decoded['permissionMode']) ?? kDefaultPermissionMode,
       cycleBudget: parseBudget(decoded['cycleBudget']),
+      alertSound: decoded['alertSound'] != false,
     );
   }
 
