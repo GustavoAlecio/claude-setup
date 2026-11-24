@@ -113,7 +113,8 @@ class _Sessions extends MockSessionsRepository {
   }
 }
 
-final _activityEntry = find.byKey(const ValueKey('org-activity'));
+final _home = find.byKey(const ValueKey('sidebar-home'));
+final _homeCount = find.byKey(const ValueKey('sidebar-home-count'));
 
 String _org(WidgetTester tester) => tester.widget<Text>(find.byKey(const ValueKey('current-org'))).data!;
 
@@ -144,8 +145,6 @@ Future<void> _metaShift(WidgetTester tester, LogicalKeyboardKey key) async {
 
 final _orgPalette = find.text('Atividade em A…', findRichText: true);
 
-Finder _inEntry(String text) => find.descendant(of: _activityEntry, matching: find.text(text));
-
 void main() {
   setUp(() {
     final view = TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
@@ -164,31 +163,43 @@ void main() {
   }
 
   group('sidebar', () {
-    testWidgets('counts every org session of the org and badges its pending ones', (tester) async {
+    testWidgets('the org home is Caixa de entrada, opens the queue and counts like the org header', (tester) async {
       await pump(tester);
 
       expect(_location(tester), '/p/alpha/flow');
-      expect(_inEntry('Atividades da org'), findsOneWidget);
-      expect(_inEntry('3'), findsOneWidget, reason: 'a1, a2 and a3; b1 belongs to B, s-alpha to a project');
-      expect(_inEntry('2'), findsOneWidget, reason: 'only a1 is pending');
-      expect(
-        find.descendant(of: find.byKey(const ValueKey('org-pending')), matching: find.text('3')),
-        findsOneWidget,
-        reason: 'the org header adds the project session',
+      expect(find.descendant(of: _home, matching: find.text('Caixa de entrada')), findsOneWidget);
+      for (final old in ['sidebar-queue', 'sidebar-inbox', 'org-activity']) {
+        expect(find.byKey(ValueKey(old)), findsNothing, reason: old);
+      }
+      final header = tester.widget<Text>(
+        find.descendant(of: find.byKey(const ValueKey('org-pending')), matching: find.byType(Text)),
       );
+      expect(header.data, '3', reason: 'a1 has 2 and the project session s-alpha has 1');
+      expect(tester.widget<Text>(_homeCount).data, header.data);
 
-      await tester.tap(_activityEntry);
+      await tester.tap(_home);
       await tester.pumpAndSettle();
-      expect(_location(tester), '/o/A/sessions');
+      expect(_location(tester), '/o/A/fila');
     });
 
-    testWidgets('absent in Sem org', (tester) async {
+    testWidgets('the count is absent when nothing waits in the org', (tester) async {
+      await pump(tester);
+
+      await _go(tester, '/o/B/sessions');
+
+      expect(_org(tester), 'B');
+      expect(find.byKey(const ValueKey('org-pending')), findsNothing);
+      expect(_home, findsOneWidget);
+      expect(_homeCount, findsNothing);
+    });
+
+    testWidgets('absent in Sem org without orphan activities', (tester) async {
       await pump(tester);
 
       await _go(tester, '/p/loose/flow');
 
       expect(_org(tester), kNoOrg);
-      expect(_activityEntry, findsNothing);
+      expect(_home, findsNothing);
     });
 
     testWidgets('removing the org keeps its pending activity reachable in Sem org, read-only', (tester) async {
@@ -210,9 +221,10 @@ void main() {
         findsOneWidget,
         reason: 'the pending permission of the removed org stays in the Sem org badge',
       );
-      expect(_inEntry('2'), findsOneWidget, reason: 'b1 and o1 are orphans now');
+      expect(find.descendant(of: _home, matching: find.text('Atividades')), findsOneWidget);
+      expect(_homeCount, findsNothing);
 
-      await tester.tap(_activityEntry);
+      await tester.tap(_home);
       await tester.pumpAndSettle();
 
       expect(_location(tester), '/o/Sem%20org/sessions');
@@ -224,18 +236,6 @@ void main() {
       await tester.tap(find.text('Atividade b1'));
       await tester.pumpAndSettle();
       expect(_location(tester), '/o/Sem%20org/sessions/b1');
-    });
-
-    testWidgets('an org without roots shows it disabled with a tooltip', (tester) async {
-      await pump(tester);
-      await _go(tester, '/p/gamma/flow');
-      expect(_org(tester), 'C');
-
-      expect(find.byTooltip('org sem pastas'), findsOneWidget);
-      await tester.tap(_activityEntry);
-      await tester.pumpAndSettle();
-
-      expect(_location(tester), '/p/gamma/flow');
     });
   });
 

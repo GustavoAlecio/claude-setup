@@ -130,7 +130,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('sidebar-queue')));
+    await tester.tap(find.byKey(const ValueKey('sidebar-home')));
     await tester.pumpAndSettle();
 
     Finder inColumn(String key, Finder f) => find.descendant(of: find.byKey(ValueKey(key)), matching: f);
@@ -154,7 +154,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('sidebar-queue')));
+    await tester.tap(find.byKey(const ValueKey('sidebar-home')));
     await tester.pumpAndSettle();
 
     final card = find.byKey(const ValueKey('queue-pr-demo-app-12'));

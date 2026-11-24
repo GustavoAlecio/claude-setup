@@ -202,7 +202,8 @@ void main() {
     final data = await _loadFixtures(tester);
     await _open(tester, data, '/p/legacy/flow');
 
-    expect(find.text('Ciclo'), findsOneWidget);
+    final header = find.descendant(of: find.byKey(const ValueKey('group-cycle')), matching: find.text('Ciclo'));
+    expect(find.text('Ciclo').evaluate().length - header.evaluate().length, 1, reason: 'the cycle card title');
     for (final row in ['Card', 'Branch', 'Stack', 'Repo']) {
       expect(find.text(row), findsNothing, reason: row);
     }

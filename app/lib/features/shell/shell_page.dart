@@ -29,26 +29,6 @@ import '../launcher/command_palette.dart';
 import '../launcher/kickoff_form.dart';
 import 'shell_scope.dart';
 
-enum AppTab {
-  flow('Fluxo'),
-  runs('Execuções'),
-  sessions('Sessões'),
-  artifacts('Artefatos'),
-  reviews('Reviews'),
-  prs('PRs'),
-  inbox('Para revisar'),
-  metrics('Métricas'),
-  adrs('ADRs'),
-
-  /// Org scope only: every project of the org at once.
-  queue('Minha fila');
-
-  const AppTab(this.label);
-  final String label;
-
-  static AppTab parse(String? s) => AppTab.values.where((t) => t.name == s).firstOrNull ?? AppTab.flow;
-}
-
 class ShellPage extends StatefulWidget {
   const ShellPage({super.key, required this.scope, required this.tab, required this.child});
 
@@ -93,7 +73,9 @@ class _ShellPageState extends State<ShellPage> {
 
   List<Widget> _projectHeader(Project project, Project? routeProject, Map<String, int> pending) => [
     _TopBar(project: project, paletteProject: routeProject, pending: project.hidden ? 0 : pending[project.name] ?? 0),
-    _Tabs(scope: widget.scope, active: widget.tab),
+    _ProjectTabs(project: project.name, active: widget.tab),
+    if (groupTabs(groupOf(widget.tab)) case final tabs when tabs.length > 1)
+      _SubTabs(project: project.name, tabs: tabs, active: activeSubTab(widget.tab)),
     if (project.hidden) _HiddenBanner(project: project.name),
     if (routeProject == null) _UnknownProjectBanner(name: project.name),
   ];
@@ -143,12 +125,10 @@ class _ShellPageState extends State<ShellPage> {
             children: [
               _Sidebar(
                 org: org,
-                orgConfig: orgConfig,
                 orgs: switchableOrgs(config, projects, sessions),
                 projects: projects,
                 sessions: sessions,
-                activityCount: activities.length,
-                activityPending: activitiesPending,
+                hasActivities: activities.isNotEmpty,
                 onNewActivity: newActivity,
                 config: config,
                 pending: pending,
@@ -172,7 +152,7 @@ class _ShellPageState extends State<ShellPage> {
                           known: orgConfig != null,
                           onNewActivity: newActivity,
                         ),
-                        _Tabs(scope: scope, active: widget.tab),
+                        _Tabs(org: org, active: widget.tab),
                       ],
                     },
                     Expanded(child: widget.child),
@@ -190,12 +170,10 @@ class _ShellPageState extends State<ShellPage> {
 class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.org,
-    required this.orgConfig,
     required this.orgs,
     required this.projects,
     required this.sessions,
-    required this.activityCount,
-    required this.activityPending,
+    required this.hasActivities,
     required this.onNewActivity,
     required this.config,
     required this.pending,
@@ -204,16 +182,12 @@ class _Sidebar extends StatelessWidget {
   });
 
   final String org;
-
-  /// `null` for [kNoOrg] and for an `/o/` org missing from the config.
-  final OrgConfig? orgConfig;
   final List<String> orgs;
   final List<Project> projects;
   final List<SessionSummary> sessions;
 
-  /// The org's own sessions, per [orgActivities], and how many of them wait for the user.
-  final int activityCount;
-  final int activityPending;
+  /// Whether [orgActivities] lists anything; in Sem org that is the only reason to show the home tile.
+  final bool hasActivities;
 
   /// `null` when the org has no roots (or is Sem org).
   final VoidCallback? onNewActivity;
@@ -229,7 +203,8 @@ class _Sidebar extends StatelessWidget {
     final c = context.colors;
     final visible = projectsInOrg(projects, org);
     return Container(
-      width: 232,
+      key: const ValueKey('sidebar'),
+      width: 216,
       decoration: BoxDecoration(
         color: c.sidebar,
         border: Border(right: BorderSide(color: c.border)),
@@ -249,33 +224,21 @@ class _Sidebar extends StatelessWidget {
           const SizedBox(height: 12),
           if (org != kNoOrg) ...[
             _NavTile(
-              key: const ValueKey('sidebar-queue'),
+              key: const ValueKey('sidebar-home'),
               icon: Icons.inbox_outlined,
-              label: 'Minha fila',
+              label: 'Caixa de entrada',
               location: orgQueueLocation(org),
-              selected: scope is ShellOrgScope && tab == AppTab.queue,
+              selected: scope is ShellOrgScope,
               pending: pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 12),
+          ] else if (hasActivities) ...[
             _NavTile(
-              key: const ValueKey('sidebar-inbox'),
-              icon: Icons.rate_review_outlined,
-              label: 'Para revisar',
-              location: orgInboxLocation(org),
-              selected: scope is ShellOrgScope && tab == AppTab.inbox,
-              pending: context.select<InboxCubit, int>((c) => c.state.badge),
-              pendingLabel: 'PRs esperando a sua revisão',
-              badgeKey: const ValueKey('inbox-badge'),
-            ),
-            const SizedBox(height: 4),
-          ],
-          if (org != kNoOrg || activityCount > 0) ...[
-            _OrgActivityTile(
-              org: org,
-              count: activityCount,
-              pending: activityPending,
-              enabled: orgConfig?.roots.isNotEmpty ?? activityCount > 0,
-              selected: scope is ShellOrgScope && tab == AppTab.sessions,
+              key: const ValueKey('sidebar-home'),
+              icon: Icons.hub_outlined,
+              label: 'Atividades',
+              location: orgSessionsLocation(kNoOrg),
+              selected: scope is ShellOrgScope,
             ),
             const SizedBox(height: 12),
           ],
@@ -312,9 +275,6 @@ class _Sidebar extends StatelessWidget {
                         _ProjectTile(
                           project: p,
                           pending: pending[p.name] ?? 0,
-                          running: sessions
-                              .where((s) => !s.isOrgSession && s.project == p.name && s.status == SessionStatus.running)
-                              .length,
                           selected: scope == ShellProjectScope(p.name),
                           tab: tab,
                         ),
@@ -559,19 +519,10 @@ class _HiddenBanner extends StatelessWidget {
 }
 
 class _ProjectTile extends StatelessWidget {
-  const _ProjectTile({
-    required this.project,
-    required this.pending,
-    required this.running,
-    required this.selected,
-    required this.tab,
-  });
+  const _ProjectTile({required this.project, required this.pending, required this.selected, required this.tab});
 
   final Project project;
   final int pending;
-
-  /// Sessions of the project whose agent is working right now.
-  final int running;
   final bool selected;
   final AppTab tab;
 
@@ -579,116 +530,49 @@ class _ProjectTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final cycle = project.cycle;
-    final blocked = cycle?.latestRun?.status == Verdict.blocked;
-    final dot = cycle == null ? c.idle : (blocked ? c.fail : c.running);
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
-      child: Material(
-        color: selected ? c.hover : Colors.transparent,
-        borderRadius: BorderRadius.circular(6),
-        child: InkWell(
+      child: Tooltip(
+        message: cycle == null ? 'sem ciclo ativo' : '${cycle.stage.label} · ${cycle.feature ?? project.name}',
+        child: Material(
+          key: ValueKey('project-tile-${project.name}'),
+          color: selected ? c.hover : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
-          hoverColor: c.hover,
-          onTap: () => context.go('/p/${project.name}/${tab.name}'),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-            child: Row(
-              children: [
-                Tooltip(
-                  message: cycle == null ? 'sem ciclo' : (blocked ? 'ciclo parado' : 'ciclo em andamento'),
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(project.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                      Muted(
-                        cycle == null ? 'sem ciclo ativo' : '${cycle.stage.label} · ${cycle.feature ?? project.name}',
-                        size: 11,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(6),
+            hoverColor: c.hover,
+            onTap: () => context.go('/p/${project.name}/${tab.name}'),
+            child: SizedBox(
+              height: 36,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        project.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                    if (pending > 0) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        key: ValueKey('project-pending-${project.name}'),
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(color: c.warn, shape: BoxShape.circle),
                       ),
                     ],
-                  ),
+                  ],
                 ),
-                if (running > 0) ...[
-                  Tooltip(
-                    message: running == 1 ? '1 agente rodando' : '$running agentes rodando',
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.play_circle_outline, size: 12, color: c.running),
-                        if (running > 1) ...[const SizedBox(width: 3), Mono('$running', color: c.running, size: 10)],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                if (pending > 0) Tooltip(message: '$pending aguardando você', child: _CountBadge(pending)),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
-  }
-}
-
-class _OrgActivityTile extends StatelessWidget {
-  const _OrgActivityTile({
-    required this.org,
-    required this.count,
-    required this.pending,
-    required this.enabled,
-    required this.selected,
-  });
-
-  final String org;
-  final int count;
-  final int pending;
-
-  /// An org without roots has nowhere to run an activity; Sem org only lists the orphans it still holds.
-  final bool enabled;
-  final bool selected;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final tile = Material(
-      key: const ValueKey('org-activity'),
-      color: selected ? c.hover : Colors.transparent,
-      borderRadius: BorderRadius.circular(6),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        hoverColor: c.hover,
-        onTap: enabled ? () => context.go(orgSessionsLocation(org)) : null,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-          child: Row(
-            children: [
-              Icon(Icons.hub_outlined, size: 14, color: enabled ? c.textSecondary : c.textMuted),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Atividades da org',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: enabled ? null : c.textMuted),
-                ),
-              ),
-              Mono('$count', color: c.textMuted, size: 11),
-              if (pending > 0) ...[
-                const SizedBox(width: 6),
-                Tooltip(message: '$pending aguardando você', child: _CountBadge(pending)),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-    return enabled ? tile : Tooltip(message: 'org sem pastas', child: tile);
   }
 }
 
@@ -823,7 +707,12 @@ class _EngineFooter extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(label, style: TextStyle(fontSize: 12, color: c.textSecondary)),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: c.textSecondary),
+                ),
               ),
               if (state.status == EngineStatus.stopped)
                 TextButton(
@@ -1052,30 +941,131 @@ class _OrgTopBar extends StatelessWidget {
   }
 }
 
-class _Tabs extends StatelessWidget {
-  const _Tabs({required this.scope, required this.active});
+class _TabItem extends StatelessWidget {
+  const _TabItem({super.key, required this.label, required this.active, required this.onTap, this.trailing});
 
-  final ShellScope scope;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return InkWell(
+      onTap: onTap,
+      hoverColor: Colors.transparent,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: active ? c.accent : Colors.transparent, width: 2)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                color: active ? c.textPrimary : c.textSecondary,
+              ),
+            ),
+            ?trailing,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProjectTabs extends StatelessWidget {
+  const _ProjectTabs({required this.project, required this.active});
+
+  final String project;
+  final AppTab active;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = groupOf(active);
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: context.colors.border)),
+      ),
+      child: Row(
+        children: [
+          for (final g in ProjectGroup.values)
+            _TabItem(
+              key: ValueKey('group-${g.name}'),
+              label: g.label,
+              active: g == current,
+              onTap: () => context.go('/p/$project/${groupTabs(g).first.name}'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SubTabs extends StatelessWidget {
+  const _SubTabs({required this.project, required this.tabs, required this.active});
+
+  final String project;
+  final List<AppTab> tabs;
+  final AppTab? active;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      key: const ValueKey('subtabs'),
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Row(
+        children: [
+          for (final t in tabs)
+            InkWell(
+              key: ValueKey('subtab-${t.name}'),
+              onTap: () => context.go('/p/$project/${t.name}'),
+              hoverColor: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                alignment: Alignment.center,
+                child: Text(
+                  subTabLabel(t),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: t == active ? FontWeight.w600 : FontWeight.w400,
+                    color: t == active ? c.textPrimary : c.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Tabs extends StatelessWidget {
+  const _Tabs({required this.org, required this.active});
+
+  final String org;
   final AppTab active;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final tabs = switch (scope) {
-      // "Para revisar" lists PRs of the whole account scope, not of a project: it lives with the org.
-      ShellProjectScope() => [
-        for (final t in AppTab.values)
-          if (t != AppTab.queue && t != AppTab.inbox) t,
-      ],
-      ShellOrgScope() => const [AppTab.queue, AppTab.inbox, AppTab.sessions],
-    };
-    String location(AppTab t) => switch (scope) {
-      ShellProjectScope(:final name) => '/p/$name/${t.name}',
-      ShellOrgScope(:final org) => switch (t) {
-        AppTab.queue => orgQueueLocation(org),
-        AppTab.inbox => orgInboxLocation(org),
-        _ => orgSessionsLocation(org),
-      },
+    String location(AppTab t) => switch (t) {
+      AppTab.queue => orgQueueLocation(org),
+      AppTab.inbox => orgInboxLocation(org),
+      _ => orgSessionsLocation(org),
     };
     final inboxBadge = context.select<InboxCubit, int>((c) => c.state.badge);
     return Container(
@@ -1086,34 +1076,22 @@ class _Tabs extends StatelessWidget {
       ),
       child: Row(
         children: [
-          for (final t in tabs)
-            InkWell(
+          for (final t in const [AppTab.queue, AppTab.inbox, AppTab.sessions])
+            _TabItem(
+              label: t.label,
+              active: t == active,
               onTap: () => context.go(location(t)),
-              hoverColor: Colors.transparent,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: t == active ? c.accent : Colors.transparent, width: 2)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      t.label,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: t == active ? FontWeight.w600 : FontWeight.w400,
-                        color: t == active ? c.textPrimary : c.textSecondary,
+              trailing: t == AppTab.inbox && inboxBadge > 0
+                  ? Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Pill(
+                        key: const ValueKey('inbox-badge'),
+                        label: '$inboxBadge',
+                        color: c.accent,
+                        dot: false,
                       ),
-                    ),
-                    if (t == AppTab.inbox && inboxBadge > 0) ...[
-                      const SizedBox(width: 6),
-                      Pill(key: const ValueKey('inbox-badge'), label: '$inboxBadge', color: c.accent, dot: false),
-                    ],
-                  ],
-                ),
-              ),
+                    )
+                  : null,
             ),
         ],
       ),
@@ -1129,8 +1107,6 @@ class _NavTile extends StatelessWidget {
     required this.location,
     required this.selected,
     this.pending = 0,
-    this.pendingLabel,
-    this.badgeKey,
   });
 
   final IconData icon;
@@ -1138,10 +1114,6 @@ class _NavTile extends StatelessWidget {
   final String location;
   final bool selected;
   final int pending;
-
-  /// Tooltip of the badge; "aguardando você" when `null`.
-  final String? pendingLabel;
-  final Key? badgeKey;
 
   @override
   Widget build(BuildContext context) {
@@ -1162,9 +1134,10 @@ class _NavTile extends StatelessWidget {
                 child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
               ),
               if (pending > 0)
-                Tooltip(
-                  message: '$pending ${pendingLabel ?? 'aguardando você'}',
-                  child: _CountBadge(pending, key: badgeKey),
+                Text(
+                  '$pending',
+                  key: const ValueKey('sidebar-home-count'),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c.warn),
                 ),
             ],
           ),
