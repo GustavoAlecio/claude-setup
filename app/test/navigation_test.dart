@@ -12,6 +12,16 @@ import 'package:go_router/go_router.dart';
 Widget _app(FlowRepository repository, {EngineController engine = const MockEngineController()}) =>
     ClaudeFlowApp(repository: repository, sessions: MockSessionsRepository(), engine: engine);
 
+String _route(WidgetTester tester) =>
+    GoRouter.of(tester.element(find.byType(Scaffold).first)).routerDelegate.currentConfiguration.uri.path;
+
+Text _onlyText(WidgetTester tester, String key) =>
+    tester.widget<Text>(find.descendant(of: find.byKey(ValueKey(key)), matching: find.byType(Text)));
+
+FontWeight? _weight(WidgetTester tester, String key) => _onlyText(tester, key).style!.fontWeight;
+
+String? _label(WidgetTester tester, String key) => _onlyText(tester, key).data;
+
 class _StoppedEngine extends MockEngineController {
   const _StoppedEngine();
 
@@ -44,7 +54,7 @@ void main() {
     );
     expect(find.textContaining('T4 bloqueou'), findsOneWidget);
 
-    await tester.tap(find.text('Execuções'));
+    await tester.tap(find.byKey(const ValueKey('subtab-runs')));
     await tester.pumpAndSettle();
     expect(find.text('Escada por task'), findsOneWidget);
     expect(find.text('ângulo: plan'), findsOneWidget);
@@ -58,6 +68,10 @@ void main() {
     expect(find.text('repetido ×3'), findsNWidgets(3));
     expect(find.text('igual à #1'), findsNWidgets(2));
     expect(find.text('→ fable'), findsOneWidget);
+    expect(_route(tester), startsWith('/p/demo-app/runs/'));
+    expect(_weight(tester, 'group-cycle'), FontWeight.w600);
+    expect(_weight(tester, 'subtab-runs'), FontWeight.w600);
+    expect(_weight(tester, 'subtab-flow'), FontWeight.w400);
   });
 
   testWidgets('engine footer hugs its content when ok and grows up to its cap on error', (tester) async {
@@ -120,11 +134,11 @@ void main() {
   testWidgets('pending task row is not navigable', (tester) async {
     await tester.pumpWidget(_app(MockFlowRepository()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Execuções'));
+    await tester.tap(find.byKey(const ValueKey('subtab-runs')));
     await tester.pumpAndSettle();
 
     final t5 = find.text('Tela de favoritos com estado offline');
-    await tester.ensureVisible(t5);
+    await tester.scrollUntilVisible(t5, 200, scrollable: find.byType(Scrollable).last);
     await tester.pumpAndSettle();
     await tester.tap(t5);
     await tester.pumpAndSettle();
@@ -163,7 +177,7 @@ void main() {
     ];
     await tester.pumpWidget(_app(MockFlowRepository(data: data)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Execuções'));
+    await tester.tap(find.byKey(const ValueKey('subtab-runs')));
     await tester.pumpAndSettle();
 
     final legend = find.text('risco alto');
@@ -199,31 +213,134 @@ void main() {
     expect(router().routerDelegate.currentConfiguration.uri.path, '/p/notifications-api/runs');
   });
 
-  testWidgets('every project tab opens its own page', (tester) async {
+  group('project header', () {
+    const groups = ['group-cycle', 'group-talks', 'group-prs', 'group-reference'];
+
+    testWidgets('four groups in order and the cycle sub-tabs on the Fluxo', (tester) async {
+      await tester.pumpWidget(_app(MockFlowRepository()));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/flow');
+
+      final xs = [for (final k in groups) tester.getTopLeft(find.byKey(ValueKey(k))).dx];
+      expect([...xs]..sort(), xs);
+      expect([for (final k in groups) _label(tester, k)], ['Ciclo', 'Conversas', 'PRs', 'Referência']);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('group-'),
+        ),
+        findsNWidgets(4),
+      );
+
+      for (final old in ['Sessões', 'Artefatos', 'Reviews', 'Métricas', 'ADRs']) {
+        expect(find.text(old), findsNothing, reason: old);
+      }
+      expect(find.text('Execuções'), findsOneWidget);
+      expect(
+        find.descendant(of: find.byKey(const ValueKey('subtabs')), matching: find.text('Execuções')),
+        findsOneWidget,
+      );
+
+      expect(_weight(tester, 'group-cycle'), FontWeight.w600);
+      for (final k in groups.skip(1)) {
+        expect(_weight(tester, k), FontWeight.w400, reason: k);
+      }
+      expect(_weight(tester, 'subtab-flow'), FontWeight.w600);
+      expect(_weight(tester, 'subtab-runs'), FontWeight.w400);
+
+      await tester.tap(find.byKey(const ValueKey('subtab-runs')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/runs');
+      expect(find.text('Escada por task'), findsOneWidget);
+      expect(_weight(tester, 'subtab-runs'), FontWeight.w600);
+    });
+
+    testWidgets('each group opens its first tab with its own sub-tabs', (tester) async {
+      await tester.pumpWidget(_app(MockFlowRepository()));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('group-talks')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/sessions');
+      expect(find.byKey(const ValueKey('subtabs')), findsNothing);
+      expect(_weight(tester, 'group-talks'), FontWeight.w600);
+
+      await tester.tap(find.byKey(const ValueKey('group-prs')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/prs');
+      expect(find.text('nenhum PR registrado; abra com /pr-open'), findsOneWidget);
+      expect(find.byKey(const ValueKey('subtab-prs')), findsOneWidget);
+      expect(find.byKey(const ValueKey('subtab-reviews')), findsOneWidget);
+      expect(_weight(tester, 'subtab-prs'), FontWeight.w600);
+
+      await tester.tap(find.byKey(const ValueKey('subtab-reviews')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/reviews');
+      expect(find.text('nenhum review; rode /review em um PR'), findsOneWidget);
+      expect(_weight(tester, 'group-prs'), FontWeight.w600);
+
+      await tester.tap(find.byKey(const ValueKey('group-reference')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/artifacts');
+      expect(find.text('nenhum artefato'), findsOneWidget);
+      expect(_label(tester, 'subtab-artifacts'), 'Documentos');
+      expect(find.byKey(const ValueKey('subtab-adrs')), findsOneWidget);
+      expect(_label(tester, 'subtab-metrics'), 'Números');
+
+      await tester.tap(find.byKey(const ValueKey('subtab-metrics')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/metrics');
+      expect(find.text('nenhum ciclo registrado'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('subtab-adrs')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/adrs');
+      expect(find.text('este projeto não tem ADRs'), findsOneWidget);
+      expect(_weight(tester, 'group-reference'), FontWeight.w600);
+    });
+
+    testWidgets('queue stays in the cycle group with the Fluxo sub-tab', (tester) async {
+      await tester.pumpWidget(_app(MockFlowRepository()));
+      await tester.pumpAndSettle();
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/demo-app/queue');
+      await tester.pumpAndSettle();
+      expect(_weight(tester, 'group-cycle'), FontWeight.w600);
+      expect(_weight(tester, 'subtab-flow'), FontWeight.w600);
+      expect(_weight(tester, 'subtab-runs'), FontWeight.w400);
+    });
+  });
+
+  group('org tabs', () {
+    testWidgets('the org keeps its three tabs, without groups nor sub-tabs', (tester) async {
+      await tester.pumpWidget(_app(MockFlowRepository()));
+      await tester.pumpAndSettle();
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/o/demo/fila');
+      await tester.pumpAndSettle();
+
+      for (final label in ['Minha fila', 'Para revisar', 'Sessões']) {
+        expect(find.text(label), findsWidgets, reason: label);
+      }
+      expect(find.byKey(const ValueKey('subtabs')), findsNothing);
+      for (final g in ['group-cycle', 'group-talks', 'group-prs', 'group-reference']) {
+        expect(find.byKey(ValueKey(g)), findsNothing, reason: g);
+      }
+
+      // The sidebar repeats "Para revisar"; the header tab is the one right of it.
+      final tab = find.text('Para revisar').last;
+      expect(tester.getTopLeft(tab).dx, greaterThan(tester.getSize(find.byKey(const ValueKey('sidebar'))).width));
+      await tester.tap(tab);
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/o/demo/revisar');
+      expect(find.text('nenhum PR esperando sua revisão'), findsOneWidget);
+    });
+  });
+
+  testWidgets('the sidebar home reaches the org review tab', (tester) async {
     await tester.pumpWidget(_app(MockFlowRepository()));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Artefatos'));
+    await tester.tap(find.byKey(const ValueKey('sidebar-home')));
     await tester.pumpAndSettle();
-    expect(find.text('nenhum artefato'), findsOneWidget);
-
-    await tester.tap(find.text('Reviews'));
-    await tester.pumpAndSettle();
-    expect(find.text('nenhum review; rode /review em um PR'), findsOneWidget);
-
-    await tester.tap(find.text('PRs'));
-    await tester.pumpAndSettle();
-    expect(find.text('nenhum PR registrado; abra com /pr-open'), findsOneWidget);
-
-    await tester.tap(find.text('Métricas'));
-    await tester.pumpAndSettle();
-    expect(find.text('nenhum ciclo registrado'), findsOneWidget);
-
-    await tester.tap(find.text('ADRs'));
-    await tester.pumpAndSettle();
-    expect(find.text('este projeto não tem ADRs'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('sidebar-inbox')));
+    await tester.tap(find.text('Para revisar'));
     await tester.pumpAndSettle();
     expect(find.text('nenhum PR esperando sua revisão'), findsOneWidget);
     expect(
@@ -301,7 +418,7 @@ void main() {
     Future<void> openRuns(WidgetTester tester) async {
       await tester.pumpWidget(_app(MockFlowRepository(data: data)));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Execuções'));
+      await tester.tap(find.byKey(const ValueKey('subtab-runs')));
       await tester.pumpAndSettle();
     }
 
@@ -346,7 +463,8 @@ void main() {
 
     testWidgets('cycle mode: one row per task in plan order with attempts of all runs', (tester) async {
       await openRuns(tester);
-      await tester.tap(find.text('Ciclo'));
+      // "Ciclo" is also the header group; the runs mode toggle comes after it in the tree.
+      await tester.tap(find.text('Ciclo').last);
       await tester.pumpAndSettle();
 
       for (final id in ['T1', 'T2', 'T3']) {

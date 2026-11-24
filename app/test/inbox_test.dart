@@ -181,6 +181,9 @@ bool _enabled(WidgetTester tester, int n) => tester.widget<OutlinedButton>(_revi
 
 const _badge = ValueKey('inbox-badge');
 
+/// The only route that shows [_badge], on the review tab of `x`'s org.
+const _orgInbox = '/o/demo/revisar';
+
 void main() {
   setUp(() {
     final view = TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
@@ -339,7 +342,7 @@ void main() {
 
   testWidgets('error shows inline, keeps the list and Tentar de novo refetches', (tester) async {
     final github = MockGitHubRepository(inboxData: Inbox(items: [_item(number: 1)]));
-    await _open(tester, github);
+    await _open(tester, github, location: _orgInbox);
     expect(github.inboxCalls, hasLength(1));
 
     github.inboxError = const GitHubException('gh sem login (gh auth login)');
@@ -365,12 +368,15 @@ void main() {
     expect(find.byKey(_badge), findsNothing);
   });
 
-  testWidgets('badge shows the count on every tab and follows the 120 s refresh', (tester) async {
+  testWidgets('badge only on the org review tab, following the 120 s refresh', (tester) async {
     final github = MockGitHubRepository(
       inboxData: Inbox(items: [_item(number: 1), _item(number: 2), _item(number: 3)]),
     );
     await _open(tester, github, location: '/p/x/flow');
+    expect(find.byKey(_badge), findsNothing, reason: 'a project route has no review tab');
 
+    _router(tester).go('/o/demo/fila');
+    await tester.pumpAndSettle();
     expect(tester.widget<Text>(find.descendant(of: find.byKey(_badge), matching: find.byType(Text))).data, '3');
 
     github.inboxData = Inbox(items: [_item(number: 1)]);
@@ -388,7 +394,7 @@ void main() {
   testWidgets('endpoint null: 0 calls and "engine iniciando"; emitted endpoint fetches once', (tester) async {
     final engine = _LateEngine();
     final github = MockGitHubRepository(inboxData: Inbox(items: [_item(number: 1)]));
-    await _open(tester, github, engine: engine);
+    await _open(tester, github, engine: engine, location: _orgInbox);
 
     expect(github.inboxCalls, isEmpty);
     expect(find.descendant(of: find.byType(InboxPage), matching: find.text('engine iniciando')), findsOneWidget);

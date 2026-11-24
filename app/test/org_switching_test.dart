@@ -128,6 +128,11 @@ class _Sessions extends MockSessionsRepository {
   }
 }
 
+class _NoSessions extends MockSessionsRepository {
+  @override
+  Stream<List<SessionSummary>> watchSessions() => Stream.value(const []);
+}
+
 Finder _header() => find.byKey(const ValueKey('current-org'));
 
 String _org(WidgetTester tester) => tester.widget<Text>(_header()).data!;
@@ -345,9 +350,33 @@ void main() {
         findsOneWidget,
         reason: 'alpha 1; beta (B), hid (hidden) and ghost (unknown) do not count in A',
       );
-      expect(find.byTooltip('1 aguardando você'), findsNWidgets(2), reason: 'the project and Minha fila (all of A)');
-      expect(find.byTooltip('4 aguardando você'), findsNothing);
-      expect(find.text('1 aguardando você'), findsOneWidget);
+      expect(find.byKey(const ValueKey('project-pending-alpha')), findsOneWidget, reason: 'permission pending');
+      expect(find.byKey(const ValueKey('project-tile-gamma')), findsOneWidget);
+      expect(find.byKey(const ValueKey('project-pending-gamma')), findsNothing, reason: 'nothing waits in gamma');
+      expect(find.byKey(const ValueKey('project-pending-hid')), findsNothing, reason: 'hidden');
+      expect(find.byKey(const ValueKey('project-pending-beta')), findsNothing, reason: 'beta is in B');
+    });
+
+    testWidgets('a blocked decision marks the project as pending without any session', (tester) async {
+      await tester.pumpWidget(
+        ClaudeFlowApp(repository: MockFlowRepository(), sessions: _NoSessions(), engine: const MockEngineController()),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('project-pending-demo-app')), findsOneWidget, reason: 'its cycle is stopped');
+      expect(find.byKey(const ValueKey('project-tile-web-console')), findsOneWidget);
+      expect(find.byKey(const ValueKey('project-pending-web-console')), findsNothing);
+    });
+
+    testWidgets('a project without a cycle says so only in the tooltip of its row', (tester) async {
+      await pump(tester);
+
+      _router(tester).go('/p/loose/flow');
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('project-tile-loose')), findsOneWidget, reason: 'the only project of Sem org');
+      expect(find.text('sem ciclo ativo'), findsNothing);
+      expect(find.byTooltip('sem ciclo ativo'), findsOneWidget);
     });
 
     testWidgets('sessions tab: other projects stay inside the org', (tester) async {
@@ -398,7 +427,7 @@ void main() {
 
       await tester.tap(_sidebar('gamma'));
       await tester.pumpAndSettle();
-      expect(find.text('sem ciclo ativo'), findsWidgets);
+      expect(find.byTooltip('sem ciclo ativo'), findsWidgets);
 
       await _meta(tester, LogicalKeyboardKey.keyK);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);

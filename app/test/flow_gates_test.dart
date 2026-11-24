@@ -137,7 +137,7 @@ Finder _inCard(Finder matching) => find.descendant(of: _card, matching: matching
 const _gamma = 'gamma';
 
 /// The shell's sidebar, beside the Fluxo.
-const _sidebar = 232.0;
+const _sidebar = 216.0;
 
 /// The gamma fixture (`plan` and `spec` open, `tasks` passed) with the plan stage run by `s-plan` and the challenge
 /// stage by `s-spec`.

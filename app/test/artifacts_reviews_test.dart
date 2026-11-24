@@ -417,11 +417,21 @@ void main() {
 
   testWidgets('artifacts and reviews tabs exist only in a project, not in /o/', (tester) async {
     final router = await _open(tester, '/p/demo-app/flow');
-    expect(find.text('Artefatos'), findsOneWidget);
-    expect(find.text('Reviews'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('group-reference')));
+    await tester.pumpAndSettle();
+    expect(router.routerDelegate.currentConfiguration.uri.path, '/p/demo-app/artifacts');
+    expect(find.byKey(const ValueKey('subtab-artifacts')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('group-prs')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('subtab-reviews')));
+    await tester.pumpAndSettle();
+    expect(router.routerDelegate.currentConfiguration.uri.path, '/p/demo-app/reviews');
 
     router.go('/o/demo/sessions');
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('group-reference')), findsNothing);
+    expect(find.byKey(const ValueKey('subtabs')), findsNothing);
     expect(find.text('Artefatos'), findsNothing);
     expect(find.text('Reviews'), findsNothing);
   });
