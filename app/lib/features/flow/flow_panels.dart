@@ -55,57 +55,215 @@ class StageBanner extends StatelessWidget {
   }
 }
 
-/// An open gate: what it asks and the way to its screen. Built from the report alone, without the session stream.
-class GateDecideRow extends StatelessWidget {
-  const GateDecideRow({super.key, required this.project, required this.gate});
+/// "Etapa n de 8" over one segment per stage, with the link that opens the timeline below it.
+class CycleSteps extends StatelessWidget {
+  const CycleSteps({super.key, required this.steps, required this.open, required this.onToggle});
 
-  final String project;
-  final ReportGate gate;
+  /// `cycleSteps` of the cycle.
+  final ({int position, int total, Map<Stage, StageState> states}) steps;
+  final bool open;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
+    final current = Stage.values[steps.position - 1];
+    Widget segment(Stage s) => Container(
+      key: ValueKey('cycle-step-${s.name}'),
+      height: 4,
       decoration: BoxDecoration(
-        color: c.awaiting.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: c.awaiting.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(2),
+        color: switch (steps.states[s] ?? StageState.pending) {
+          StageState.done => c.textSecondary,
+          StageState.current => c.textPrimary,
+          StageState.blocked => c.fail,
+          StageState.pending => c.border,
+        },
       ),
-      child: Row(
-        children: [
-          Icon(Icons.help_outline, size: 18, color: c.awaiting),
-          const SizedBox(width: 10),
-          Mono(gate.name, color: c.textPrimary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              gateTitle(gate.name, gate.questions.length),
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 12.5, color: c.textPrimary),
+    );
+    return Column(
+      key: const ValueKey('cycle-steps'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Etapa ${steps.position} de ${steps.total}',
+                style: TextStyle(fontSize: 12, color: c.textSecondary),
+              ),
             ),
+            TextButton(
+              key: const ValueKey('cycle-steps-toggle'),
+              style: TextButton.styleFrom(foregroundColor: c.accent),
+              onPressed: onToggle,
+              child: Text(open ? 'ocultar etapas' : 'ver etapas', style: const TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            for (final s in Stage.values) ...[
+              if (s != Stage.values.first) const SizedBox(width: 4),
+              Expanded(child: segment(s)),
+              if (s == current) ...[const SizedBox(width: 6), Mono(s.label, size: 11, color: c.textPrimary)],
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// The cycle's state in one sentence and its one action; renders [now] as `cycleNow` returned it.
+class CycleNowCard extends StatelessWidget {
+  const CycleNowCard({super.key, required this.now, required this.onAction});
+
+  final CycleNow now;
+  final VoidCallback onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final needsYou = now.eyebrow == kNeedsYou;
+    final action = now.action;
+    return Container(
+      key: const ValueKey('cycle-now'),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            now.eyebrow,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: needsYou ? c.warn : c.textSecondary),
           ),
-          const SizedBox(width: 10),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: c.awaiting, foregroundColor: Colors.white),
-            onPressed: () => context.go(gateLocation(project, gate.name)),
-            child: const Text('Decidir', style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 6),
+          Text(
+            now.title,
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: c.textPrimary),
           ),
+          const SizedBox(height: 6),
+          Text(
+            now.detail,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 14, color: c.textSecondary),
+          ),
+          if (action != null) ...[
+            const SizedBox(height: 16),
+            if (needsYou)
+              FilledButton(
+                key: const ValueKey('cycle-now-action'),
+                style: FilledButton.styleFrom(backgroundColor: c.accent, foregroundColor: Colors.white),
+                onPressed: onAction,
+                child: Text(action),
+              )
+            else
+              OutlinedButton(
+                key: const ValueKey('cycle-now-action'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: c.textPrimary,
+                  side: BorderSide(color: c.borderStrong),
+                ),
+                onPressed: onAction,
+                child: Text(action),
+              ),
+          ],
         ],
       ),
     );
   }
 }
 
-/// The request that asks an open gate of [gates] becomes a note without button (the one "Decidir" is the Fluxo row);
-/// any other question keeps its card.
-RequestOverride gateRequestOverride(ReportDoc? gates) => (detail, request) {
-  final gate = sessionGate(gates, detail.summary.id);
-  if (gate == null || matchGateRequest(gate, detail)?.requestId != request.requestId) return null;
+/// The cycle's tasks, one line each; a line opens the task in its newest run with an attempt. Nothing without tasks.
+class CycleTaskList extends StatelessWidget {
+  const CycleTaskList({super.key, required this.project, required this.cycle});
+
+  final String project;
+  final Cycle cycle;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = cycleTaskLines(cycle);
+    if (lines.isEmpty) return const SizedBox.shrink();
+    final done = lines.where((l) => l.state == TaskLineState.done).length;
+    final c = context.colors;
+    return Padding(
+      key: const ValueKey('cycle-tasks'),
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Tasks',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.textPrimary),
+              ),
+              const SizedBox(width: 10),
+              Muted('$done de ${lines.length} prontas'),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (final line in lines) _line(context, line),
+        ],
+      ),
+    );
+  }
+
+  Widget _line(BuildContext context, CycleTaskLine line) {
+    final c = context.colors;
+    final (icon, color) = switch (line.state) {
+      TaskLineState.done => (Icons.check_circle_outline, c.pass),
+      TaskLineState.running => (Icons.play_circle_outline, c.running),
+      TaskLineState.blocked => (Icons.error_outline, c.fail),
+      TaskLineState.queued => (Icons.radio_button_unchecked, c.idle),
+    };
+    final run = line.run;
+    return InkWell(
+      key: ValueKey('cycle-task-${line.id}'),
+      onTap: run == null ? null : () => context.go(taskLocation(project, run, line.id)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          children: [
+            Icon(icon, size: 15, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                line.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: line.state == TaskLineState.running ? FontWeight.w600 : FontWeight.w400,
+                  color: c.textPrimary,
+                ),
+              ),
+            ),
+            if (line.note.isNotEmpty) ...[const SizedBox(width: 10), Muted(line.note, size: 11)],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The request that asks the gate the cycle card shows ([cardGate]) becomes a note without button (the one "Decidir" is
+/// the cycle card); any other question keeps its card.
+RequestOverride gateRequestOverride(StageReport? cardGate) => (detail, request) {
+  final gate = cardGate?.gate;
+  if (gate == null || cardGate!.sessionId != detail.summary.id) return null;
+  if (matchGateRequest(gate, detail)?.requestId != request.requestId) return null;
   return Padding(
     key: ValueKey('flow-gate-request-${gate.name}'),
     padding: const EdgeInsets.symmetric(vertical: 4),
-    child: const Muted('decida na linha Decidir, acima da linha do tempo'),
+    child: const Muted('decida no cartão do ciclo'),
   );
 };
 
@@ -156,81 +314,6 @@ class PassedGates extends StatelessWidget {
 
 /// `/fix` corrects a blocked stage; it is not a stage of the timeline itself.
 bool _isSupport(String command) => command.trimLeft().startsWith('/fix');
-
-const _taskColumns = <(String, double?)>[
-  ('Task', 48),
-  ('Título', null),
-  ('Compl.', 64),
-  ('Modelo inicial → final', 210),
-  ('Tentativas', 80),
-  ('Escaladas', 76),
-  ('Status', 110),
-];
-
-class TasksPanel extends StatelessWidget {
-  const TasksPanel({super.key, required this.cycle});
-
-  final Cycle cycle;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final rows = taskTable(cycle);
-    Widget cell(Widget child, double width) => SizedBox(width: width, child: child);
-    Widget text(String s) => Text(s, style: TextStyle(fontSize: 12, color: c.textSecondary));
-    return Panel(
-      key: const ValueKey('flow-tasks'),
-      title: 'Tasks',
-      child: rows.isEmpty
-          ? const Muted('sem tasks neste ciclo')
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const TableHeaderRow(_taskColumns),
-                for (final t in rows)
-                  Container(
-                    key: ValueKey('flow-task-${t.id}'),
-                    padding: const EdgeInsets.symmetric(vertical: 7),
-                    decoration: BoxDecoration(
-                      border: Border(bottom: BorderSide(color: c.border)),
-                    ),
-                    child: Row(
-                      children: [
-                        cell(Mono(t.id, color: c.textPrimary), 48),
-                        Expanded(
-                          child: Text(t.title, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
-                        ),
-                        cell(
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: ComplexityTag(t.complexity, risk: t.risk),
-                          ),
-                          64,
-                        ),
-                        cell(
-                          Row(
-                            children: [
-                              Flexible(child: TierChip(t.tier0)),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 6),
-                                child: Icon(Icons.arrow_forward, size: 12, color: c.textMuted),
-                              ),
-                              Flexible(child: TierChip(t.tierFinal)),
-                            ],
-                          ),
-                          210,
-                        ),
-                        cell(text('${t.attempts}'), 80),
-                        cell(text('${t.escalations}'), 76),
-                        cell(Align(alignment: Alignment.centerLeft, child: VerdictBadge(t.status)), 110),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-    );
-  }
-}
 
 class VerifyPanel extends StatelessWidget {
   const VerifyPanel({super.key, required this.runs, this.projectPath});

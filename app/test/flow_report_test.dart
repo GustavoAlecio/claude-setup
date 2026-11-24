@@ -84,6 +84,21 @@ Finder _inStage(Stage s, Finder matching) => find.descendant(of: _stage(s), matc
 
 Finder _inPanel(String key, Finder matching) => find.descendant(of: find.byKey(ValueKey(key)), matching: matching);
 
+Finder _byKey(String key) => find.byKey(ValueKey(key));
+
+Future<void> _tapKey(WidgetTester tester, String key) async {
+  await tester.ensureVisible(_byKey(key));
+  await tester.pumpAndSettle();
+  await tester.tap(_byKey(key));
+  await tester.pumpAndSettle();
+}
+
+/// The timeline starts collapsed under the steps bar.
+Future<void> _showStages(WidgetTester tester) => _tapKey(tester, 'cycle-steps-toggle');
+
+/// Cycle card, run, verify, decisions and the closing panels start collapsed under the footer.
+Future<void> _showDetails(WidgetTester tester) => _tapKey(tester, 'cycle-details-toggle');
+
 Future<void> _expand(WidgetTester tester, Stage s) async {
   final chevron = find.byKey(ValueKey('timeline-chevron-${s.name}'));
   await tester.tap(chevron.evaluate().isNotEmpty ? chevron : _inStage(s, find.text(s.label)));
@@ -109,11 +124,18 @@ SessionSummary _session(
   org: org,
 );
 
+Project _footerProject(String branch) => Project(
+  name: 'footer-app',
+  path: '/synthetic/footer-app',
+  cycle: Cycle(stage: Stage.plan, stageMinutes: const {}, runs: const [], tracker: 'AB#77', branch: branch),
+);
+
 void main() {
   group('linha do tempo com relatório (gamma, gen.sh)', () {
     testWidgets('as 8 etapas na ordem do enum, com status do relatório', (tester) async {
       final data = await _loadFixtures(tester);
       await _open(tester, data, '/p/gamma/flow');
+      await _showStages(tester);
 
       final tops = [for (final s in Stage.values) tester.getTopLeft(_stage(s)).dy];
       expect(tops, [...tops]..sort());
@@ -127,6 +149,7 @@ void main() {
     testWidgets('abrir uma etapa mostra resumo, achados, decisões e tentativas; fechar esconde', (tester) async {
       final data = await _loadFixtures(tester);
       await _open(tester, data, '/p/gamma/flow');
+      await _showStages(tester);
       final report = find.byKey(const ValueKey('timeline-report-challenge'));
       expect(report, findsNothing);
 
@@ -151,6 +174,7 @@ void main() {
     testWidgets('mistake aparece com a cor fail e a decisão comum não', (tester) async {
       final data = await _loadFixtures(tester);
       await _open(tester, data, '/p/gamma/flow');
+      await _showStages(tester);
       await _expand(tester, Stage.plan);
       final fail = _colors(tester).fail;
       final report = find.byKey(const ValueKey('timeline-report-plan'));
@@ -192,6 +216,7 @@ void main() {
     testWidgets('artefato leva à aba Artefatos com o doc', (tester) async {
       final data = await _loadFixtures(tester);
       await _open(tester, data, '/p/gamma/flow');
+      await _showStages(tester);
       await _expand(tester, Stage.specify);
 
       await tester.tap(find.widgetWithText(TextButton, 'spec.md'));
@@ -203,6 +228,8 @@ void main() {
     testWidgets('Decisões junta todas as etapas e filtra por autor', (tester) async {
       final data = await _loadFixtures(tester);
       await _open(tester, data, '/p/gamma/flow');
+      expect(_byKey('flow-decisions'), findsNothing);
+      await _showDetails(tester);
       Finder panelText(String t) => _inPanel('flow-decisions', find.textContaining(t, findRichText: true));
 
       for (final t in [
@@ -238,21 +265,18 @@ void main() {
       expect(panelText('Uma tela, sem fluxo de edição.'), findsOneWidget);
     });
 
-    testWidgets('painéis Tasks e Verify vêm do plano e dos runs', (tester) async {
+    testWidgets('Tasks vêm do plano e o Verify dos runs, este só nos detalhes', (tester) async {
       final data = await _loadFixtures(tester);
       await _open(tester, data, '/p/gamma/flow');
 
-      final t1 = find.byKey(const ValueKey('flow-task-T1'));
-      expect(find.descendant(of: t1, matching: find.text('View gamma')), findsOneWidget);
-      expect(
-        find.descendant(of: t1, matching: find.byWidgetPredicate((w) => w is TierChip && w.tier == Tier.sonnet)),
-        findsNWidgets(2),
-      );
-      expect(
-        find.descendant(of: find.byKey(const ValueKey('flow-task-T2')), matching: find.text('Modelo gamma')),
-        findsOneWidget,
-      );
-      expect(find.byKey(const ValueKey('flow-task-V1')), findsNothing);
+      expect(_inPanel('cycle-tasks', find.text('Tasks')), findsOneWidget);
+      expect(_inPanel('cycle-tasks', find.text('2 de 2 prontas')), findsOneWidget);
+      expect(_inPanel('cycle-task-T1', find.text('View gamma')), findsOneWidget);
+      expect(_inPanel('cycle-task-T2', find.text('Modelo gamma')), findsOneWidget);
+      expect(_byKey('cycle-task-V1'), findsNothing);
+
+      expect(_byKey('flow-verify'), findsNothing);
+      await _showDetails(tester);
 
       final first = find.byKey(const ValueKey('flow-verify-verify-20260310T110000Z'));
       final second = find.byKey(const ValueKey('flow-verify-verify-20260310T113000Z'));
@@ -269,12 +293,14 @@ void main() {
     testWidgets('sem report.json cada etapa avisa e Tasks/Verify continuam', (tester) async {
       final data = await _loadFixtures(tester);
       await _open(tester, data, '/p/beta/flow');
+      await _showStages(tester);
+      await _showDetails(tester);
 
       expect(data.firstWhere((p) => p.name == 'beta').cycle!.report, isNull);
       // Without a report the timeline says so once, in its header, not on every row.
       expect(find.text('sem relatório desta etapa'), findsNothing);
       expect(find.text('sem relatório deste ciclo'), findsWidgets);
-      expect(find.byKey(const ValueKey('flow-tasks')), findsOneWidget);
+      expect(_inPanel('cycle-tasks', find.text('0 de 1 prontas')), findsOneWidget);
       expect(find.byKey(const ValueKey('flow-verify')), findsOneWidget);
       expect(_inPanel('flow-decisions', find.text('sem relatório deste ciclo')), findsOneWidget);
       expect(_inStage(Stage.implement, find.text('em andamento')), findsOneWidget);
@@ -294,6 +320,7 @@ void main() {
         ),
       ];
       await _open(tester, data, '/p/versao/flow');
+      await _showStages(tester);
 
       // Without a report the timeline says so once, in its header, not on every row.
       expect(find.text('sem relatório desta etapa'), findsNothing);
@@ -350,25 +377,73 @@ void main() {
       expect(find.byKey(const ValueKey('stage-banner')), findsNothing);
       expect(find.text('Nenhum ciclo ativo. Comece com /kickoff ou /specify.'), findsOneWidget);
     });
+  });
 
-    testWidgets('aparece no topo também com ciclo ativo', (tester) async {
-      await _open(
-        tester,
-        MockFlowRepository().data,
-        '/p/notifications-api/flow',
-        sessions: _Sessions([
-          _session(
-            's-verify',
-            project: 'notifications-api',
-            command: '/verify',
-            status: SessionStatus.waitingPermission,
-          ),
-        ]),
-      );
+  group('tasks e rodapé do ciclo', () {
+    testWidgets('tocar numa task com tentativas leva à tela da task', (tester) async {
+      final data = await _loadFixtures(tester);
+      await _open(tester, data, '/p/alpha/flow');
 
-      final banner = find.byKey(const ValueKey('stage-banner'));
-      expect(find.text('Etapa em andamento: /verify (aguardando permissão)'), findsOneWidget);
-      expect(tester.getTopLeft(banner).dy, lessThan(tester.getTopLeft(_stage(Stage.kickoff)).dy));
+      expect(_inPanel('cycle-tasks', find.text('1 de 3 prontas')), findsOneWidget);
+      for (final id in ['T1', 'T2', 'T3']) {
+        expect(_byKey('cycle-task-$id'), findsOneWidget, reason: id);
+      }
+
+      await _tapKey(tester, 'cycle-task-T2');
+      expect(_location(tester), '/p/alpha/runs/impl-20260310T101500Z/T2');
+    });
+
+    testWidgets('task sem tentativa não tem toque', (tester) async {
+      final data = await _loadFixtures(tester);
+      await _open(tester, data, '/p/alpha/flow');
+
+      await _tapKey(tester, 'cycle-task-T3');
+      expect(_location(tester), '/p/alpha/flow');
+    });
+
+    testWidgets('sem tasks a seção não existe', (tester) async {
+      await _open(tester, [_footerProject('feat/curta')], '/p/footer-app/flow');
+
+      expect(_byKey('cycle-now'), findsOneWidget);
+      expect(_byKey('cycle-tasks'), findsNothing);
+    });
+
+    testWidgets('o rodapé mostra card, branch e custo; verify e decisões só depois de abrir os detalhes', (
+      tester,
+    ) async {
+      await _open(tester, [_footerProject('feat/curta')], '/p/footer-app/flow');
+
+      expect(_inPanel('cycle-footer', find.text('AB#77')), findsOneWidget);
+      expect(_inPanel('cycle-footer', find.text('feat/curta')), findsOneWidget);
+      expect(_inPanel('cycle-footer', _byKey('flow-cycle-cost')), findsOneWidget);
+      expect(_inPanel('cycle-footer', _byKey('flow-cycle-menu')), findsOneWidget);
+      expect(_inPanel('cycle-footer', find.text('detalhes do ciclo')), findsOneWidget);
+      expect(_byKey('flow-verify'), findsNothing);
+      expect(_byKey('flow-decisions'), findsNothing);
+
+      await _showDetails(tester);
+
+      expect(_byKey('flow-verify'), findsOneWidget);
+      expect(_byKey('flow-decisions'), findsOneWidget);
+      expect(_inPanel('cycle-footer', find.text('ocultar detalhes')), findsOneWidget);
+      // The details repeat the cost in the Ciclo panel; the key stays on the footer's alone.
+      expect(_byKey('flow-cycle-cost'), findsOneWidget);
+      expect(find.text('Custo'), findsOneWidget);
+
+      await _showDetails(tester);
+      expect(_byKey('flow-verify'), findsNothing);
+    });
+
+    testWidgets('branch de 60 caracteres a 1440 de largura não estoura o rodapé', (tester) async {
+      final branch = 'feat/${'x' * 55}';
+      expect(branch, hasLength(60));
+      await _open(tester, [_footerProject(branch)], '/p/footer-app/flow', size: const Size(1440, 900));
+
+      expect(_inPanel('cycle-footer', find.text(branch)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await _showDetails(tester);
+      expect(tester.takeException(), isNull);
     });
   });
 
@@ -407,6 +482,7 @@ void main() {
       await tester.pump();
       _router(tester).go('/p/closing-app/flow');
       await tester.pumpAndSettle();
+      await _showDetails(tester);
       return docs;
     }
 

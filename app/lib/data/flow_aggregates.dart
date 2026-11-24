@@ -126,6 +126,186 @@ Map<Stage, StageState> derivedStageStates(Cycle cycle) {
   };
 }
 
+/// The report's status for [stage] when it has an entry, else [derived]: the timeline and the steps bar agree.
+StageState stageStateOf(Stage stage, ReportDoc? report, Map<Stage, StageState> derived) =>
+    switch (report?.stage(stage)?.status) {
+      ReportStatus.done => StageState.done,
+      ReportStatus.running => StageState.current,
+      ReportStatus.blocked => StageState.blocked,
+      null => derived[stage] ?? StageState.pending,
+    };
+
+/// Position (1-based) of the cycle's stage, the stage count and each stage's state, as the timeline reads them.
+({int position, int total, Map<Stage, StageState> states}) cycleSteps(Cycle cycle) {
+  final derived = derivedStageStates(cycle);
+  return (
+    position: cycle.stage.index + 1,
+    total: Stage.values.length,
+    states: {for (final s in Stage.values) s: stageStateOf(s, cycle.report, derived)},
+  );
+}
+
+enum TaskLineState { done, running, blocked, queued }
+
+/// [run] is the newest run with an attempt of the task; `null` leaves the line without a destination.
+typedef CycleTaskLine = ({String id, String title, TaskLineState state, String note, String? run});
+
+List<CycleTaskLine> cycleTaskLines(Cycle cycle) => [
+  for (final row in taskTable(cycle))
+    (
+      id: row.id,
+      title: row.title,
+      state: switch (row.status) {
+        Verdict.pass => TaskLineState.done,
+        Verdict.running => TaskLineState.running,
+        Verdict.blocked || Verdict.fail => TaskLineState.blocked,
+        Verdict.pending || Verdict.inconclusive => TaskLineState.queued,
+      },
+      note: row.tier0 != row.tierFinal
+          ? '${row.tier0.name} → ${row.tierFinal.name}'
+          : row.attempts > 1
+          ? '${row.attempts} tentativas'
+          : '',
+      run: cycle.runs.where((r) => r.tasks.any((t) => t.id == row.id && t.attempts.isNotEmpty)).firstOrNull?.id,
+    ),
+];
+
+const kNeedsYou = 'Precisa de você';
+
+enum CycleNowKind { blocked, gate, request, paused, running, done, idle, next, stalled, waiting }
+
+/// [action] is the button label; [route] is `null` when the action is not a navigation.
+typedef CycleNow = ({CycleNowKind kind, String eyebrow, String title, String detail, String? action, String? route});
+
+String pendingRequestsTitle(int n) => n == 1 ? '1 pedido esperando resposta' : '$n pedidos esperando resposta';
+
+/// The cycle's state in one sentence and the one action it asks; the first case that matches wins. Only for a project
+/// with a cycle.
+CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
+  final cycle = project.cycle!;
+  final label = cycle.stage.label;
+  final report = gateReport(cycle);
+
+  if (blockedDecision(project) case final decision?) {
+    return (
+      kind: CycleNowKind.blocked,
+      eyebrow: kNeedsYou,
+      title: 'A task ${decision.task.id} travou',
+      detail: '${decision.task.title}: o diagnóstico espera a sua decisão',
+      action: 'Decidir',
+      route: decisionLocation(project.name, decision),
+    );
+  }
+  if (openGates(report).firstOrNull?.gate case final gate?) {
+    final summary = gate.summary.trim();
+    return (
+      kind: CycleNowKind.gate,
+      eyebrow: kNeedsYou,
+      title: gateTitle(gate.name, gate.questions.length),
+      detail: summary.isEmpty ? 'Nada roda antes da sua resposta.' : summary,
+      action: 'Decidir',
+      route: gateLocation(project.name, gate.name),
+    );
+  }
+  final pending = pendingProjectSessions(sessions, project.name);
+  if (pending.isNotEmpty) {
+    return (
+      kind: CycleNowKind.request,
+      eyebrow: kNeedsYou,
+      title: pendingRequestsTitle(pending.fold(0, (n, s) => n + pendingOf(s))),
+      detail: pending.first.title,
+      action: 'Responder',
+      route: sessionLocation(pending.first),
+    );
+  }
+  if (cycle.pausedAt case final since?) {
+    // The parser stores a pause without a readable date as the epoch.
+    final local = since.toLocal();
+    final when = since.millisecondsSinceEpoch == 0
+        ? ''
+        : 'Pausado desde ${local.day.toString().padLeft(2, '0')}/${local.month.toString().padLeft(2, '0')}. ';
+    return (
+      kind: CycleNowKind.paused,
+      eyebrow: 'Ciclo pausado',
+      title: 'Pausado na etapa $label',
+      detail: '${when}Nada roda até você retomar.',
+      action: 'Retomar',
+      route: null,
+    );
+  }
+  final live = runningStageSession(sessions, project);
+  if (live != null && live.status == SessionStatus.running) {
+    return (
+      kind: CycleNowKind.running,
+      eyebrow: 'Nada precisa de você',
+      title: _runningTitle(cycle, live),
+      detail: live.title,
+      action: 'Acompanhar a conversa',
+      route: sessionLocation(live),
+    );
+  }
+  if (report?.stage(Stage.complete)?.status == ReportStatus.done) {
+    return (
+      kind: CycleNowKind.done,
+      eyebrow: 'Nada precisa de você',
+      title: 'Ciclo concluído',
+      detail: 'O relatório e o PR estão nos detalhes do ciclo.',
+      action: null,
+      route: null,
+    );
+  }
+  if (live != null) {
+    return (
+      kind: CycleNowKind.idle,
+      eyebrow: kNeedsYou,
+      title: 'A conversa da etapa $label está parada',
+      detail: live.title,
+      action: 'Abrir a conversa',
+      route: sessionLocation(live),
+    );
+  }
+  if (cycle.stage != Stage.complete && report?.stage(cycle.stage)?.status == ReportStatus.done) {
+    final next = Stage.values[cycle.stage.index + 1].label;
+    return (
+      kind: CycleNowKind.next,
+      eyebrow: kNeedsYou,
+      title: 'Etapa $label concluída',
+      detail: 'A próxima é /$next.',
+      action: 'Rodar /$next',
+      route: null,
+    );
+  }
+  if (orphanCurrentStage(cycle, null, hasSession: false) != null) {
+    return (
+      kind: CycleNowKind.stalled,
+      eyebrow: kNeedsYou,
+      title: 'A etapa $label parou sem terminar',
+      detail: 'Nenhuma conversa está rodando esta etapa.',
+      action: 'Retomar /$label',
+      route: null,
+    );
+  }
+  return (
+    kind: CycleNowKind.waiting,
+    eyebrow: kNeedsYou,
+    title: 'Etapa $label',
+    detail: 'Nenhuma conversa está rodando. Use a paleta para seguir.',
+    action: 'Abrir a paleta',
+    route: null,
+  );
+}
+
+String _runningTitle(Cycle cycle, SessionSummary session) {
+  if (skillOf(session.skill ?? session.command) == '/fix') return 'Correção em andamento (/fix)';
+  if (cycle.stage == Stage.implement) {
+    final running = cycle.latestRun?.tasks.where((t) => t.status == Verdict.running).firstOrNull;
+    final table = taskTable(cycle);
+    final at = running == null ? -1 : table.indexWhere((r) => r.id == running.id);
+    if (at >= 0) return 'Implementando a task ${at + 1} de ${table.length}';
+  }
+  return 'Etapa ${cycle.stage.label} em andamento';
+}
+
 /// The stage the side panel shows ([selected], else the cycle's) when it reads "em andamento" with no session to
 /// show; `null` otherwise. The panel then points to the palette instead of a bare placeholder.
 Stage? orphanCurrentStage(Cycle? cycle, Stage? selected, {required bool hasSession}) {
@@ -186,14 +366,11 @@ List<SessionSummary> awaitingSessions(List<SessionSummary> pending, String? show
     if (s.id != shownSessionId) s,
 ];
 
-/// [sessions] minus those whose stage holds an open gate of [gates]: the Fluxo's "Decidir" row already asks it.
-List<SessionSummary> withoutOpenGateSessions(List<SessionSummary> sessions, ReportDoc? gates) {
-  final ids = {for (final s in openGates(gates)) s.sessionId};
-  return [
-    for (final s in sessions)
-      if (!ids.contains(s.id)) s,
-  ];
-}
+/// [sessions] minus the one whose stage holds [cardGate]: the Fluxo's cycle card already asks it.
+List<SessionSummary> withoutOpenGateSessions(List<SessionSummary> sessions, StageReport? cardGate) => [
+  for (final s in sessions)
+    if (cardGate == null || s.id != cardGate.sessionId) s,
+];
 
 /// Ended stage sessions for the awaiting card, minus the one the side panel already shows with its Retomar button.
 List<EndedStageSession> awaitingEnded(List<EndedStageSession> ended, String? shownSessionId) => [
@@ -232,7 +409,9 @@ String findingLocation(String file, int? line, String? root) {
 
 /// Where the blocked task's diagnosis (and its decision buttons) lives.
 String decisionLocation(String project, ({Run run, TaskRun task}) decision) =>
-    '/p/$project/runs/${decision.run.id}/${decision.task.id}';
+    taskLocation(project, decision.run.id, decision.task.id);
+
+String taskLocation(String project, String runId, String taskId) => '/p/$project/runs/$runId/$taskId';
 
 /// [pending] (sessions per project) plus one for each project whose cycle waits on a [blockedDecision]: both are
 /// "aguardando você".
@@ -268,6 +447,14 @@ List<StageReport> passedGates(ReportDoc? report) => [
   for (final s in _ownedGates(report))
     if (s.gate!.status == GateStatus.passed) s,
 ];
+
+/// The open gate the cycle card shows (`cycleNow` kind `gate`): the first open one, and none while a blocked task takes
+/// the card.
+StageReport? cardGate(Project? project) {
+  final cycle = project?.cycle;
+  if (project == null || cycle == null || blockedDecision(project) != null) return null;
+  return openGates(gateReport(cycle)).firstOrNull;
+}
 
 /// Open gate of session [sessionId]: one session runs several stages, so the first in pipeline order wins.
 ReportGate? sessionGate(ReportDoc? report, String sessionId) =>

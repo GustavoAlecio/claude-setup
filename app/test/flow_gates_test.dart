@@ -142,7 +142,8 @@ const _sidebar = 216.0;
 /// The gamma fixture (`plan` and `spec` open, `tasks` passed) with the plan stage run by `s-plan` and the challenge
 /// stage by `s-spec`.
 /// [answered] records an answer on every plan question while the gate stays `open`, as the skill does mid-write.
-Project _gammaProject({bool current = true, bool answered = false}) {
+/// Without [specOpen] the spec gate is approved and `plan` is the first open gate.
+Project _gammaProject({bool current = true, bool answered = false, bool specOpen = true, bool blocked = false}) {
   final doc = jsonDecode(File('test/fixtures/workflow/gamma/report.json').readAsStringSync()) as Map<String, dynamic>;
   final stages = (doc['stages'] as List).cast<Map<String, dynamic>>();
   final plan = stages.firstWhere((s) => s['stage'] == 'plan');
@@ -152,14 +153,33 @@ Project _gammaProject({bool current = true, bool answered = false}) {
       q['answer'] = ((q['options'] as List).first as Map<String, dynamic>)['id'];
     }
   }
-  stages.firstWhere((s) => s['stage'] == 'challenge')['session_id'] = 's-spec';
+  final challenge = stages.firstWhere((s) => s['stage'] == 'challenge');
+  challenge['session_id'] = 's-spec';
+  if (!specOpen) (challenge['gate'] as Map<String, dynamic>)['status'] = 'approved';
   return Project(
     name: _gamma,
     path: '/synthetic/$_gamma',
     cycle: Cycle(
       stage: Stage.plan,
       stageMinutes: const {},
-      runs: const [],
+      runs: [
+        if (blocked)
+          const Run(
+            id: 'r1',
+            kind: 'implement',
+            status: Verdict.blocked,
+            startedAt: '2026-01-01T00:00:00Z',
+            tasks: [
+              TaskRun(
+                id: 'T2',
+                title: 'Regra pura',
+                complexity: Complexity.m,
+                tier0: Tier.sonnet,
+                status: Verdict.blocked,
+              ),
+            ],
+          ),
+      ],
       report: parseReport(jsonEncode(doc)),
       reportIsCurrent: current,
     ),
@@ -194,6 +214,8 @@ Future<void> _openGamma(
   bool withSpec = false,
   bool withOther = false,
   bool answered = false,
+  bool specOpen = true,
+  bool blocked = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -213,7 +235,7 @@ Future<void> _openGamma(
   await tester.pumpWidget(
     ClaudeFlowApp(
       repository: MockFlowRepository(
-        data: [_gammaProject(current: current, answered: answered)],
+        data: [_gammaProject(current: current, answered: answered, specOpen: specOpen, blocked: blocked)],
       ),
       sessions: sessions,
       engine: const MockEngineController(),
@@ -225,6 +247,11 @@ Future<void> _openGamma(
 }
 
 Finder _byKey(String key) => find.byKey(ValueKey(key));
+
+final _now = _byKey('cycle-now');
+final _action = _byKey('cycle-now-action');
+
+Finder _inNow(Finder matching) => find.descendant(of: _now, matching: matching);
 
 /// Below the split width the side panel lives in the drawer.
 Future<void> _revealSide(WidgetTester tester) async {
@@ -584,22 +611,23 @@ void main() {
   });
 
   group('gate no Fluxo', () {
-    // Widths of the Fluxo itself: 1400 keeps the side panel next to the timeline, 1000 puts it in the drawer.
+    // Widths of the Fluxo itself: 1400 keeps the side panel next to the cycle column, 1000 puts it in the drawer.
     for (final width in [1400.0, 1000.0]) {
-      testWidgets('Fluxo com $width px: Decidir acima da linha do tempo e toque leva à rota', (tester) async {
-        await _openGamma(tester, size: Size(width + _sidebar, 1400));
+      testWidgets('Fluxo com $width px: o cartão mostra o gate de plano e Decidir leva à rota', (tester) async {
+        await _openGamma(tester, size: Size(width + _sidebar, 1400), specOpen: false);
 
-        final row = _byKey('flow-gate-row-plan');
-        expect(row, findsOneWidget);
-        expect(_byKey('flow-gate-row-spec'), findsOneWidget);
-        expect(_byKey('flow-gate-row-tasks'), findsNothing);
+        expect(_inNow(find.text('Precisa de você')), findsOneWidget);
+        expect(_inNow(find.text('3 decisões antes de gerar as tasks')), findsOneWidget);
         expect(
-          tester.getTopLeft(row).dy,
-          lessThan(tester.getTopLeft(find.byKey(const ValueKey('timeline-stage-kickoff'))).dy),
+          _inNow(find.text('Plano em duas tasks, com a tela gamma atrás de um repositório novo.')),
+          findsOneWidget,
         );
-        expect(find.descendant(of: row, matching: find.text('3 decisões antes de gerar as tasks')), findsOneWidget);
+        expect(tester.widget(_action), isA<FilledButton>());
+        expect(find.descendant(of: _action, matching: find.text('Decidir')), findsOneWidget);
+        expect(find.text('Decidir'), findsOneWidget);
+        expect(_byKey('timeline-stage-kickoff'), findsNothing);
 
-        await tester.tap(find.descendant(of: row, matching: find.text('Decidir')));
+        await tester.tap(_action);
         await tester.pumpAndSettle();
         expect(_location(tester), '/p/$_gamma/gate/plan');
       });
@@ -607,17 +635,16 @@ void main() {
       testWidgets('Fluxo com $width px: perguntas todas respondidas com o gate open mantêm o título de decisões', (
         tester,
       ) async {
-        await _openGamma(tester, size: Size(width + _sidebar, 1400), answered: true);
+        await _openGamma(tester, size: Size(width + _sidebar, 1400), answered: true, specOpen: false);
 
-        final row = _byKey('flow-gate-row-plan');
-        expect(find.descendant(of: row, matching: find.text('3 decisões antes de gerar as tasks')), findsOneWidget);
-        expect(find.descendant(of: row, matching: find.text('Aprovar o plano?')), findsNothing);
+        expect(_inNow(find.text('3 decisões antes de gerar as tasks')), findsOneWidget);
+        expect(_inNow(find.text('Aprovar o plano?')), findsNothing);
       });
 
       testWidgets('Fluxo com $width px: a sessão da etapa mostra a nota sem botão no lugar do QuestionCard do gate', (
         tester,
       ) async {
-        await _openGamma(tester, size: Size(width + _sidebar, 1400));
+        await _openGamma(tester, size: Size(width + _sidebar, 1400), specOpen: false);
         expect(find.byKey(const ValueKey('flow-drawer-toggle')), width >= 1200 ? findsNothing : findsOneWidget);
         await _revealSide(tester);
 
@@ -626,21 +653,44 @@ void main() {
         expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsNothing);
 
         expect(find.descendant(of: request, matching: find.text('Decidir')), findsNothing);
-        expect(
-          find.descendant(of: request, matching: find.text('decida na linha Decidir, acima da linha do tempo')),
-          findsOneWidget,
-        );
+        expect(find.descendant(of: request, matching: find.text('decida no cartão do ciclo')), findsOneWidget);
+        expect(find.textContaining('acima da linha do tempo'), findsNothing);
       });
 
-      testWidgets('Fluxo com $width px: um só botão Decidir por gate na tela', (tester) async {
+      testWidgets('Fluxo com $width px: com dois gates abertos, um só Decidir na tela, o do primeiro gate', (
+        tester,
+      ) async {
         await _openGamma(tester, size: Size(width + _sidebar, 1400), withSpec: true);
         await _revealSide(tester);
 
-        expect(find.text('Decidir'), findsNWidgets(2));
-        expect(find.descendant(of: _byKey('flow-gate-row-plan'), matching: find.text('Decidir')), findsOneWidget);
-        expect(find.descendant(of: _byKey('flow-gate-row-spec'), matching: find.text('Decidir')), findsOneWidget);
+        expect(find.text('Decidir'), findsOneWidget);
+        expect(find.descendant(of: _action, matching: find.text('Decidir')), findsOneWidget);
+        expect(_inNow(find.text('Aprovar a spec?')), findsOneWidget);
+        expect(_inNow(find.text('3 decisões antes de gerar as tasks')), findsNothing);
       });
     }
+
+    testWidgets(
+      'com spec e plano abertos, a pergunta do plano continua respondível no painel e a sessão no Aguardando',
+      (tester) async {
+        await _openGamma(tester, withSpec: true);
+        await _revealSide(tester);
+
+        expect(_inNow(find.text('Aprovar a spec?')), findsOneWidget);
+        expect(_byKey('flow-gate-request-plan'), findsNothing);
+        expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsWidgets);
+        expect(_byKey('awaiting-s-spec'), findsNothing);
+      },
+    );
+
+    testWidgets('com task travada e gate aberto, a pergunta do gate continua respondível no painel', (tester) async {
+      await _openGamma(tester, blocked: true, specOpen: false);
+      await _revealSide(tester);
+
+      expect(_inNow(find.text('A task T2 travou')), findsOneWidget);
+      expect(_byKey('flow-gate-request-plan'), findsNothing);
+      expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsOneWidget);
+    });
 
     testWidgets('Aguardando você omite a sessão do gate; pergunta sem gate mantém o card', (tester) async {
       await _openGamma(tester, withSpec: true, withOther: true);
@@ -662,16 +712,13 @@ void main() {
       expect(_byKey('flow-gate-request-plan'), findsNothing);
     });
 
-    testWidgets('Passou sem você lista o gate passed abaixo da linha do tempo e abre a tela dele', (tester) async {
+    testWidgets('Passou sem você lista o gate passed abaixo do cartão do ciclo e abre a tela dele', (tester) async {
       await _openGamma(tester);
 
       final passed = _byKey('flow-passed-tasks');
       expect(passed, findsOneWidget);
       expect(_byKey('flow-passed-plan'), findsNothing);
-      expect(
-        tester.getTopLeft(passed).dy,
-        greaterThan(tester.getTopLeft(find.byKey(const ValueKey('timeline-stage-kickoff'))).dy),
-      );
+      expect(tester.getTopLeft(passed).dy, greaterThan(tester.getBottomLeft(_now).dy));
 
       await tester.tap(find.descendant(of: passed, matching: find.text('ver')));
       await tester.pumpAndSettle();
@@ -682,24 +729,32 @@ void main() {
       await _openGamma(tester, current: false);
       await _revealSide(tester);
 
-      expect(_byKey('flow-gate-row-plan'), findsNothing);
+      expect(find.text('Decidir'), findsNothing);
+      expect(find.descendant(of: _action, matching: find.text('Responder')), findsOneWidget);
       expect(_byKey('flow-passed-tasks'), findsNothing);
       expect(find.descendant(of: _side, matching: find.byType(QuestionCard)), findsOneWidget);
     });
   });
 
   group('gate pr no Fluxo', () {
-    testWidgets('Decidir mostra o pr depois do tasks e leva à tela do gate pr', (tester) async {
+    testWidgets('com tasks e pr abertos o cartão pede o tasks, o primeiro na ordem do pipeline', (tester) async {
       await _openDelta(tester, tasks: 'open', pr: 'open');
 
-      final tasks = _byKey('flow-gate-row-tasks');
-      final pr = _byKey('flow-gate-row-pr');
-      expect(tasks, findsOneWidget);
-      expect(pr, findsOneWidget);
-      expect(tester.getTopLeft(pr).dy, greaterThan(tester.getTopLeft(tasks).dy));
-      expect(find.descendant(of: pr, matching: find.text('2 pontos antes do PR')), findsOneWidget);
+      expect(find.text('Decidir'), findsOneWidget);
+      expect(_inNow(find.text('2 pontos antes do PR')), findsNothing);
 
-      await tester.tap(find.descendant(of: pr, matching: find.text('Decidir')));
+      await tester.tap(_action);
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/p/$_delta/gate/tasks');
+    });
+
+    testWidgets('só o pr aberto: o cartão mostra os pontos e Decidir leva à tela do gate pr', (tester) async {
+      await _openDelta(tester, tasks: 'passed', pr: 'open');
+
+      expect(_inNow(find.text('2 pontos antes do PR')), findsOneWidget);
+      expect(find.descendant(of: _action, matching: find.text('Decidir')), findsOneWidget);
+
+      await tester.tap(_action);
       await tester.pumpAndSettle();
       expect(_location(tester), '/p/$_delta/gate/pr');
     });

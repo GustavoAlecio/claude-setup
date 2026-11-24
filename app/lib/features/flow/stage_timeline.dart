@@ -45,13 +45,6 @@ class _StageTimelineState extends State<StageTimeline> with SessionLauncher<Stag
   @override
   String get logName => 'StageTimeline';
 
-  StageState _state(Stage s, StageReport? entry) => switch (entry?.status) {
-    ReportStatus.done => StageState.done,
-    ReportStatus.running => StageState.current,
-    ReportStatus.blocked => StageState.blocked,
-    null => widget.derived[s] ?? StageState.pending,
-  };
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -73,7 +66,7 @@ class _StageTimelineState extends State<StageTimeline> with SessionLauncher<Stag
 
   Widget _stage(BuildContext context, Stage s, StageReport? entry) {
     final c = context.colors;
-    final state = _state(s, entry);
+    final state = stageStateOf(s, widget.report, widget.derived);
     final expanded = entry != null && _expanded.contains(s);
     final minutes = widget.stageMinutes[s];
     final header = Padding(

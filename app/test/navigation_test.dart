@@ -46,12 +46,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Favoritos offline'), findsWidgets);
-    // Next to the side panel the run summary stacks below the timeline and the cycle card.
-    await tester.scrollUntilVisible(
-      find.textContaining('T4 bloqueou'),
-      300,
-      scrollable: find.ancestor(of: find.text('Linha do tempo'), matching: find.byType(Scrollable)).first,
-    );
+    // The run summary lives in the cycle details, collapsed under the footer.
+    expect(find.textContaining('T4 bloqueou'), findsNothing);
+    final details = find.byKey(const ValueKey('cycle-details-toggle'));
+    await tester.ensureVisible(details);
+    await tester.pumpAndSettle();
+    await tester.tap(details);
+    await tester.pumpAndSettle();
     expect(find.textContaining('T4 bloqueou'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('subtab-runs')));
@@ -120,15 +121,24 @@ void main() {
     expect(repo.autoMode, isFalse);
   });
 
-  testWidgets('a blocked task puts a decision banner on top of the Fluxo that opens the diagnosis', (tester) async {
+  testWidgets('a blocked task takes the cycle card, whose Decidir opens the diagnosis', (tester) async {
     await tester.pumpWidget(_app(MockFlowRepository()));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('flow-decision-banner')), findsOneWidget);
-    await tester.tap(find.text('Decidir'));
+    final now = find.byKey(const ValueKey('cycle-now'));
+    final action = find.byKey(const ValueKey('cycle-now-action'));
+    expect(find.descendant(of: now, matching: find.text('Precisa de você')), findsOneWidget);
+    expect(find.descendant(of: now, matching: find.text('A task T4 travou')), findsOneWidget);
+    expect(tester.widget(action), isA<FilledButton>());
+    expect(find.descendant(of: action, matching: find.text('Decidir')), findsOneWidget);
+    expect(find.text('Decidir'), findsOneWidget);
+    expect(find.byKey(const ValueKey('cycle-tasks')), findsOneWidget);
+
+    await tester.tap(action);
     await tester.pumpAndSettle();
+    expect(_route(tester), matches(RegExp(r'^/p/demo-app/runs/[^/]+/T4$')));
     expect(find.textContaining('diagnóstico', findRichText: true), findsWidgets);
-    expect(find.byKey(const ValueKey('flow-decision-banner')), findsNothing);
+    expect(now, findsNothing);
   });
 
   testWidgets('pending task row is not navigable', (tester) async {

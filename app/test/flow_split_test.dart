@@ -134,6 +134,9 @@ Future<_Sessions> _open(
   List<SessionSummary> list,
   Map<String, List<Map<String, Object?>>> logs, {
   Size size = const Size(1600, 1400),
+  String location = '/p/$_project/flow',
+  List<Project> others = const [],
+  bool settle = true,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -141,16 +144,40 @@ Future<_Sessions> _open(
   final sessions = _Sessions(list, logs);
   await tester.pumpWidget(
     ClaudeFlowApp(
-      repository: MockFlowRepository(data: [project]),
+      repository: MockFlowRepository(data: [project, ...others]),
       sessions: sessions,
       engine: const MockEngineController(),
     ),
   );
   await tester.pump();
-  _router(tester).go('/p/$_project/flow');
-  await tester.pumpAndSettle();
+  _router(tester).go(location);
+  // A running session's typing indicator never settles.
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+  }
   return sessions;
 }
+
+Finder _byKey(String key) => find.byKey(ValueKey(key));
+
+Future<void> _tapKey(WidgetTester tester, String key) async {
+  await tester.ensureVisible(_byKey(key));
+  await tester.pumpAndSettle();
+  await tester.tap(_byKey(key));
+  await tester.pumpAndSettle();
+}
+
+/// The timeline starts collapsed under the steps bar.
+Future<void> _showStages(WidgetTester tester) => _tapKey(tester, 'cycle-steps-toggle');
+
+final _timeline = _byKey('timeline-stage-kickoff');
+final _now = _byKey('cycle-now');
+final _action = _byKey('cycle-now-action');
+
+Finder _inNow(Finder f) => find.descendant(of: _now, matching: f);
 
 GoRouter _router(WidgetTester tester) => GoRouter.of(tester.element(find.byType(Scaffold).first));
 
@@ -187,6 +214,7 @@ void main() {
 
   testWidgets('o painel mostra a sessão em andamento ao lado da linha do tempo', (tester) async {
     await _open(tester, _withCycle(_twoStages), list, logs);
+    await _showStages(tester);
 
     expect(_side, findsOneWidget);
     expect(_inFeed(_md('Texto do desafio.')), findsOneWidget);
@@ -203,6 +231,7 @@ void main() {
     tester,
   ) async {
     await _open(tester, _withCycle(_twoStages), list, logs);
+    await _showStages(tester);
 
     await _tapStage(tester, Stage.specify);
     expect(_location(tester), '/p/$_project/flow?stage=specify');
@@ -238,6 +267,7 @@ void main() {
         's-all': [_text('Texto compartilhado.')],
       },
     );
+    await _showStages(tester);
 
     await _tapStage(tester, Stage.specify);
 
@@ -250,6 +280,7 @@ void main() {
 
   testWidgets('o chevron expande o relatório sem selecionar a etapa', (tester) async {
     await _open(tester, _withCycle(_twoStages), list, logs);
+    await _showStages(tester);
 
     await tester.tap(find.byKey(const ValueKey('timeline-chevron-specify')));
     await tester.pumpAndSettle();
@@ -266,6 +297,7 @@ void main() {
 
   testWidgets('tocar na etapa seleciona sem expandir o relatório', (tester) async {
     await _open(tester, _withCycle(_twoStages), list, logs);
+    await _showStages(tester);
 
     await _tapStage(tester, Stage.specify);
 
@@ -472,34 +504,168 @@ void main() {
     );
   });
 
-  group('link "abrir sessão" do banner', () {
-    final banner = find.byKey(const ValueKey('stage-banner'));
-    Finder link() => find.descendant(of: banner, matching: find.text('abrir sessão'));
+  group('estado recolhido', () {
+    final verify = _byKey('flow-verify');
 
-    testWidgets('split com a mesma sessão no painel: sem link, banner fica', (tester) async {
-      await _open(tester, _withCycle(_twoStages), list, logs);
+    testWidgets('detalhes e linha do tempo abertos sobrevivem à troca de split para gaveta', (tester) async {
+      await _open(tester, _withCycle(_twoStages), list, logs, size: const Size(1440, 900));
+      expect(_side, findsOneWidget);
+      expect(_timeline, findsNothing);
+      expect(verify, findsNothing);
 
-      expect(banner, findsOneWidget);
-      expect(link(), findsNothing);
-    });
+      await _showStages(tester);
+      await _tapKey(tester, 'cycle-details-toggle');
+      expect(_timeline, findsOneWidget);
+      expect(verify, findsOneWidget);
 
-    testWidgets('split com ?stage de outra sessão: com link', (tester) async {
-      await _open(tester, _withCycle(_twoStages), list, logs);
-
-      await _tapStage(tester, Stage.specify);
-
-      expect(link(), findsOneWidget);
-    });
-
-    testWidgets('gaveta: com link', (tester) async {
-      await _open(tester, _withCycle(_twoStages), list, logs, size: const Size(1300, 900));
+      // Below the split width (sidebar included) the same column moves under the drawer's Scaffold.
+      tester.view.physicalSize = const Size(1300, 900);
+      await tester.pumpAndSettle();
 
       expect(_side, findsNothing);
-      expect(link(), findsOneWidget);
+      expect(_byKey('flow-drawer-toggle'), findsOneWidget);
+      expect(_timeline, findsOneWidget);
+      expect(verify, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('trocar de projeto zera os dois', (tester) async {
+      const other = 'other-app';
+      await _open(
+        tester,
+        _withCycle(_twoStages),
+        list,
+        logs,
+        others: [
+          Project(
+            name: other,
+            path: '/synthetic/$other',
+            cycle: Cycle(stage: Stage.plan, stageMinutes: const {}, runs: const [], report: _report([])),
+          ),
+        ],
+      );
+      await _showStages(tester);
+      await _tapKey(tester, 'cycle-details-toggle');
+      expect(_timeline, findsOneWidget);
+      expect(verify, findsOneWidget);
+
+      _router(tester).go('/p/$other/flow');
+      await tester.pumpAndSettle();
+
+      expect(find.descendant(of: _byKey('cycle-steps'), matching: find.text('Etapa 4 de 8')), findsOneWidget);
+      expect(_timeline, findsNothing);
+      expect(verify, findsNothing);
+    });
+
+    testWidgets('?stage= de uma etapa para outra não reabre a linha do tempo fechada', (tester) async {
+      await _open(tester, _withCycle(_twoStages), list, logs, location: '/p/$_project/flow?stage=specify');
+      expect(_timeline, findsOneWidget);
+
+      await _tapKey(tester, 'cycle-steps-toggle');
+      expect(_timeline, findsNothing);
+
+      _router(tester).go('/p/$_project/flow?stage=plan');
+      await tester.pumpAndSettle();
+
+      expect(_location(tester), '/p/$_project/flow?stage=plan');
+      expect(_timeline, findsNothing);
     });
   });
 
-  testWidgets('sessão reanexada sem mensagem nova aparece como interrompida no banner e no cabeçalho', (tester) async {
+  group('barra de etapas', () {
+    testWidgets('mostra a posição e os 8 segmentos; o link abre e fecha a linha do tempo', (tester) async {
+      await _open(tester, _withCycle(_twoStages), list, logs);
+
+      final steps = _byKey('cycle-steps');
+      expect(find.descendant(of: steps, matching: find.text('Etapa 3 de 8')), findsOneWidget);
+      for (final s in Stage.values) {
+        expect(
+          find.descendant(of: steps, matching: _byKey('cycle-step-${s.name}')),
+          findsOneWidget,
+          reason: s.name,
+        );
+      }
+      expect(find.descendant(of: steps, matching: find.text(Stage.challenge.label)), findsOneWidget);
+      expect(find.descendant(of: steps, matching: find.text('ver etapas')), findsOneWidget);
+      expect(_timeline, findsNothing);
+
+      await _showStages(tester);
+      expect(_timeline, findsOneWidget);
+      expect(find.descendant(of: steps, matching: find.text('ocultar etapas')), findsOneWidget);
+
+      await _tapKey(tester, 'cycle-steps-toggle');
+      expect(_timeline, findsNothing);
+    });
+
+    testWidgets('abrir com ?stage= já mostra a linha do tempo; tocar numa linha mantém e ocultar esconde', (
+      tester,
+    ) async {
+      await _open(tester, _withCycle(_twoStages), list, logs, location: '/p/$_project/flow?stage=specify');
+      expect(_timeline, findsOneWidget);
+      expect(_highlighted(tester, Stage.specify), isTrue);
+
+      await _tapStage(tester, Stage.plan);
+      expect(_location(tester), '/p/$_project/flow?stage=plan');
+      expect(_timeline, findsOneWidget);
+
+      await _tapKey(tester, 'cycle-steps-toggle');
+      expect(_location(tester), '/p/$_project/flow?stage=plan');
+      expect(_timeline, findsNothing);
+    });
+  });
+
+  group('cartão do ciclo', () {
+    testWidgets('sessão da etapa rodando: nada precisa de você e o botão contornado acompanha a conversa', (
+      tester,
+    ) async {
+      await _open(
+        tester,
+        _withCycle(_twoStages),
+        [_session('s-chal', '/challenge-spec', status: SessionStatus.running)],
+        logs,
+        settle: false,
+      );
+
+      expect(_inNow(find.text('Nada precisa de você')), findsOneWidget);
+      expect(_inNow(find.text('Etapa ${Stage.challenge.label} em andamento')), findsOneWidget);
+      expect(tester.widget(_action), isA<OutlinedButton>());
+      expect(find.descendant(of: _action, matching: find.text('Acompanhar a conversa')), findsOneWidget);
+      // The split already shows the same session beside the card; the action stays.
+      expect(_inSide(find.text('/challenge-spec')), findsOneWidget);
+      expect(_byKey('stage-banner'), findsNothing);
+
+      await tester.tap(_action);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(_location(tester), '/p/$_project/sessions/s-chal');
+    });
+
+    testWidgets('a mesma sessão parada: precisa de você e o botão cheio abre a conversa', (tester) async {
+      await _open(tester, _withCycle(_twoStages), [_session('s-chal', '/challenge-spec')], logs);
+
+      expect(_inNow(find.text('Precisa de você')), findsOneWidget);
+      expect(_inNow(find.text('A conversa da etapa ${Stage.challenge.label} está parada')), findsOneWidget);
+      expect(tester.widget(_action), isA<FilledButton>());
+      expect(find.descendant(of: _action, matching: find.text('Abrir a conversa')), findsOneWidget);
+      expect(_byKey('stage-banner'), findsNothing);
+
+      await tester.tap(_action);
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/p/$_project/sessions/s-chal');
+    });
+
+    testWidgets('sem ciclo e com kickoff vivo o banner da etapa continua, sem cartão', (tester) async {
+      await _open(tester, const Project(name: _project, path: '/synthetic/$_project'), [
+        _session('s-kick', '/kickoff 7579'),
+      ], const {});
+
+      expect(_byKey('stage-banner'), findsOneWidget);
+      expect(_now, findsNothing);
+      expect(_byKey('cycle-steps'), findsNothing);
+    });
+  });
+
+  testWidgets('sessão reanexada sem mensagem nova aparece como interrompida no cabeçalho do painel', (tester) async {
     await _open(
       tester,
       _withCycle(_twoStages),
@@ -512,13 +678,6 @@ void main() {
       },
     );
 
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('stage-banner')),
-        matching: find.text('Etapa em andamento: /challenge-spec ($kInterruptedLabel)'),
-      ),
-      findsOneWidget,
-    );
     expect(
       find.descendant(of: find.byKey(const ValueKey('session-status')), matching: find.text(kInterruptedLabel)),
       findsOneWidget,
