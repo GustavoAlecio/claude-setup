@@ -316,7 +316,7 @@ void main() {
       GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/o/demo/fila');
       await tester.pumpAndSettle();
 
-      for (final label in ['Minha fila', 'Para revisar', 'Sessões']) {
+      for (final label in ['Caixa de entrada', 'Para revisar', 'Sessões']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
       expect(find.byKey(const ValueKey('subtabs')), findsNothing);

@@ -14,6 +14,7 @@ import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/auto_mode.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/attention.dart';
 import '../../data/config_mutations.dart';
 import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
@@ -148,9 +149,17 @@ class _ShellPageState extends State<ShellPage> {
                       ShellOrgScope(:final org) => [
                         _OrgTopBar(
                           org: org,
+                          tab: widget.tab,
                           pending: activitiesPending,
                           known: orgConfig != null,
                           onNewActivity: newActivity,
+                          onResolve: switch (nextAttentionRoute(
+                            orgQueue(org, sessions, projects, config).waiting,
+                            orgQueueLocation(org),
+                          )) {
+                            final route? => () => context.go(route),
+                            null => null,
+                          },
                         ),
                         _Tabs(org: org, active: widget.tab),
                       ],
@@ -888,9 +897,17 @@ class _PendingPill extends StatelessWidget {
 }
 
 class _OrgTopBar extends StatelessWidget {
-  const _OrgTopBar({required this.org, required this.pending, required this.known, required this.onNewActivity});
+  const _OrgTopBar({
+    required this.org,
+    required this.tab,
+    required this.pending,
+    required this.known,
+    required this.onNewActivity,
+    required this.onResolve,
+  });
 
   final String org;
+  final AppTab tab;
   final int pending;
 
   /// An org missing from the config only lists what resolves to its name: no "Nova atividade".
@@ -899,9 +916,13 @@ class _OrgTopBar extends StatelessWidget {
   /// `null` when the org has no roots.
   final VoidCallback? onNewActivity;
 
+  /// `null` when nothing in the org waits on the user; only shown on the queue tab.
+  final VoidCallback? onResolve;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final inbox = tab == AppTab.queue;
     return Container(
       height: 52,
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -912,15 +933,31 @@ class _OrgTopBar extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              'Atividades em $org',
+              inbox ? 'Caixa de entrada' : 'Atividades em $org',
+              key: const ValueKey('org-title'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
-          if (pending > 0) ...[
+          if (!inbox && pending > 0) ...[
             _PendingPill(pending: pending, location: orgSessionsLocation(org)),
             const SizedBox(width: 12),
+          ],
+          if (inbox) ...[
+            OutlinedButton(
+              key: const ValueKey('inbox-resolve'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: c.textPrimary,
+                side: BorderSide(color: c.borderStrong),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+              onPressed: onResolve,
+              child: const Text('Resolver uma por vez  ⌘J'),
+            ),
+            if (known) const SizedBox(width: 8),
           ],
           if (known)
             FilledButton.icon(
@@ -1078,6 +1115,7 @@ class _Tabs extends StatelessWidget {
         children: [
           for (final t in const [AppTab.queue, AppTab.inbox, AppTab.sessions])
             _TabItem(
+              key: ValueKey('org-tab-${t.name}'),
               label: t.label,
               active: t == active,
               onTap: () => context.go(location(t)),

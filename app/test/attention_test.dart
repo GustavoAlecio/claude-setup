@@ -121,7 +121,7 @@ void main() {
     expect(calls.where((c) => c.method == 'notify'), isEmpty);
   });
 
-  testWidgets('Minha fila lists what waits, what runs and the cycles of the whole org', (tester) async {
+  testWidgets('Caixa de entrada lists what waits on the user across the org, one action per line', (tester) async {
     await tester.pumpWidget(
       ClaudeFlowApp(
         repository: MockFlowRepository(),
@@ -133,17 +133,20 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('sidebar-home')));
     await tester.pumpAndSettle();
 
-    Finder inColumn(String key, Finder f) => find.descendant(of: find.byKey(ValueKey(key)), matching: f);
-    expect(inColumn('queue-waiting', find.textContaining('ciclo parado')), findsOneWidget);
-    expect(inColumn('queue-waiting', find.textContaining('decisão sua')), findsWidgets);
-    expect(inColumn('queue-cycles', find.text('Retry com backoff')), findsOneWidget);
+    Finder inWaiting(Finder f) => find.descendant(of: find.byKey(const ValueKey('inbox-waiting')), matching: f);
+    expect(inWaiting(find.text('A task T4 travou')), findsOneWidget);
+    expect(inWaiting(find.text('Responder')), findsWidgets);
+    expect(find.byKey(const ValueKey('inbox-row-0-action')), findsOneWidget);
+    expect(find.text('1 ciclo em andamento'), findsOneWidget);
 
-    await tester.tap(inColumn('queue-waiting', find.textContaining('ciclo parado')));
+    await tester.tap(inWaiting(find.text('A task T4 travou')));
     await tester.pumpAndSettle();
     expect(find.textContaining('diagnóstico', findRichText: true), findsWidgets);
   });
 
-  testWidgets('Minha fila also lists PRs with review comments waiting, and opens the project PRs', (tester) async {
+  testWidgets('Caixa de entrada also lists PRs with review comments waiting, and opens the project PRs', (
+    tester,
+  ) async {
     final github = MockGitHubRepository.sample();
     await tester.pumpWidget(
       ClaudeFlowApp(
@@ -157,19 +160,34 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('sidebar-home')));
     await tester.pumpAndSettle();
 
-    final card = find.byKey(const ValueKey('queue-pr-demo-app-12'));
-    expect(card, findsOneWidget);
-    expect(find.descendant(of: card, matching: find.textContaining('1 comentário esperando')), findsOneWidget);
+    final context = find.descendant(
+      of: find.byKey(const ValueKey('inbox-waiting')),
+      matching: find.text('demo-app · PR #12'),
+    );
+    expect(context, findsOneWidget);
+    final row = find.ancestor(
+      of: context,
+      matching: find.byWidgetPredicate((w) => '${w.key}'.contains(RegExp(r"inbox-row-\d+'"))),
+    );
+    expect(find.descendant(of: row, matching: find.text('Comentários de revisão esperando resposta')), findsOneWidget);
+    expect(find.descendant(of: row, matching: find.text('Resolver')), findsOneWidget);
     expect(github.prsCalls.map((c) => c.$1), contains('demo-app'));
 
-    await tester.tap(card);
+    await tester.ensureVisible(context);
+    await tester.tap(context);
     await tester.pumpAndSettle();
     expect(find.text('Adiciona filtro de partidas'), findsOneWidget);
   });
 
   test('nextAttentionRoute cycles from the item on screen and starts at the first', () {
-    const a = AttentionItem(key: 'a', title: '', body: '', route: '/p/x/sessions/1');
-    const b = AttentionItem(key: 'b', title: '', body: '', route: '/p/x/flow?stage=implement');
+    const a = AttentionItem(key: 'a', title: '', body: '', route: '/p/x/sessions/1', kind: AttentionKind.request);
+    const b = AttentionItem(
+      key: 'b',
+      title: '',
+      body: '',
+      route: '/p/x/flow?stage=implement',
+      kind: AttentionKind.blocked,
+    );
     expect(nextAttentionRoute(const [], '/'), isNull);
     expect(nextAttentionRoute(const [a, b], '/o/demo/fila'), a.route);
     expect(nextAttentionRoute(const [a, b], '/p/x/sessions/1'), b.route);

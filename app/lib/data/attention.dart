@@ -1,19 +1,47 @@
 import '../engine/engine_config.dart';
 import 'flow_aggregates.dart';
+import 'github_models.dart';
 import 'models.dart';
 import 'orgs.dart';
 import 'session_models.dart';
 import 'session_reducer.dart';
 
+/// What an [AttentionItem] is about: a request on an open gate, any other pending request, a cycle stopped on a
+/// decision, a turn that just ended.
+enum AttentionKind { gate, request, blocked, finished }
+
 /// Something that wants the user: a pending permission or question, a stopped cycle, a finished turn. [key] changes
 /// when there is something new to say, so a notification fires once per occurrence.
 class AttentionItem {
-  const AttentionItem({required this.key, required this.title, required this.body, required this.route});
+  const AttentionItem({
+    required this.key,
+    required this.title,
+    required this.body,
+    required this.route,
+    required this.kind,
+    this.project,
+    this.sessionId,
+    this.pending = 0,
+    this.gate,
+  });
 
   final String key;
   final String title;
   final String body;
   final String route;
+  final AttentionKind kind;
+
+  /// `null` for an org session.
+  final String? project;
+
+  /// `null` for [AttentionKind.blocked].
+  final String? sessionId;
+
+  /// Pending requests of the session in [AttentionKind.gate] and [AttentionKind.request]; 0 otherwise.
+  final int pending;
+
+  /// Gate name when [kind] is [AttentionKind.gate].
+  final String? gate;
 }
 
 String sessionRoute(SessionSummary s) =>
@@ -22,24 +50,30 @@ String sessionRoute(SessionSummary s) =>
 String _where(SessionSummary s) => s.isOrgSession ? s.org! : s.project;
 
 /// A session stopped on an open gate is answered on the gate screen; any other request stays in the session.
-String _pendingRoute(SessionSummary s, List<Project> projects) {
+({String? gate, String route}) _pendingRoute(SessionSummary s, List<Project> projects) {
   if (!s.isOrgSession) {
     final report = gateReport(projects.where((p) => p.name == s.project).firstOrNull?.cycle);
-    if (sessionGate(report, s.id) case final gate?) return gateLocation(s.project, gate.name);
+    if (sessionGate(report, s.id) case final gate?) return (gate: gate.name, route: gateLocation(s.project, gate.name));
   }
-  return sessionRoute(s);
+  return (gate: null, route: sessionRoute(s));
 }
 
 /// What is waiting on the user right now: sessions with pending requests and projects stopped on a decision.
 List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project> projects) => [
   for (final s in sessions)
     if (pendingOf(s) > 0)
-      AttentionItem(
-        key: 'pending:${s.id}:${s.pendingPermissions}',
-        title: 'Aguardando você · ${_where(s)}',
-        body: s.title,
-        route: _pendingRoute(s, projects),
-      ),
+      if (_pendingRoute(s, projects) case final target)
+        AttentionItem(
+          key: 'pending:${s.id}:${s.pendingPermissions}',
+          title: 'Aguardando você · ${_where(s)}',
+          body: s.title,
+          route: target.route,
+          kind: target.gate == null ? AttentionKind.request : AttentionKind.gate,
+          project: s.isOrgSession ? null : s.project,
+          sessionId: s.id,
+          pending: s.pendingPermissions,
+          gate: target.gate,
+        ),
   for (final p in projects)
     if (!p.hidden)
       if (blockedDecision(p) case final decision?)
@@ -48,10 +82,12 @@ List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project
           title: 'Ciclo parado · ${p.name}',
           body: '${decision.task.id} · ${decision.task.title}: o diagnóstico espera a sua decisão',
           route: decisionLocation(p.name, decision),
+          kind: AttentionKind.blocked,
+          project: p.name,
         ),
 ];
 
-/// Pending requests per session id and the `blocked:*` keys, read back from the keys [pendingAttention] builds.
+/// Pending requests per session id and the keys of the blocked items; finished turns do not count.
 class AttentionSnapshot {
   const AttentionSnapshot({required this.pending, required this.blocked});
 
@@ -59,19 +95,17 @@ class AttentionSnapshot {
     final pending = <String, int>{};
     final blocked = <String>{};
     for (final item in items) {
-      if (item.key.startsWith(_pendingPrefix)) {
-        // Session ids may contain ':', the count is always the last segment.
-        final rest = item.key.substring(_pendingPrefix.length);
-        final cut = rest.lastIndexOf(':');
-        pending[rest.substring(0, cut)] = int.parse(rest.substring(cut + 1));
-      } else if (item.key.startsWith('blocked:')) {
-        blocked.add(item.key);
+      switch (item.kind) {
+        case AttentionKind.gate || AttentionKind.request:
+          pending[item.sessionId!] = item.pending;
+        case AttentionKind.blocked:
+          blocked.add(item.key);
+        case AttentionKind.finished:
+          break;
       }
     }
     return AttentionSnapshot(pending: pending, blocked: blocked);
   }
-
-  static const _pendingPrefix = 'pending:';
 
   final Map<String, int> pending;
   final Set<String> blocked;
@@ -108,6 +142,9 @@ List<AttentionItem> finishedTurns(Map<String, SessionStatus> before, List<Sessio
         title: 'Turno concluído · ${_where(s)}',
         body: s.title,
         route: sessionRoute(s),
+        kind: AttentionKind.finished,
+        project: s.isOrgSession ? null : s.project,
+        sessionId: s.id,
       ),
 ];
 
@@ -116,7 +153,7 @@ int attentionCount(List<SessionSummary> sessions, List<Project> projects) =>
     sessions.fold(0, (sum, s) => sum + pendingOf(s)) +
     projects.where((p) => !p.hidden && blockedDecision(p) != null).length;
 
-/// The org at a glance ("Minha fila"): what waits on the user, what is running, cycles in progress, cycles done.
+/// The org at a glance (the inbox footer and its next-item walk): what waits on the user, what is running, cycles in progress, cycles done.
 class OrgQueue {
   const OrgQueue({required this.waiting, required this.running, required this.cycles, required this.done});
 
@@ -154,4 +191,75 @@ OrgQueue orgQueue(String org, List<SessionSummary> sessions, List<Project> proje
         if (p.cycle?.stage == Stage.complete) p,
     ],
   );
+}
+
+/// One line of the inbox "Precisa de você" section.
+typedef InboxRow = ({String context, String title, String detail, String action, String route});
+
+String _pendingTitle(int n) => n == 1 ? '1 pedido esperando resposta' : '$n pedidos esperando resposta';
+
+String _withFeature(String project, Project? p) {
+  final feature = p?.cycle?.feature;
+  return feature == null || feature.isEmpty ? project : '$project · $feature';
+}
+
+/// Lines of "Precisa de você": [waiting] in order, then the PRs with review comments. Every text comes from typed
+/// fields and [projects], never from an item's `key` or `title`.
+List<InboxRow> inboxRows(
+  String org,
+  List<AttentionItem> waiting,
+  List<(String project, PullRequest pr)> prs,
+  List<Project> projects,
+) {
+  Project? projectOf(String? name) => projects.where((p) => p.name == name).firstOrNull;
+  final rows = <InboxRow>[];
+  for (final item in waiting) {
+    final project = projectOf(item.project);
+    switch (item.kind) {
+      case AttentionKind.finished:
+        break;
+      case AttentionKind.gate:
+        final block = openGates(gateReport(project?.cycle)).map((s) => s.gate!).where((g) => g.name == item.gate);
+        final gate = block.firstOrNull;
+        final summary = gate?.summary.trim() ?? '';
+        rows.add((
+          context: _withFeature(item.project!, project),
+          title: gateTitle(item.gate!, gate?.questions.length ?? 0),
+          detail: summary.isEmpty ? item.body : summary,
+          action: 'Decidir',
+          route: item.route,
+        ));
+      case AttentionKind.request:
+        final feature = project?.cycle?.feature;
+        rows.add((
+          context: item.project == null
+              ? '$org · conversa'
+              : '${item.project} · ${feature == null || feature.isEmpty ? 'conversa' : feature}',
+          title: _pendingTitle(item.pending),
+          detail: item.body,
+          action: 'Responder',
+          route: item.route,
+        ));
+      case AttentionKind.blocked:
+        final decision = project == null ? null : blockedDecision(project);
+        if (decision == null) break;
+        rows.add((
+          context: _withFeature(item.project!, project),
+          title: 'A task ${decision.task.id} travou',
+          detail: '${decision.task.title}: o diagnóstico espera a sua decisão',
+          action: 'Decidir',
+          route: item.route,
+        ));
+    }
+  }
+  for (final (project, pr) in prs) {
+    rows.add((
+      context: '$project · PR #${pr.number ?? '?'}',
+      title: 'Comentários de revisão esperando resposta',
+      detail: pr.title.isEmpty ? '—' : pr.title,
+      action: 'Resolver',
+      route: '/p/$project/prs',
+    ));
+  }
+  return rows;
 }
