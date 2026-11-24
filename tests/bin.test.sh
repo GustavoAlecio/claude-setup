@@ -363,7 +363,7 @@ brief_refused "changes with 4 lines" "changes: 4 linhas, teto 3" --file "$BD/c4.
 mkb m9 "d['map']={'nodes':[{'id':f'n{i}','label':'N','state':'new'} for i in range(9)]}"
 brief_refused "map with 9 nodes" "map.nodes: 9 nós, teto 8" --file "$BD/m9.json"
 mkb edge "
-d['map']={'nodes':[{'id':'a','label':'A','state':'new'}],'edges':[{'from':'a','to':'zz','label':'usa'}]}"
+d['map']={'nodes':[{'id':'a','label':'A','state':'new','paths':['bin/a.py']}],'edges':[{'from':'a','to':'zz','label':'usa'}]}"
 brief_refused "edge to a missing node" "map.edges[0].to: zz não é nó do mapa" --file "$BD/edge.json"
 mkb state "
 d['map']={'nodes':[{'id':'a','label':'A','state':'gone'}]}"
@@ -380,7 +380,7 @@ report_snap "$B"; got=0; wfr brief tasks --workflow-dir "$B" --file "$BRIEF_OK" 
 [ "$got" = 2 ] && grep -qF "etapa tasks ausente" "$BD/err" || fail "brief on a stage that never started"
 report_untouched "$B" "brief on a stage that never started"
 mkb map "
-d['map']={'summary':'Dois nós.','nodes':[{'id':'a','label':'A','state':'new','note':'n'},{'id':'b','label':'B','state':'existing'}],'edges':[{'from':'a','to':'b','label':'usa'}],'approaches':[]}"
+d['map']={'summary':'Dois nós.','nodes':[{'id':'a','label':'A','state':'new','note':'n','paths':['bin/a.py']},{'id':'b','label':'B','state':'existing'}],'edges':[{'from':'a','to':'b','label':'usa'}],'approaches':[]}"
 wfr brief plan --workflow-dir "$B" --file "$BD/map.json" >/dev/null
 gate_ok "g['map']['edges'][0]['to']=='b'" "a valid map is kept"
 
@@ -563,6 +563,159 @@ got=0; wfr answer plan --workflow-dir "$R2" --question Q1 --option a >/dev/null 
 got=0; wfr answer tasks --workflow-dir "$R2" --approve >/dev/null 2>"$AD/err" || got=$?
 [ "$got" = 2 ] && grep -qF "answer tasks: bloco ausente" "$AD/err" || fail "answer without a block"
 
+echo "- wf-report: glob_match is pure and keeps the glob_re of adr-index"
+HOME="$HOME_BIN_SHIM" python3 - "$BIN/wf-report.py" "$BIN/adr-index.py" <<'PY' || fail "glob_match and check_glob"
+import importlib.util, sys
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    return m
+
+wr, adr = load("wf_report", sys.argv[1]), load("adr_index", sys.argv[2])
+cases = {
+    "star stays in one dir": ("bin/*.py", "bin/x/y.py", False),
+    "star matches a file": ("bin/*.py", "bin/a.py", True),
+    "double star crosses dirs": ("bin/**", "bin/x/y.py", True),
+    "trailing slash is the whole tree": ("docs/", "docs/a/b.md", True),
+    "trailing slash is not the dir itself": ("docs/", "docs", False),
+    "trailing slash is not a sibling prefix": ("docs/", "docsx/a.md", False),
+    "literal matches itself": ("README.md", "README.md", True),
+    "literal is not a nested file": ("README.md", "docs/README.md", False),
+    "literal is not a longer name": ("README.md", "README.mdx", False),
+    "literal dot is not a wildcard": ("a.b", "axb", False),
+    "leading **/ matches the root": ("**/test_*.py", "test_a.py", True),
+    "leading **/ matches nested": ("**/test_*.py", "a/b/test_a.py", True),
+    "question mark is one char": ("bin/?.py", "bin/ab.py", False),
+}
+for name, (glob, path, want) in cases.items():
+    assert wr.glob_match(glob, path) is want, name
+for glob in ("bin/*.py", "bin/**", "**/x/*.md", "a?b", "docs/a.b+c", "x/**/y", "README.md", "[ab]*"):
+    assert wr.glob_re(glob).pattern == adr.glob_re(glob).pattern, f"parity: {glob}"
+    for path in ("bin/a.py", "bin/x/y.py", "x/y", "x/a/b/y", "README.md", "a.b+c", "docs/a.b+c", "aab", "[ab]z"):
+        assert bool(wr.glob_re(glob).match(path)) == bool(adr.glob_re(glob).match(path)), f"parity: {glob} {path}"
+for bad in ("", " ", "/etc/x", "a/../b", "..", "./bin/a.py", "bin\\a.py", "a" * 121):
+    try:
+        wr.check_glob("g", bad)
+    except wr.InputError:
+        continue
+    raise AssertionError(f"check_glob accepted {bad!r}")
+assert wr.check_glob("g", "bin/a..b.py") == "bin/a..b.py", "dots inside a name are not a .. segment"
+PY
+
+echo "- wf-report: plan map contract, refusals, drop-map and rounds"
+M=$(tmp); MD=$(tmp)
+printf '{"feature":"Feat Map","start_date":"2026-06-10T00:00:00Z"}' > "$M/current.json"
+for st in challenge tasks plan; do wfr stage-start "$st" --workflow-dir "$M"; done
+cat > "$MD/fullmap.json" <<'JSON'
+{"summary": "Três peças, uma de cada estado.",
+ "nodes": [{"id": "mapa", "label": "Mapa construído", "state": "new", "note": "Sai do diff", "paths": ["bin/**", "docs/"]},
+           {"id": "gate", "label": "Gate do plano", "state": "changed", "paths": ["bin/wf-report.py"]},
+           {"id": "app", "label": "App", "state": "existing"}],
+ "edges": [{"from": "gate", "to": "mapa", "label": "grava"}, {"from": "mapa", "to": "app", "label": "lido por"}],
+ "approaches": [{"id": "a1", "label": "No script", "text": "Calcula do diff", "chosen": true},
+                {"id": "a2", "label": "No agente", "text": "Descreve o diff", "chosen": false}],
+ "gains": ["Determinístico"], "costs": ["Roda git no gate"], "ignore": ["tests/**", "app/test/fixtures/"]}
+JSON
+mkm() { python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1])); d['map']=json.load(open(sys.argv[2])); m=d['map']
+exec(sys.argv[3]); json.dump(d,open(sys.argv[4],'w'),ensure_ascii=False)" "$BRIEF_OK" "$MD/fullmap.json" "$2" "$MD/$1.json"; }
+mgate() {
+  python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+full=json.load(open(sys.argv[2]))
+assert $1, g" "${3:-$M}/report.json" "$MD/fullmap.json" || fail "$2"
+}
+mshow() { python3 -c "import json,sys; t=json.loads(sys.argv[1])['text_md']; assert $1, t" "$(wfr show plan --workflow-dir "${3:-$M}")" || fail "$2"; }
+map_refused() {
+  local label=$1 want=$2 got=0; shift 2
+  report_snap "$M"
+  wfr brief "$@" >/dev/null 2>"$MD/err" || got=$?
+  [ "$got" = 2 ] || fail "map $label: expected exit 2, got $got"
+  report_untouched "$M" "map $label"
+  grep -qF -- "$want" "$MD/err" || fail "map $label: stderr '$(cat "$MD/err")' lacks '$want'"
+  case "$(cat "$MD/err")" in "wf-report: map"*) ;; *) fail "map $label: refusal does not start with 'wf-report: map'" ;; esac
+}
+mkm full ""
+wfr brief plan --workflow-dir "$M" --file "$MD/full.json" >/dev/null
+mgate "g['map']==full" "a complete map is written with every field"
+mshow "'\n\nArquitetura:\nTrês peças, uma de cada estado.\n- Mapa construído (nova)\n- Gate do plano (muda)\n- App (já existe)\n- No script: Calcula do diff (escolhida)\n- No agente: Descreve o diff\n' in t" "show plan lists pieces and approaches under Arquitetura:"
+mshow "t.count('(escolhida)')==1 and t.index('Arquitetura:') < t.index('Riscos:')" "only the chosen approach is marked, right after the summary"
+
+mkm nopaths "del m['nodes'][0]['paths']"
+map_refused "new node without paths" "map.nodes[0].paths: obrigatório em peça new" plan --workflow-dir "$M" --file "$MD/nopaths.json"
+mkm nopaths-changed "del m['nodes'][1]['paths']"
+map_refused "changed node without paths" "map.nodes[1].paths: obrigatório em peça changed" plan --workflow-dir "$M" --file "$MD/nopaths-changed.json"
+BAD_GLOBS=("''" "'/abs/x.py'" "'bin/../x.py'" "'./bin/a.py'" "'bin'+chr(92)+'a.py'" "'a'*121")
+for i in "${!BAD_GLOBS[@]}"; do
+  mkm "glob$i" "m['nodes'][0]['paths'][0]=${BAD_GLOBS[$i]}"
+  map_refused "bad glob ${BAD_GLOBS[$i]}" "map.nodes[0].paths[0]: " plan --workflow-dir "$M" --file "$MD/glob$i.json"
+done
+mkm p7 "m['nodes'][0]['paths']=[f'bin/{i}.py' for i in range(7)]"
+map_refused "7 globs" "map.nodes[0].paths: 7 globs, teto 6" plan --workflow-dir "$M" --file "$MD/p7.json"
+mkm p0 "m['nodes'][0]['paths']=[]"
+map_refused "0 globs" "map.nodes[0].paths: 0 globs, precisa de 1 a 6" plan --workflow-dir "$M" --file "$MD/p0.json"
+mkm slash "m['nodes'][0]['label']='bin/wf-report.py'"
+map_refused "label with a slash" "map.nodes[0].label: caminho de arquivo" plan --workflow-dir "$M" --file "$MD/slash.json"
+mkm dupid "m['nodes'][1]['id']='mapa'"
+map_refused "repeated node id" "map.nodes[1].id: mapa repetido" plan --workflow-dir "$M" --file "$MD/dupid.json"
+mkm unplanned "m['nodes'][0]['id']='unplanned:bin'"
+map_refused "node id starting with unplanned:" "map.nodes[0].id: unplanned:bin começa com unplanned:" plan --workflow-dir "$M" --file "$MD/unplanned.json"
+mkm elabel "m['edges'][0]['label']='e'*61"
+map_refused "edge label of 61 chars" "map.edges[0].label: 61 caracteres, teto 60" plan --workflow-dir "$M" --file "$MD/elabel.json"
+mkm alabel "m['approaches'][0]['label']='a'*41"
+map_refused "approach label of 41 chars" "map.approaches[0].label: 41 caracteres, teto 40" plan --workflow-dir "$M" --file "$MD/alabel.json"
+mkm chosen2 "m['approaches'][1]['chosen']=True"
+map_refused "two chosen approaches" "map.approaches: 2 escolhidas" plan --workflow-dir "$M" --file "$MD/chosen2.json"
+mkm chosen0 "m['approaches'][0]['chosen']=False"
+map_refused "no chosen approach" "map.approaches: 0 escolhidas" plan --workflow-dir "$M" --file "$MD/chosen0.json"
+mkm a4 "m['approaches']+=[dict(m['approaches'][1], id=f'a{i}') for i in (3, 4)]"
+map_refused "4 approaches" "map.approaches: 4 formas, teto 3" plan --workflow-dir "$M" --file "$MD/a4.json"
+mkm gains4 "m['gains']=['Ganho']*4"
+map_refused "4 gains" "map.gains: 4 itens, teto 3" plan --workflow-dir "$M" --file "$MD/gains4.json"
+mkm cost161 "m['costs'][0]='c'*161"
+map_refused "cost of 161 chars" "map.costs[0]: 161 caracteres, teto 160" plan --workflow-dir "$M" --file "$MD/cost161.json"
+mkm ignore11 "m['ignore']=[f'x{i}/' for i in range(11)]"
+map_refused "11 ignore globs" "map.ignore: 11 globs, teto 10" plan --workflow-dir "$M" --file "$MD/ignore11.json"
+mkm ignorebad "m['ignore'][0]='./tests/'"
+map_refused "ignore glob with ./" "map.ignore[0]: glob com prefixo ./" plan --workflow-dir "$M" --file "$MD/ignorebad.json"
+mkm order "m['gains']=['Ganho']*4; del m['nodes'][0]['paths']"
+map_refused "nodes before gains" "map.nodes[0].paths" plan --workflow-dir "$M" --file "$MD/order.json"
+map_refused "Phase 1: 9 nodes" "map.nodes: 9 nós, teto 8" plan --workflow-dir "$M" --file "$BD/m9.json"
+map_refused "Phase 1: edge to a missing node" "map.edges[0].to: zz não é nó do mapa" plan --workflow-dir "$M" --file "$BD/edge.json"
+map_refused "Phase 1: state outside the enum" "map.nodes[0].state: gone fora de new|changed|existing" plan --workflow-dir "$M" --file "$BD/state.json"
+map_refused "brief spec with map" "map: só vale no gate plan" spec --workflow-dir "$M" --file "$MD/full.json"
+map_refused "brief tasks with map" "map: só vale no gate plan" tasks --workflow-dir "$M" --file "$MD/full.json"
+report_snap "$M"; got=0; wfr brief tasks --workflow-dir "$M" --file "$BRIEF_OK" --drop-map >/dev/null 2>"$MD/err" || got=$?
+[ "$got" = 2 ] && grep -qF -- "--drop-map: só vale no gate plan" "$MD/err" || fail "--drop-map outside the plan gate"
+report_untouched "$M" "--drop-map outside the plan gate"
+
+wfr brief plan --workflow-dir "$M" --file "$MD/nopaths.json" --drop-map >/dev/null || fail "--drop-map with an invalid map exits 0"
+mgate "'map' not in g and g['status']=='open'" "--drop-map writes the block without map"
+mshow "'Arquitetura:' not in t" "no map, no Arquitetura:"
+wfr brief plan --workflow-dir "$M" --file "$MD/full.json" >/dev/null
+wfr brief plan --workflow-dir "$M" --file "$BRIEF_OK" >/dev/null
+mgate "'map' not in g" "brief plan without map is accepted and drops the previous map"
+mshow "'Arquitetura:' not in t" "brief plan without map shows no Arquitetura:"
+
+mkm r2map "d['changes']=['Mapa revisto']; d['questions']=[dict(d['questions'][0], id='Q2')]; m['summary']='Revisto.'"
+mkm r2nomap "d['changes']=['Mapa removido']; d['questions']=[dict(d['questions'][0], id='Q2')]; del d['map']"
+for r2 in r2map r2nomap; do
+  MR=$(tmp)
+  printf '{"feature":"Feat MR","start_date":"2026-06-11T00:00:00Z"}' > "$MR/current.json"
+  wfr stage-start plan --workflow-dir "$MR"
+  wfr brief plan --workflow-dir "$MR" --file "$MD/full.json" >/dev/null
+  wfr answer plan --workflow-dir "$MR" --question Q1 --option b
+  mgate "g['status']=='revising'" "round 1 with map goes to revising" "$MR"
+  wfr brief plan --workflow-dir "$MR" --file "$MD/$r2.json" >/dev/null
+  if [ "$r2" = r2map ]; then
+    mgate "g['round']==2 and g['map']==dict(full, summary='Revisto.')" "round 2 over revising keeps the map of its file" "$MR"
+  else
+    mgate "g['round']==2 and 'map' not in g" "round 2 without map does not inherit the round 1 map" "$MR"
+  fi
+done
+
 echo "- wf-report: pr change reopens the cycle"
 P=$(tmp); PD=$(tmp)
 BASE=1111111111111111111111111111111111111111
@@ -743,6 +896,235 @@ wfr stage-start plan --workflow-dir "$B"
 python3 -c "
 import json,sys; s=[x for x in json.load(open(sys.argv[1]))['stages'] if x['stage']=='plan'][0]
 assert 'gate' not in s, s" "$B/report.json" || fail "stage-start drops an open block of its own stage"
+
+echo "- wf-report: built_map is pure"
+HOME="$HOME_BIN_SHIM" python3 - "$BIN/wf-report.py" <<'PY' || fail "built_map"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("wf_report", sys.argv[1])
+wr = importlib.util.module_from_spec(spec); spec.loader.exec_module(wr)
+
+def node(nid, state, *paths, **extra):
+    n = {"id": nid, "label": nid.upper(), "state": state, **extra}
+    if paths:
+        n["paths"] = list(paths)
+    return n
+
+def by_id(m):
+    return {n["id"]: n for n in m["nodes"]}
+
+def assert_(cond):
+    assert cond
+
+def case(name, plan, files, check):
+    m = wr.built_map(plan, files)
+    try:
+        check(m, by_id(m))
+    except AssertionError as e:
+        raise AssertionError(f"{name}: {e or ''} {m}")
+
+plan = {"nodes": [node("n", "new", "bin/n/**", note="Nova"), node("c", "changed", "bin/c.py"),
+                  node("e1", "existing", "lib/"), node("e2", "existing")],
+        "edges": [{"from": "n", "to": "e1", "label": "usa"}],
+        "approaches": [{"id": "a", "label": "A", "text": "t", "chosen": True}],
+        "gains": ["g"], "costs": ["c"], "ignore": ["tests/**"]}
+case("each state", plan, ["lib/y.py", "bin/n/x.py", "tools/z.sh", "README.md", "tests/t.sh"], lambda m, b: (
+    assert_(b["n"]["built"] == "planned" and b["n"]["files"] == ["bin/n/x.py"]),
+    assert_(b["c"]["built"] == "untouched" and b["c"]["files"] == []),
+    assert_(b["e1"]["built"] == "touched" and b["e1"]["files"] == ["lib/y.py"]),
+    assert_(b["e2"]["built"] == "existing" and "paths" not in b["e2"]),
+    assert_([n["id"] for n in m["nodes"]] == ["n", "c", "e1", "e2", "unplanned:.", "unplanned:tools"]),
+    assert_(b["unplanned:."] == {"id": "unplanned:.", "label": ".", "built": "unplanned", "files": ["README.md"]}),
+    assert_(b["unplanned:tools"]["label"] == "tools" and "state" not in b["unplanned:tools"]),
+    assert_(m["summary"] == "1 como planejado, 2 fora do plano, 1 sem tocar."),
+))
+case("copies state, note, paths and edges; drops approaches, gains, costs and ignore", plan, [], lambda m, b: (
+    assert_(set(m) == {"summary", "nodes", "edges"} and m["edges"] == plan["edges"]),
+    assert_(b["n"]["state"] == "new" and b["n"]["note"] == "Nova" and b["n"]["paths"] == ["bin/n/**"]),
+    assert_(m["summary"] == "0 como planejado, 0 fora do plano, 2 sem tocar."),
+))
+case("paths win over ignore; ignore alone hides the file",
+     {"nodes": [node("n", "new", "bin/n/**")], "ignore": ["bin/**"]}, ["bin/n/g.py", "bin/other.py"],
+     lambda m, b: assert_([n["id"] for n in m["nodes"]] == ["n"] and b["n"]["files"] == ["bin/n/g.py"]))
+case("a file matching two pieces goes to the first",
+     {"nodes": [node("a", "new", "bin/a.py"), node("all", "existing", "bin/**")]}, ["bin/a.py", "bin/b.py"],
+     lambda m, b: assert_(b["a"]["files"] == ["bin/a.py"] and b["all"]["files"] == ["bin/b.py"]
+                          and b["all"]["built"] == "touched"))
+dirs = {"d4": 4, "d3": 3, "d2": 2, "d1": 1}
+loose = [f"{d}/f{i}.py" for d, k in dirs.items() for i in range(k)]
+six = {"nodes": [node(f"p{i}", "new", f"p{i}/") for i in range(6)]}
+case("6 pieces and 4 dirs: 7th is the biggest dir, 8th is outros", six, loose, lambda m, b: (
+    assert_(len(m["nodes"]) == 8),
+    assert_(m["nodes"][6]["id"] == "unplanned:d4" and len(m["nodes"][6]["files"]) == 4),
+    assert_(m["nodes"][7] == {"id": "unplanned:outros", "label": "outros", "built": "unplanned",
+                              "files": sorted(f for f in loose if not f.startswith("d4/"))}),
+    assert_(len(m["nodes"][7]["files"]) == 6),
+    assert_(m["summary"] == "0 como planejado, 2 fora do plano, 6 sem tocar."),
+))
+case("7 pieces and 1 dir: the dir fits without outros",
+     {"nodes": [node(f"p{i}", "new", f"p{i}/") for i in range(7)]}, ["x/a.py", "x/b.py"],
+     lambda m, b: assert_([n["id"] for n in m["nodes"]][7:] == ["unplanned:x"]))
+case("8 pieces and 1 file outside: 9 pieces, the last one its dir",
+     {"nodes": [node(f"p{i}", "new", f"p{i}/") for i in range(8)]}, ["out/a.py"],
+     lambda m, b: assert_(len(m["nodes"]) == 9 and m["nodes"][8]["id"] == "unplanned:out"))
+case("8 pieces and 2 dirs: one slot, everything goes to outros",
+     {"nodes": [node(f"p{i}", "new", f"p{i}/") for i in range(8)]}, ["a/1.py", "b/1.py", "b/2.py"],
+     lambda m, b: assert_([n["id"] for n in m["nodes"]][8:] == ["unplanned:outros"]
+                          and m["nodes"][8]["files"] == ["a/1.py", "b/1.py", "b/2.py"]))
+def single_outros(m, rest):
+    ids = [n["id"] for n in m["nodes"]]
+    assert_(len(ids) == len(set(ids)) and ids.count("unplanned:outros") == 1)
+    assert_(m["nodes"][-1] == {"id": "unplanned:outros", "label": "outros", "built": "unplanned",
+                               "files": sorted(rest)})
+outros_big = ["outros/1.py", "outros/2.py", "outros/3.py", "a/1.py", "b/1.py"]
+case("a kept dir named outros joins the folded tail", six, outros_big, lambda m, b: (
+    assert_([n["id"] for n in m["nodes"]][6:] == ["unplanned:a", "unplanned:outros"]),
+    single_outros(m, ["outros/1.py", "outros/2.py", "outros/3.py", "b/1.py"]),
+))
+outros_small = ["a/1.py", "a/2.py", "b/1.py", "b/2.py", "outros/1.py"]
+case("a folded dir named outros joins the tail", six, outros_small, lambda m, b: (
+    assert_([n["id"] for n in m["nodes"]][6:] == ["unplanned:a", "unplanned:outros"]),
+    single_outros(m, ["b/1.py", "b/2.py", "outros/1.py"]),
+))
+case("ties are alphabetical", {"nodes": []}, ["zz/a.py", "aa/b.py", "mm/c.py", "mm/d.py"],
+     lambda m, b: assert_([n["id"] for n in m["nodes"]] == ["unplanned:mm", "unplanned:aa", "unplanned:zz"]))
+deep = "very/long/directory/path/that/goes/on"
+case("labels are cut on the left at 32 characters", {"nodes": []}, [f"{deep}/a.py", "short/b.py"], lambda m, b: (
+    assert_(b[f"unplanned:{deep}"]["label"] == "…" + deep[-31:]),
+    assert_(len(b[f"unplanned:{deep}"]["label"]) == 32 and b["unplanned:short"]["label"] == "short"),
+))
+PY
+
+echo "- wf-report: built map from a real git repo"
+GR=$(tmp); GD=$(tmp)
+git -C "$GR" init -q
+mkdir -p "$GR/bin/n/gen" "$GR/lib" "$GR/docs" "$GR/tests" "$GR/tools"
+for f in bin/n/old.py bin/m.py lib/k.py docs/gone.md tests/t.sh; do echo v1 > "$GR/$f"; done
+CK="$BIN/wf-checkpoint.sh"
+GBASE=$(bash "$CK" create "$GR")
+echo new > "$GR/bin/n/a.py"; echo gen > "$GR/bin/n/gen/g.py"; echo v2 > "$GR/tests/t.sh"
+rm "$GR/docs/gone.md"; echo tool > "$GR/tools/x.sh"
+bash "$CK" create "$GR" > "$GD/t1.tree"
+cat > "$GD/planmap.json" <<'JSON'
+{"summary": "Cinco peças.",
+ "nodes": [{"id": "nova", "label": "Peça nova", "state": "new", "paths": ["bin/n/**"]},
+           {"id": "muda", "label": "Mudança", "state": "changed", "paths": ["bin/m.py"]},
+           {"id": "lib", "label": "Biblioteca", "state": "existing", "paths": ["lib/"]},
+           {"id": "docs", "label": "Documentação", "state": "existing", "paths": ["docs/**"]},
+           {"id": "bin", "label": "Scripts", "state": "existing", "paths": ["bin/**"]}],
+ "edges": [{"from": "nova", "to": "lib", "label": "usa"}],
+ "ignore": ["tests/**", "bin/n/gen/**"]}
+JSON
+python3 -c "
+import json,sys; d=json.load(open(sys.argv[1])); d['map']=json.load(open(sys.argv[2])); json.dump(d,open(sys.argv[3],'w'),ensure_ascii=False)" "$BRIEF_OK" "$GD/planmap.json" "$GD/plan.json"
+# mkwf DIR BASE [PROJECT_PATH] [nomap]: a cycle whose plan gate has the map (or none) and complete started
+mkwf() {
+  python3 -c "
+import json,sys; c={'feature':'Feat Built','start_date':'2026-08-01T00:00:00Z','exec':{'base_checkpoint':sys.argv[2]}}
+if sys.argv[3]: c['project_path']=sys.argv[3]
+json.dump(c,open(sys.argv[1]+'/current.json','w'))" "$1" "$2" "${3:-}"
+  wfr stage-start plan --workflow-dir "$1"
+  if [ "${4:-}" = nomap ]; then wfr brief plan --workflow-dir "$1" --file "$BRIEF_OK" >/dev/null
+  else wfr brief plan --workflow-dir "$1" --file "$GD/plan.json" >/dev/null; fi
+  wfr stage-start complete --workflow-dir "$1"
+}
+bgate() {
+  python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='complete'][0]['gate']
+n={x['id']:x for x in g.get('map',{}).get('nodes',[])}
+assert $1, g" "$3/report.json" || fail "$2"
+}
+GW=$(tmp); mkwf "$GW" "$GBASE"
+report_snap "$GW"
+BUILT=$(wfr built-map --workflow-dir "$GW" --tree "@$GD/t1.tree" --repo "$GR")
+report_untouched "$GW" "built-map never writes report.json"
+mkp mapin "d['map']={'nodes':[]}"
+report_snap "$GW"; got=0
+wfr brief pr --workflow-dir "$GW" --file "$PD/mapin.json" --tree "@$GD/t1.tree" --repo "$GR" >/dev/null 2>"$GD/err" || got=$?
+[ "$got" = 2 ] && grep -qF "map: campo do script no gate pr" "$GD/err" || fail "brief pr with map in the file exits 2 (got $got)"
+report_untouched "$GW" "brief pr with map in the file"
+report_snap "$GW"; got=0
+wfr brief plan --workflow-dir "$GW" --file "$BRIEF_OK" --repo "$GR" >/dev/null 2>"$GD/err" || got=$?
+[ "$got" = 2 ] && grep -qF -- "--repo: só vale no gate pr" "$GD/err" || fail "--repo outside the pr gate exits 2 (got $got)"
+report_untouched "$GW" "--repo outside the pr gate"
+
+wfr brief pr --workflow-dir "$GW" --file "$PD/pr.json" --tree "@$GD/t1.tree" --repo "$GR" >/dev/null 2>"$GD/err"
+[ ! -s "$GD/err" ] || fail "brief pr with a working git prints nothing on stderr: $(cat "$GD/err")"
+bgate "n['nova']['built']=='planned' and n['nova']['files']==['bin/n/a.py','bin/n/gen/g.py'] and n['nova']['state']=='new'" "new piece with files is planned; paths win over ignore" "$GW"
+bgate "n['muda']['built']=='untouched' and n['muda']['files']==[] and n['muda']['paths']==['bin/m.py']" "changed piece without files is untouched and keeps its paths" "$GW"
+bgate "n['lib']['built']=='existing' and n['docs']['built']=='touched' and n['docs']['files']==['docs/gone.md']" "existing pieces; a removed file counts" "$GW"
+bgate "n['bin']['built']=='existing' and n['bin']['files']==[]" "a file matching two pieces goes to the first" "$GW"
+bgate "n['unplanned:tools']=={'id':'unplanned:tools','label':'tools','built':'unplanned','files':['tools/x.sh']}" "a file outside every paths is an unplanned piece" "$GW"
+bgate "not any('tests/t.sh' in x['files'] for x in g['map']['nodes']) and len(g['map']['nodes'])==6" "a file only in ignore does not show up" "$GW"
+bgate "g['map']['summary']=='1 como planejado, 1 fora do plano, 1 sem tocar.' and g['map']['edges']==[{'from':'nova','to':'lib','label':'usa'}]" "summary and edges of the built map" "$GW"
+python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='complete'][0]['gate']
+assert json.loads(sys.argv[2])==g['map'], (sys.argv[2], g['map'])" "$GW/report.json" "$BUILT" || fail "built-map prints the map brief pr writes"
+SHOWPR=$(wfr show pr --workflow-dir "$GW")
+python3 -c "
+import json,sys; t=json.loads(sys.argv[1])['text_md']
+want='\n\nConstruído:\n1 como planejado, 1 fora do plano, 1 sem tocar.\n- Mudança (não tocada)\n- Documentação (tocada sem estar no plano)\n- tools (fora do plano)\n\n'
+assert want in t, t
+sec=t[t.index('Construído:'):].split('\n\n')[0]
+assert 'Peça nova' not in sec and 'Biblioteca' not in sec, sec
+assert t.index('Construído:') < t.index('Pontos:'), t" "$SHOWPR" || fail "show pr lists unplanned, untouched and touched under Construído:"
+wfr show plan --workflow-dir "$GW" | grep -q 'Construído:' && fail "Construído: only in the pr gate"
+
+wfr answer pr --workflow-dir "$GW" --question Q1 --option change --text-file "$PD/change.md"
+for q in Q2 Q3; do wfr answer pr --workflow-dir "$GW" --question "$q" --option ok; done
+bgate "g['status']=='revising'" "a change answer leaves the pr block revising" "$GW"
+echo v2 > "$GR/bin/m.py"
+bash "$CK" create "$GR" > "$GD/t2.tree"
+wfr brief pr --workflow-dir "$GW" --file "$PD/r2.json" --tree "@$GD/t2.tree" --repo "$GR" >/dev/null
+bgate "g['round']==2 and n['muda']['built']=='planned' and n['muda']['files']==['bin/m.py'] and g['map']['summary']=='2 como planejado, 1 fora do plano, 0 sem tocar.'" "round 2 recomputes the untouched piece as planned" "$GW"
+report_snap "$GW"
+wfr brief pr --workflow-dir "$GW" --file "$PD/r2.json" --tree "@$GD/t2.tree" --repo "$GR" >/dev/null || fail "resending the round 2 file exits 0"
+report_untouched "$GW" "resending the same file with the same tree is a no-op"
+wfr brief pr --workflow-dir "$GW" --file "$PD/r2.json" --tree "@$GD/t2.tree" --repo "$GD/missing" >/dev/null 2>"$GD/err" || fail "resending with a broken git exits 0"
+report_untouched "$GW" "resending with a broken git keeps the previous map and stays a no-op"
+
+GX=$(tmp); mkwf "$GX" "$GBASE"
+wfr brief pr --workflow-dir "$GX" --file "$PD/pr.json" --tree "@$GD/t1.tree" --repo "$GD/missing" >/dev/null 2>/dev/null
+wfr answer pr --workflow-dir "$GX" --question Q1 --option change --text-file "$PD/change.md"
+for q in Q2 Q3; do wfr answer pr --workflow-dir "$GX" --question "$q" --option ok; done
+wfr brief pr --workflow-dir "$GX" --file "$PD/r2.json" --tree "@$GD/t2.tree" --repo "$GD/missing" >/dev/null 2>/dev/null
+bgate "g['round']==2 and 'map' not in g" "round 2 written with a broken git has no map" "$GX"
+report_snap "$GX"
+wfr brief pr --workflow-dir "$GX" --file "$PD/r2.json" --tree "@$GD/t2.tree" --repo "$GR" >/dev/null 2>"$GD/err" || fail "resending a round 2 without map with a working git exits 0: $(cat "$GD/err")"
+report_untouched "$GX" "resending a round 2 without map with a working git stays a no-op without map"
+
+GP=$(tmp); mkwf "$GP" "$GBASE" "$GR"
+wfr brief pr --workflow-dir "$GP" --file "$PD/pr.json" --tree "@$GD/t1.tree" >/dev/null
+bgate "n['nova']['built']=='planned'" "without --repo the repo is project_path of current.json" "$GP"
+
+GN=$(tmp); mkwf "$GN" "$GBASE" "" nomap
+[ "$(wfr built-map --workflow-dir "$GN" --tree "@$GD/t1.tree" --repo "$GR")" = "{}" ] || fail "built-map without a plan map prints {}"
+wfr brief pr --workflow-dir "$GN" --file "$PD/pr.json" --tree "@$GD/t1.tree" --repo "$GR" >/dev/null 2>"$GD/err"
+[ ! -s "$GD/err" ] || fail "no plan map, no warning: $(cat "$GD/err")"
+bgate "'map' not in g and g['tree']=='$(tr -d '[:space:]' < "$GD/t1.tree")'" "brief pr without a plan map writes no map" "$GN"
+wfr show pr --workflow-dir "$GN" | grep -q 'Construído:' && fail "show pr without a plan map has no Construído:"
+
+# unavailable LABEL WANT WFDIR [brief args...]: exit 0, block without map, the reason on stderr
+unavailable() {
+  local label=$1 want=$2 dir=$3; shift 3
+  "$@" >/dev/null 2>"$GD/err" || fail "$label: expected exit 0"
+  grep -qF "mapa construído indisponível: $want" "$GD/err" || fail "$label: stderr '$(cat "$GD/err")' lacks '$want'"
+  bgate "'map' not in g and g['status']=='open'" "$label: block without map" "$dir"
+}
+GU=$(tmp); mkwf "$GU" 1111111111111111111111111111111111111111
+unavailable "base unknown to git" "git diff saiu com" "$GU" wfr brief pr --workflow-dir "$GU" --file "$PD/pr.json" --tree "@$GD/t1.tree" --repo "$GR"
+GM=$(tmp); mkwf "$GM" "$GBASE"
+unavailable "--repo that does not exist" "repo não é diretório" "$GM" wfr brief pr --workflow-dir "$GM" --file "$PD/pr.json" --tree "@$GD/t1.tree" --repo "$GD/missing"
+[ "$(wfr built-map --workflow-dir "$GM" --tree "@$GD/t1.tree" --repo "$GD/missing" 2>/dev/null)" = "{}" ] || fail "built-map with a broken git prints {}"
+wfr show pr --workflow-dir "$GM" | grep -q 'Construído:' && fail "show pr with a broken git has no Construído:"
+GO=$(tmp); mkwf "$GO" "$GBASE"
+unavailable "neither --repo nor project_path" "sem --repo nem project_path" "$GO" wfr brief pr --workflow-dir "$GO" --file "$PD/pr.json" --tree "@$GD/t1.tree"
+GG=$(tmp); mkwf "$GG" "$GBASE"
+PY3=$(python3 -c 'import sys; print(sys.executable)')
+unavailable "git missing from PATH" "git indisponível" "$GG" env -u CLAUDE_FLOW_SESSION_ID PATH=/nonexistent HOME="$HOME_BIN_SHIM" "$PY3" "$BIN/wf-report.py" brief pr --workflow-dir "$GG" --file "$PD/pr.json" --tree "@$GD/t1.tree" --repo "$GR"
+got=0; python3 -c "
+import json,sys; c=json.load(open(sys.argv[1])); c['exec']={}; json.dump(c,open(sys.argv[1],'w'))" "$GG/current.json"
+wfr built-map --workflow-dir "$GG" --tree "@$GD/t1.tree" --repo "$GR" >/dev/null 2>"$GD/err" || got=$?
+[ "$got" = 2 ] && grep -qF "built-map: exec.base_checkpoint" "$GD/err" || fail "built-map without a valid base exits 2 (got $got)"
 
 echo "- wf-report: session_id comes from --session or CLAUDE_FLOW_SESSION_ID (--session wins)"
 S=$(tmp)
@@ -1092,6 +1474,7 @@ for pat in 'wf-report.py qa ' 'wf-report.py gate pr' '/pr-open --from-complete' 
   prev=$n
 done
 grep -q 'AskUserQuestion' "$C" || fail "complete: gate pr without AskUserQuestion"
+grep -q 'arquivo novo' "$C" || fail "complete: âncora dos pontos M- sem a numeração do arquivo novo"
 ! grep -q 'wf-report.py' "$SKILLS/pr-open/SKILL.md" || fail "pr-open must not write the report"
 grep -q -- '--from-complete' "$SKILLS/pr-open/SKILL.md" || fail "pr-open: no --from-complete contract"
 PRIV='Grupo''OTG\|loss''-control\|r10''-mobile\|R10 Score Dev\|/development/r10\|/development/abm'
@@ -1132,6 +1515,30 @@ for s in kickoff specify challenge-spec plan tasks implement verify; do
   grep 'wf-report.py stage-start ' "$SKILLS/$s/SKILL.md" | grep -qv -- '--session "\$CLAUDE_FLOW_SESSION_ID"' && fail "$s: stage-start without --session"
 done
 grep -q 'gates.json' "$SKILLS/auto/SKILL.md" || fail "auto: does not explain gates"
+section_has() { sed -n "$(ln_of "$2" "$1"),$(ln_of "$3" "$1")p" "$1" | grep -qF -- "$4"; }
+P="$SKILLS/plan/SKILL.md"
+section_has "$P" '### 9a.' '### 9b.' '$WF_DIR/.gate-plan.map.json' || fail "plan: 9a does not write the map draft"
+section_has "$P" '### 9b.' '### 9c.' '$WF_DIR/.gate-plan.map.json' || fail "plan: 9b does not hand the map draft to the critic"
+section_has "$P" '### 9e.' '### 9f.' '$WF_DIR/.gate-plan.map.json' || fail "plan: 9e does not rewrite the map draft"
+section_has "$P" '### 9a.' '### 9b.' 'Arquivos impactados' || fail "plan: map draft not tied to the impacted files table"
+section_has "$P" '### 9c.' '### 9d.' 'wf-report: map' || fail "plan: drop-map not tied to the map refusal prefix"
+section_has "$P" '### 9c.' '### 9d.' 'mapa indisponível' || fail "plan: drop-map without warning"
+[ "$(grep -c 'wf-report.py brief plan .*--drop-map' "$P")" = "1" ] || fail "plan: expected one brief with --drop-map"
+G="$REPO_ROOT/agents/gate-critic.md"
+for pat in '8 peças' 'linguagem de produto' 'paths' 'M-' '"map"' '.gate-plan.map.json' '`edges[].label` 60' 'até 10 globs'; do
+  grep -qF -- "$pat" "$G" || fail "gate-critic: missing '$pat'"
+done
+grep -F 'M-' "$G" | grep -q 'não confira' || fail "gate-critic: M- anchors must skip the diff check"
+grep -F 'M-' "$G" | grep -q 'cortáveis' || fail "gate-critic: M- points must be cuttable"
+for pat in 'wf-report.py built-map --workflow-dir "$WF_DIR" --tree "@$WF_DIR/pr.tree" --repo "$PROJECT_PATH"' \
+           'wf-report.py brief pr --workflow-dir' '--repo "$PROJECT_PATH"' 'unplanned' 'untouched' '`M-1`'; do
+  grep -qF -- "$pat" "$C" || fail "complete: missing '$pat'"
+done
+grep -F 'wf-report.py brief pr ' "$C" | grep -qF -- '--repo "$PROJECT_PATH"' || fail "complete: brief pr without --repo"
+section_has "$C" '### 8a.' '### 8b.' 'built-map' || fail "complete: built-map outside 8a"
+[ "$(ln_of 'pr.diff"' "$C")" -lt "$(ln_of 'wf-report.py built-map' "$C")" ] || fail "complete: built-map must follow pr.diff"
+[ "$(ln_of '"id": "C1"' "$C")" -lt "$(ln_of '`M-1`' "$C")" ] || fail "complete: map points must follow decision points"
+[ -z "$(grep -F '.gate-pr.json' "$C" | grep -E '`map`|"map"' || true)" ] || fail "complete: map must not go into .gate-pr.json"
 
 echo "- app/install.sh: running sessions stop the install, --force skips the check, unreachable engine only warns"
 INSTALL="$(cd "$(dirname "$0")/../app" && pwd)/install.sh"
@@ -1417,5 +1824,20 @@ assert ("G2-DEVICE", "major") in ids(out), out
 out = []; ha.check_g2_device(prof, repo / "packages" / "core", "verify", out)
 assert ids(out) == [("G2-PLATFORM", "major")], out
 PY
+
+echo "- docs: the architecture map is documented next to brief plan and brief pr, and the ADR is indexed"
+DOCS_ROOT="$(cd "$BIN/.." && pwd)"
+for f in docs/smart-flow.md README.md; do
+  grep -Eq 'brief plan.*map|map.*brief plan' "$DOCS_ROOT/$f" || fail "$f: map next to brief plan"
+  grep -Eq 'brief pr.*map|map.*brief pr' "$DOCS_ROOT/$f" || fail "$f: map next to brief pr"
+done
+grep -q 'built-map' "$DOCS_ROOT/docs/smart-flow.md" || fail "smart-flow.md: built-map row"
+ADR30="$DOCS_ROOT/docs/adr/0030-mapa-de-arquitetura-nos-gates.md"
+[ -f "$ADR30" ] || fail "ADR 0030 missing"
+grep -q '^status: accepted$' "$ADR30" || fail "ADR 0030 status"
+grep -E '^affects:' "$ADR30" | grep -q 'bin/wf-report.py' || fail "ADR 0030 affects"
+ADRT=$(tmp); cp -R "$DOCS_ROOT/docs/adr" "$ADRT/adr"; mkdir -p "$ADRT/docs"; mv "$ADRT/adr" "$ADRT/docs/adr"
+python3 "$BIN/adr-index.py" reindex "$ADRT" >/dev/null || fail "reindex on a copy"
+cmp -s "$ADRT/docs/adr/INDEX.md" "$DOCS_ROOT/docs/adr/INDEX.md" || fail "docs/adr/INDEX.md is not what reindex writes"
 
 echo "OK"

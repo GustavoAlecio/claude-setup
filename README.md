@@ -135,6 +135,8 @@ Bundles can reference other bundles with `@<name>` lines. Bundle files are simpl
 
 A task that fails its gates is retried on the same model with the findings. If it fails again, or stops improving, the checkpoint is restored and the next model up starts fresh. If the same finding survives two different models, the run stops and three independent diagnoses decide whether to fix the spec, replan or fix the environment. Details in [docs/smart-flow.md](docs/smart-flow.md).
 
+The `plan` and `pr` gates carry an architecture map: `wf-report.py brief plan` records the map the plan author drafted and the `gate-critic` cut, and `brief pr` computes the built map from the diff, so the gate shows what was planned against what was actually touched (`built-map` prints it, `--drop-map` retries the plan brief without it).
+
 Use `/auto` to skip approval gates between stages (blockers still stop), `/status` to see where you are and which tier each task reached, and `/fix` for one-shot bug fixes.
 
 ## Review Flow

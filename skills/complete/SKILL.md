@@ -121,6 +121,14 @@ BASE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["exec"]["
 git -C "$PROJECT_PATH" diff --no-renames "$BASE" "$(cat "$WF_DIR/pr.tree")" > "$WF_DIR/pr.diff"
 ```
 
+Mapa do que foi construído, calculado pelo script a partir do diff (só leitura; o mapa vem daqui, não do relatório):
+
+```bash
+python3 ~/.claude/bin/wf-report.py built-map --workflow-dir "$WF_DIR" --tree "@$WF_DIR/pr.tree" --repo "$PROJECT_PATH"
+```
+
+A saída é o JSON do mapa (`nodes[]` com `id`, `label`, `built`, `files` e, nas peças do plano, `paths`). `{}`, saída diferente de 0 ou `mapa construído indisponível` no stderr: não há pontos de mapa.
+
 Escreva com **Write** em `$WF_DIR/.gate-pr.candidates.json` uma lista JSON de pontos a partir das `decisions` do relatório e dos achados menores do último verify (lista vazia, `[]`, se não houver). Cada ponto aponta o trecho do `pr.diff`:
 
 ```json
@@ -131,17 +139,23 @@ Escreva com **Write** em `$WF_DIR/.gate-pr.candidates.json` uma lista JSON de po
   "assumed": "ok", "prefers": {"author": "ok"}}]
 ```
 
+Depois dos pontos de decisão, acrescente um ponto de mapa por peça do `built-map` com `built` igual a `unplanned` ou `untouched`, na ordem do mapa, com `id` `M-1`, `M-2`… e as mesmas `options`, `assumed` e `prefers`:
+- `unplanned` (arquivos fora do plano): `text` diz que `<label>` mudou sem estar no plano; `anchor.path` é o primeiro de `files`, com `start` e `end` do primeiro trecho dele no `pr.diff`, em números de linha do arquivo novo (os do lado de adição do cabeçalho `@@` do primeiro bloco do arquivo), não a posição da linha dentro do `pr.diff`; é a mesma numeração das âncoras dos pontos de decisão (arquivo removido: 1 e 1).
+- `untouched` (peça planejada que o diff não tocou): `text` diz que `<label>` não foi construída; `anchor.path` é o primeiro de `paths` como está, com `start` e `end` iguais a 1.
+
 ### 8b. Crítico
 
 Spawne o agente `gate-critic` (Agent tool, `subagent_type: gate-critic`) com: gate `pr`, artefato `pr.diff` (em `$WF_DIR`), candidatas `$WF_DIR/.gate-pr.candidates.json` e saída `$WF_DIR/.gate-pr.json`. Na reentrada, diga também o que mudou desde a rodada anterior (as tasks `P*` implementadas), que vira `changes` (1 a 3 linhas). Não resuma o diff no prompt; ele lê.
 
 ### 8c. Brief
 
-Sem `|| true`: a recusa é o sinal para o reenvio. O `--tree` vai por referência ao arquivo; o `base` o script lê do `current.json`.
+Sem `|| true`: a recusa é o sinal para o reenvio. O `--tree` vai por referência ao arquivo; o `base` o script lê do `current.json`. O mapa construído é do script: o `brief` o calcula do diff com o `--repo` e o grava no bloco; o arquivo do crítico não o traz.
 
 ```bash
-python3 ~/.claude/bin/wf-report.py brief pr --workflow-dir "$WF_DIR" --file "$WF_DIR/.gate-pr.json" --candidates "$WF_DIR/.gate-pr.candidates.json" --tree "@$WF_DIR/pr.tree"
+python3 ~/.claude/bin/wf-report.py brief pr --workflow-dir "$WF_DIR" --file "$WF_DIR/.gate-pr.json" --candidates "$WF_DIR/.gate-pr.candidates.json" --tree "@$WF_DIR/pr.tree" --repo "$PROJECT_PATH"
 ```
+
+`mapa construído indisponível` no stderr com saída 0 é só aviso: o bloco fica sem mapa e o gate segue.
 
 - Saída 0: siga ao gate.
 - Saída 2 com `rodadas esgotadas` no stderr: vá para "Rodadas esgotadas" (8f).
