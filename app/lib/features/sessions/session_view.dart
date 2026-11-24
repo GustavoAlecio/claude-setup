@@ -241,11 +241,11 @@ class _Header extends StatelessWidget {
       _PermissionModeSelector(key: ValueKey('mode-${s.id}'), session: s),
     ];
     final cost = Mono('\$${s.cost.toStringAsFixed(2)}', size: 12);
-    final aside = s.provider == AgentProvider.anthropic && s.resumable && s.asideOf == null
+    final aside = s.canAskAside
         ? IconButton(
             key: const ValueKey('session-aside'),
             tooltip: 'Perguntar à parte: vê tudo desta sessão, só lê e não entra no contexto dela',
-            onPressed: () => unawaited(_askAside(context, s)),
+            onPressed: () => unawaited(showAsideQuestion(context, s)),
             icon: Icon(Icons.forum_outlined, size: 18, color: c.textSecondary),
           )
         : null;
@@ -316,7 +316,8 @@ class _Header extends StatelessWidget {
   }
 }
 
-Future<void> _askAside(BuildContext context, SessionSummary s) async {
+/// Asks for the text of a side question about [s], forks it and opens the new session.
+Future<void> showAsideQuestion(BuildContext context, SessionSummary s) async {
   final text = await showDialog<String>(context: context, builder: (_) => const _AsideDialog());
   if (text == null || text.isEmpty || !context.mounted) return;
   final router = GoRouter.of(context);

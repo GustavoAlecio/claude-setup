@@ -156,6 +156,44 @@ ReportGate? _parseGate(Object? raw) {
         : const GateOmitted(),
     artifact: _string(raw['artifact']),
     answer: _answer(raw['answer'], null),
+    map: _parseMap(raw['map']),
+  );
+}
+
+/// `null` when not an object or without a readable node. Nodes need a non-empty `id` and `label` (a repeated id is
+/// dropped), an unknown `state`/`built` becomes `null`, and an edge must link two read nodes.
+GateMap? _parseMap(Object? raw) {
+  if (raw is! Map) return null;
+  final nodes = <String, MapNode>{};
+  for (final n in _maps(raw['nodes'])) {
+    final id = _string(n['id']);
+    final label = _string(n['label']);
+    if (id == null || id.isEmpty || label == null || label.isEmpty || nodes.containsKey(id)) continue;
+    nodes[id] = MapNode(
+      id: id,
+      label: label,
+      state: MapNodeState.values.where((s) => s.wire == n['state']).firstOrNull,
+      built: BuiltState.values.where((s) => s.name == n['built']).firstOrNull,
+      note: _string(n['note']),
+      files: _strings(n['files']),
+    );
+  }
+  if (nodes.isEmpty) return null;
+  return GateMap(
+    summary: _string(raw['summary']) ?? '',
+    nodes: nodes.values.toList(),
+    edges: [
+      for (final e in _maps(raw['edges']))
+        if (nodes.containsKey(e['from']) && nodes.containsKey(e['to']))
+          MapEdge(from: e['from'] as String, to: e['to'] as String, label: _string(e['label'])),
+    ],
+    approaches: [
+      for (final a in _maps(raw['approaches']))
+        if (_string(a['label']) != null && _string(a['text']) != null)
+          MapApproach(label: a['label'] as String, text: a['text'] as String, chosen: a['chosen'] == true),
+    ],
+    gains: _strings(raw['gains']),
+    costs: _strings(raw['costs']),
   );
 }
 

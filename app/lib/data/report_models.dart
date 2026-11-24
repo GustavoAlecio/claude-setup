@@ -77,7 +77,7 @@ class StageReport {
 
 enum GateStatus { open, revising, approved, passed, rejected }
 
-/// `stages[].gate`. `base`, `tree` and `map` are not read.
+/// `stages[].gate`. `base` and `tree` are not read.
 class ReportGate {
   const ReportGate({
     required this.name,
@@ -92,6 +92,7 @@ class ReportGate {
     this.omitted = const GateOmitted(),
     this.artifact,
     this.answer,
+    this.map,
   });
 
   /// `spec`, `plan`, `tasks` or `pr`.
@@ -109,6 +110,78 @@ class ReportGate {
 
   /// Free-text adjust of a block without questions.
   final GateAnswer? answer;
+
+  /// Architecture map of the gate (ADR 0030); `null` keeps the screen as it was before maps.
+  final GateMap? map;
+}
+
+/// `ignore` and node `paths` are not read.
+class GateMap {
+  const GateMap({
+    required this.nodes,
+    this.summary = '',
+    this.edges = const [],
+    this.approaches = const [],
+    this.gains = const [],
+    this.costs = const [],
+  });
+
+  final String summary;
+
+  /// Never empty, ids unique.
+  final List<MapNode> nodes;
+
+  /// Both ends are ids of [nodes].
+  final List<MapEdge> edges;
+  final List<MapApproach> approaches;
+  final List<String> gains;
+  final List<String> costs;
+
+  /// What was built (gate `pr`) rather than what the plan proposes; the screen decides by this, not by the gate name.
+  bool get built => nodes.any((n) => n.built != null);
+}
+
+/// Plan state of a node; [added] is `new` on the wire.
+enum MapNodeState {
+  added('new'),
+  changed('changed'),
+  existing('existing');
+
+  const MapNodeState(this.wire);
+
+  final String wire;
+}
+
+/// How a node came out against the plan, computed by `wf-report.py` from the diff.
+enum BuiltState { planned, untouched, existing, touched, unplanned }
+
+class MapNode {
+  const MapNode({required this.id, required this.label, this.state, this.built, this.note, this.files = const []});
+
+  final String id;
+  final String label;
+  final MapNodeState? state;
+  final BuiltState? built;
+  final String? note;
+
+  /// Changed files of the diff that fall in this node.
+  final List<String> files;
+}
+
+class MapEdge {
+  const MapEdge({required this.from, required this.to, this.label});
+
+  final String from;
+  final String to;
+  final String? label;
+}
+
+class MapApproach {
+  const MapApproach({required this.label, required this.text, this.chosen = false});
+
+  final String label;
+  final String text;
+  final bool chosen;
 }
 
 class GateRisk {

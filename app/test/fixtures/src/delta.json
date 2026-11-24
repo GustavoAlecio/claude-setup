@@ -13,9 +13,7 @@
     "end_date": null,
     "blockers": [],
     "tags": [],
-    "exec": {
-      "base_checkpoint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    },
+    "exec": {},
     "tasks": {
       "total": 1,
       "completed": 1,
@@ -40,10 +38,115 @@
     }
   },
   "runs": [],
+  "repo": {
+    "base": {
+      "lib/delta/view.dart": "class DeltaView {}\n",
+      "lib/delta/legacy.dart": "class DeltaLegacy {}\n",
+      "lib/core/theme.dart": "const accent = 1;\n",
+      "lib/app/routes.dart": "const routes = ['/delta'];\n"
+    },
+    "tree": {
+      "lib/delta/view.dart": "class DeltaView {\n  final repo = const DeltaRepository();\n}\n",
+      "lib/delta/repository.dart": "class DeltaRepository {\n  const DeltaRepository();\n}\n",
+      "lib/core/theme.dart": "const accent = 2;\n",
+      "lib/app/routes.dart": "const routes = ['/delta'];\n",
+      "lib/shared/format.dart": "String twoDigits(int n) => n.toString().padLeft(2, '0');\n"
+    }
+  },
   "files": {
     "pr.diff": "diff --git a/lib/delta/view.dart b/lib/delta/view.dart\nindex 1111111..2222222 100644\n--- a/lib/delta/view.dart\n+++ b/lib/delta/view.dart\n@@ -10,6 +10,7 @@ class DeltaView extends StatelessWidget {\n   const DeltaView({super.key});\n \n   Widget build(BuildContext context) {\n+    final repo = context.read<DeltaRepository>();\n     return const SizedBox();\n   }\n }\n@@ -40,4 +41,5 @@ class DeltaState {\n   final int count;\n \n-  const DeltaState(this.count);\n+  const DeltaState(this.count, {this.loading = false});\n+  final bool loading;\n }\ndiff --git a/lib/delta/repository.dart b/lib/delta/repository.dart\nnew file mode 100644\nindex 0000000..3333333\n--- /dev/null\n+++ b/lib/delta/repository.dart\n@@ -0,0 +1,5 @@\n+class DeltaRepository {\n+  const DeltaRepository();\n+\n+  Future<int> count() async => 0;\n+}\ndiff --git a/lib/delta/legacy.dart b/lib/delta/legacy.dart\ndeleted file mode 100644\nindex 4444444..0000000\n--- a/lib/delta/legacy.dart\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-class DeltaLegacy {\n-  const DeltaLegacy();\n-}\n"
   },
   "report": [
+    {
+      "cmd": "stage-start",
+      "stage": "plan"
+    },
+    {
+      "cmd": "brief",
+      "name": "plan",
+      "file": {
+        "summary": "A view do delta passa a ler um repositório novo, que substitui o legado.",
+        "artifact": "plan.md",
+        "map": {
+          "summary": "A view consome o repositório novo; um cache fica para depois do primeiro uso.",
+          "nodes": [
+            {
+              "id": "view",
+              "label": "View do delta",
+              "state": "changed",
+              "paths": [
+                "lib/delta/view.dart"
+              ]
+            },
+            {
+              "id": "repositorio",
+              "label": "Repositório do delta",
+              "state": "new",
+              "paths": [
+                "lib/delta/repository.dart",
+                "lib/delta/legacy.dart"
+              ]
+            },
+            {
+              "id": "cache",
+              "label": "Cache de contagem",
+              "state": "new",
+              "paths": [
+                "lib/delta/cache/**"
+              ]
+            },
+            {
+              "id": "rotas",
+              "label": "Rotas do app",
+              "state": "existing",
+              "paths": [
+                "lib/app/**"
+              ]
+            },
+            {
+              "id": "tema",
+              "label": "Tema compartilhado",
+              "state": "existing",
+              "paths": [
+                "lib/core/**"
+              ]
+            }
+          ],
+          "edges": [
+            {
+              "from": "rotas",
+              "to": "view"
+            },
+            {
+              "from": "view",
+              "to": "repositorio"
+            },
+            {
+              "from": "repositorio",
+              "to": "cache"
+            },
+            {
+              "from": "view",
+              "to": "tema"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "cmd": "answer",
+      "name": "plan",
+      "approve": true
+    },
+    {
+      "cmd": "stage-end",
+      "stage": "plan",
+      "summary": "Plano do delta aprovado.",
+      "status": "done",
+      "artifacts": [
+        "plan.md"
+      ]
+    },
     {
       "cmd": "stage-start",
       "stage": "complete",
@@ -52,7 +155,6 @@
     {
       "cmd": "brief",
       "name": "pr",
-      "tree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "file": {
         "summary": "Delta com a view lendo o repositório novo e o legado removido.",
         "artifact": "pr.diff",

@@ -73,6 +73,9 @@ class SessionSummary {
   /// Only an idle session can be waiting on a message after the engine killed its process.
   bool get showsInterrupted => interrupted && status == SessionStatus.idle;
 
+  /// A side question needs a resumable Anthropic session, and a side question never forks again.
+  bool get canAskAside => provider == AgentProvider.anthropic && resumable && asideOf == null;
+
   SessionSummary copyWith({
     SessionStatus? status,
     double? cost,

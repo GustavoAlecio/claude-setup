@@ -464,6 +464,155 @@ void main() {
     }
   });
 
+  group('mapa do gate', () {
+    ReportGate gateWith(Object? map) => parseReport(
+      _report([
+        _stage(
+          'plan',
+          status: 'running',
+          extra: {
+            'gate': {'name': 'plan', 'status': 'open', 'summary': 'resumo', 'map': map},
+          },
+        ),
+      ]),
+    )!.stage(Stage.plan)!.gate!;
+
+    Map<String, Object?> node(String id, {Object? label, Object? state = 'new', Object? files}) => {
+      'id': id,
+      'label': label ?? 'Peça $id',
+      'state': state,
+      'files': ?files,
+    };
+
+    test('gamma: mapa do plano com peças, estados, arestas, formas, ganhos e custos', () {
+      final gate = parseReport(_fixture('gamma/report.json'))!.stage(Stage.plan)!.gate!;
+      final map = gate.map!;
+
+      expect(map.built, isFalse);
+      expect(map.summary, isNotEmpty);
+      expect([for (final n in map.nodes) n.id], ['atalho', 'tela', 'estado', 'leitor', 'tema']);
+      expect({for (final n in map.nodes) n.state}, MapNodeState.values.toSet());
+      expect(map.nodes.every((n) => n.built == null && n.files.isEmpty), isTrue);
+      expect(map.nodes.first.label, 'Atalho na barra lateral');
+      expect(map.nodes.first.note, isNotEmpty);
+      expect(map.nodes.last.note, isNull);
+      expect(
+        [for (final e in map.edges) (e.from, e.to)],
+        [('atalho', 'tela'), ('tela', 'estado'), ('estado', 'leitor'), ('tela', 'tema')],
+      );
+      expect([for (final e in map.edges) e.label != null], [true, false, false, false]);
+      expect(map.approaches, hasLength(2));
+      expect([for (final a in map.approaches) a.chosen], [true, false]);
+      expect(map.approaches.every((a) => a.label.isNotEmpty && a.text.isNotEmpty), isTrue);
+      expect(map.gains, isNotEmpty);
+      expect(map.costs, isNotEmpty);
+    });
+
+    test('delta: plan aprovado e mapa construído no gate pr com os cinco valores de built', () {
+      final doc = parseReport(_fixture('delta/report.json'))!;
+
+      expect(doc.stage(Stage.plan)!.status, ReportStatus.done);
+      expect(doc.stage(Stage.plan)!.gate!.map!.built, isFalse);
+      expect(doc.stage(Stage.complete)!.status, ReportStatus.running);
+      final gate = doc.stage(Stage.complete)!.gate!;
+      expect(gate.name, 'pr');
+      final map = gate.map!;
+      expect(map.built, isTrue);
+      expect({for (final n in map.nodes) n.built}, BuiltState.values.toSet());
+      final repo = map.nodes.firstWhere((n) => n.id == 'repositorio');
+      expect(repo.files, ['lib/delta/legacy.dart', 'lib/delta/repository.dart']);
+      expect(map.nodes.firstWhere((n) => n.id == 'cache').files, isEmpty);
+      final unplanned = map.nodes.firstWhere((n) => n.built == BuiltState.unplanned);
+      expect(unplanned.state, isNull);
+      expect(unplanned.files, ['lib/shared/format.dart']);
+      expect(map.edges, hasLength(4));
+      expect(map.approaches, isEmpty);
+    });
+
+    test('map que não é objeto vira null', () {
+      final gate = gateWith(['não', 'é', 'objeto']);
+
+      expect(gate.summary, 'resumo');
+      expect(gate.map, isNull);
+    });
+
+    test('peça sem label é descartada', () {
+      final gate = gateWith({
+        'nodes': [
+          node('a'),
+          {'id': 'b', 'state': 'new'},
+          node('c', label: 7),
+        ],
+      });
+
+      expect([for (final n in gate.map!.nodes) n.id], ['a']);
+    });
+
+    test('state fora do enum vira null e a peça continua lida', () {
+      final gate = gateWith({
+        'nodes': [node('a', state: 'removed'), node('b', state: 'changed')],
+      });
+
+      expect([for (final n in gate.map!.nodes) (n.id, n.state)], [('a', null), ('b', MapNodeState.changed)]);
+    });
+
+    test('aresta para id inexistente é descartada', () {
+      final gate = gateWith({
+        'nodes': [node('a'), node('b')],
+        'edges': [
+          {'from': 'a', 'to': 'b', 'label': 'usa'},
+          {'from': 'a', 'to': 'x'},
+          {'from': 'y', 'to': 'b'},
+          {'from': 'a', 'to': 3},
+        ],
+      });
+
+      expect([for (final e in gate.map!.edges) (e.from, e.to, e.label)], [('a', 'b', 'usa')]);
+    });
+
+    test('files que não é lista vira lista vazia', () {
+      final gate = gateWith({
+        'nodes': [
+          {'id': 'a', 'label': 'A', 'built': 'touched', 'files': 'lib/a.dart'},
+        ],
+      });
+
+      final a = gate.map!.nodes.single;
+      expect(a.files, isEmpty);
+      expect(a.built, BuiltState.touched);
+      expect(gate.map!.built, isTrue);
+    });
+
+    test('chosen que não é booleano vira falso', () {
+      final gate = gateWith({
+        'nodes': [node('a')],
+        'approaches': [
+          {'id': 'x', 'label': 'X', 'text': 'tx', 'chosen': 'true'},
+          {'id': 'y', 'label': 'Y', 'text': 'ty', 'chosen': true},
+          {'id': 'z', 'label': 'Z', 'text': 'tz'},
+        ],
+      });
+
+      expect([for (final a in gate.map!.approaches) (a.label, a.chosen)], [('X', false), ('Y', true), ('Z', false)]);
+    });
+
+    test('mapa sem nenhuma peça válida vira null', () {
+      final gate = gateWith({
+        'summary': 's',
+        'nodes': [
+          {'label': 'sem id'},
+          'texto',
+        ],
+        'edges': [
+          {'from': 'a', 'to': 'b'},
+        ],
+      });
+
+      expect(gate.name, 'plan');
+      expect(gate.map, isNull);
+    });
+  });
+
   group('fechamento do ciclo (qa, real_data, pr)', () {
     String closing(Map<String, Object?> extra) => jsonEncode({
       'version': 1,

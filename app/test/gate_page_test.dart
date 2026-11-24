@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/theme/app_colors.dart';
+import 'package:claude_flow/data/flow_aggregates.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
@@ -13,10 +14,12 @@ import 'package:claude_flow/data/report_models.dart';
 import 'package:claude_flow/data/report_parser.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/sessions_repository.dart';
+import 'package:claude_flow/features/flow/gate_map.dart';
 import 'package:claude_flow/features/flow/gate_page.dart';
 import 'package:claude_flow/features/reviews/reviews_diff.dart';
 import 'package:claude_flow/features/shell/shell_page.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
@@ -91,6 +94,24 @@ class _Sessions extends MockSessionsRepository {
     ];
     summaries[id] = summaries[id]!.copyWith(status: SessionStatus.idle, pendingPermissions: 0);
     update();
+  }
+
+  @override
+  Future<SessionSummary> askAside(String id, String text) async {
+    asideCalls.add((id, text));
+    final aside = SessionSummary(
+      id: 'aside-$id',
+      project: summaries[id]!.project,
+      command: text,
+      title: text,
+      status: SessionStatus.idle,
+      createdAt: '2026-03-10T10:10:00Z',
+      asideOf: id,
+    );
+    summaries[aside.id] = aside;
+    events[aside.id] = const [];
+    update();
+    return aside;
   }
 }
 
@@ -1194,4 +1215,507 @@ void main() {
       expect(_key('gate-point-0-text'), findsOneWidget);
     });
   });
+
+  group('mapa do plano', () {
+    testWidgets('a seção fica entre o resumo e os riscos, com uma caixa por peça, rótulo e estado em palavras', (
+      tester,
+    ) async {
+      await _deciding(tester);
+      final map = _report().stage(Stage.plan)!.gate!.map!;
+
+      final summary = tester.getTopLeft(_key('gate-summary')).dy;
+      final section = tester.getTopLeft(_key('gate-map')).dy;
+      final risks = tester.getTopLeft(_key('gate-risks')).dy;
+      expect(section, greaterThan(summary));
+      expect(risks, greaterThan(section));
+      expect(find.text('Como isso vai ser construído'), findsOneWidget);
+      expect(find.descendant(of: _key('gate-map'), matching: find.text(map.summary)), findsOneWidget);
+
+      expect(_keyPrefix('gate-map-node-').evaluate().where(_isNodeBox), hasLength(map.nodes.length));
+      for (final n in map.nodes) {
+        final node = _key('gate-map-node-${n.id}');
+        expect(
+          find.descendant(of: node, matching: find.text(n.label)),
+          findsOneWidget,
+          reason: n.id,
+        );
+        expect(tester.widget<Text>(_key('gate-map-node-${n.id}-state')).data, switch (n.state) {
+          MapNodeState.added => 'nova',
+          MapNodeState.changed => 'muda',
+          _ => 'já existe',
+        }, reason: n.id);
+      }
+    });
+
+    testWidgets('cada aresta vai da esquerda para a direita; a mesma coluna tem o mesmo dx e dy na ordem do mapa', (
+      tester,
+    ) async {
+      await _deciding(tester);
+      final map = _report().stage(Stage.plan)!.gate!.map!;
+
+      for (final e in map.edges) {
+        expect(
+          tester.getTopLeft(_key('gate-map-node-${e.to}')).dx,
+          greaterThan(tester.getTopRight(_key('gate-map-node-${e.from}')).dx),
+          reason: '${e.from} → ${e.to}',
+        );
+      }
+      final layout = mapLayout(map.nodes, map.edges);
+      for (final col in {for (final p in layout.values) p.col}) {
+        final ids = [
+          for (final n in map.nodes)
+            if (layout[n.id]!.col == col) n.id,
+        ];
+        for (var i = 1; i < ids.length; i++) {
+          final above = tester.getTopLeft(_key('gate-map-node-${ids[i - 1]}'));
+          final below = tester.getTopLeft(_key('gate-map-node-${ids[i]}'));
+          expect(below.dx, above.dx, reason: ids[i]);
+          expect(below.dy, greaterThan(above.dy), reason: ids[i]);
+        }
+      }
+    });
+
+    testWidgets('um único CustomPaint desenha as 4 arestas, e a rotulada tem o rótulo pela key', (tester) async {
+      await _deciding(tester);
+      final map = _report().stage(Stage.plan)!.gate!.map!;
+
+      final painters = [
+        for (final w in tester.widgetList<CustomPaint>(
+          find.descendant(of: _key('gate-map'), matching: find.byType(CustomPaint)),
+        ))
+          if (w.painter case final GateMapEdgesPainter p) p,
+      ];
+      expect(painters, hasLength(1));
+      expect(painters.single.edges, hasLength(4));
+
+      final labeled = map.edges.indexWhere((e) => e.label != null);
+      final e = map.edges[labeled];
+      final name = {for (final n in map.nodes) n.id: n.label};
+      final label = tester.widget<Text>(_key('gate-map-edge-$labeled-label'));
+      expect(label.data, '${name[e.from]} → ${name[e.to]}: ${e.label}');
+      expect(
+        find.descendant(of: _key('gate-map-edges'), matching: find.byKey(ValueKey('gate-map-edge-$labeled-label'))),
+        findsOneWidget,
+      );
+      expect(find.descendant(of: _key('gate-map-edges'), matching: find.text('Ligações')), findsOneWidget);
+      expect(
+        tester.getTopLeft(_key('gate-map-edges')).dy,
+        greaterThan(tester.getBottomLeft(_key('gate-map-node-tela')).dy),
+      );
+    });
+
+    testWidgets('sem aresta rotulada não há lista Ligações', (tester) async {
+      await _open(
+        tester,
+        report: _report(
+          plan: (gate) {
+            final map = gate['map'] as Map<String, dynamic>;
+            for (final e in (map['edges'] as List).cast<Map<String, dynamic>>()) {
+              e.remove('label');
+            }
+          },
+        ),
+      );
+      expect(_key('gate-map'), findsOneWidget);
+      expect(_key('gate-map-edges'), findsNothing);
+    });
+
+    testWidgets('a legenda só tem os estados presentes', (tester) async {
+      await _deciding(tester);
+      final legend = _key('gate-map-legend');
+      for (final word in ['nova', 'muda', 'já existe']) {
+        expect(
+          find.descendant(of: legend, matching: find.text(word)),
+          findsOneWidget,
+          reason: word,
+        );
+      }
+    });
+
+    testWidgets('sem peças changed, a legenda não tem muda', (tester) async {
+      await _open(
+        tester,
+        report: _report(
+          plan: (gate) {
+            final nodes = _mapNodes(gate);
+            nodes.removeWhere((n) => n['state'] == 'changed');
+          },
+        ),
+      );
+      expect(find.descendant(of: _key('gate-map-legend'), matching: find.text('muda')), findsNothing);
+      expect(find.descendant(of: _key('gate-map-legend'), matching: find.text('nova')), findsOneWidget);
+    });
+
+    testWidgets('formas de fazer com a escolhida primeiro, ganhos e custos, e o envio só na última resposta', (
+      tester,
+    ) async {
+      await _deciding(tester);
+      final map = _report().stage(Stage.plan)!.gate!.map!;
+      final chosen = map.approaches.firstWhere((a) => a.chosen);
+      final other = map.approaches.firstWhere((a) => !a.chosen);
+
+      final approaches = _key('gate-map-approaches');
+      expect(find.text('Formas de fazer'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.descendant(of: approaches, matching: find.text(chosen.label))).dy,
+        lessThan(tester.getTopLeft(find.descendant(of: approaches, matching: find.text(other.label))).dy),
+      );
+      expect(find.descendant(of: approaches, matching: find.text(chosen.text)), findsOneWidget);
+      expect(find.descendant(of: approaches, matching: find.text(other.text)), findsOneWidget);
+      expect(find.descendant(of: approaches, matching: find.text('escolhida')), findsOneWidget);
+
+      final tradeoffs = _key('gate-map-tradeoffs');
+      expect(find.text('O que você ganha e o que abre mão'), findsOneWidget);
+      final gains = find.descendant(of: tradeoffs, matching: find.text('Ganha'));
+      final costs = find.descendant(of: tradeoffs, matching: find.text('Abre mão'));
+      expect(gains, findsOneWidget);
+      expect(costs, findsOneWidget);
+      final gain = find.descendant(of: tradeoffs, matching: find.text('· ${map.gains.single}'));
+      final cost = find.descendant(of: tradeoffs, matching: find.text('· ${map.costs.single}'));
+      expect(tester.getTopLeft(gain).dy, greaterThan(tester.getTopLeft(gains).dy));
+      expect(tester.getTopLeft(costs).dy, greaterThan(tester.getTopLeft(gain).dy));
+      expect(tester.getTopLeft(cost).dy, greaterThan(tester.getTopLeft(costs).dy));
+
+      await _tap(tester, 'gate-option-0-0');
+      await _tap(tester, 'gate-option-1-0');
+      expect(_send(tester).onPressed, isNull);
+      await _tap(tester, 'gate-option-2-0');
+      expect(_send(tester).onPressed, isNotNull);
+    });
+
+    testWidgets('borda pelo estado; peça sem estado tem borda neutra e nenhuma linha de estado', (tester) async {
+      await _open(
+        tester,
+        report: _report(plan: (gate) => _mapNodes(gate).firstWhere((n) => n['id'] == 'tema').remove('state')),
+      );
+      final c = _colors(tester);
+      expect(_border(tester, 'tela'), c.accent);
+      expect(_border(tester, 'estado'), c.accent);
+      expect(_border(tester, 'leitor'), c.warn);
+      expect(_border(tester, 'atalho'), c.borderStrong);
+      expect(_border(tester, 'tema'), c.borderStrong);
+      expect(_key('gate-map-node-tema-state'), findsNothing);
+      expect(_key('gate-map-node-atalho-state'), findsOneWidget);
+    });
+
+    testWidgets('tocar numa caixa do mapa do plano não abre arquivos', (tester) async {
+      await _deciding(tester);
+      await _tap(tester, 'gate-map-node-tela');
+      expect(_key('gate-map-files'), findsNothing);
+    });
+
+    testWidgets('gamma sem map: nada do mapa aparece', (tester) async {
+      await _open(tester, report: _report(plan: (gate) => gate.remove('map')));
+      for (final key in _mapKeys) {
+        expect(_key(key), findsNothing, reason: key);
+      }
+      expect(_key('gate-summary'), findsOneWidget);
+      expect(_key('gate-risks'), findsOneWidget);
+    });
+
+    testWidgets('alpha, sem map no gate da spec: nada do mapa aparece', (tester) async {
+      final alpha = parseReport(File('test/fixtures/workflow/alpha/report.json').readAsStringSync())!;
+      await _openPr(
+        tester,
+        projects: [
+          Project(
+            name: 'alpha',
+            path: '/synthetic/alpha',
+            cycle: Cycle(
+              stage: Stage.challenge,
+              runs: const [],
+              stageMinutes: const {},
+              report: alpha,
+              reportIsCurrent: true,
+            ),
+          ),
+        ],
+        sessions: const [],
+        events: const {},
+        project: 'alpha',
+        gate: 'spec',
+      );
+      expect(_key('gate-summary'), findsOneWidget);
+      for (final key in _mapKeys) {
+        expect(_key(key), findsNothing, reason: key);
+      }
+    });
+
+    testWidgets('janela mínima com 4 colunas e textos longos: sem exceção, caixas contidas, 2 linhas com reticências', (
+      tester,
+    ) async {
+      await _open(
+        tester,
+        report: _report(
+          plan: (gate) {
+            for (final (i, n) in _mapNodes(gate).indexed) {
+              n['label'] = 'Rótulo comprido da peça $i que passa'.padRight(32, 'x').substring(0, 32);
+              n['note'] = 'Nota longa da peça $i que descreve o papel dela em bastante detalhe para a caixa'
+                  .padRight(80, '.')
+                  .substring(0, 80);
+            }
+          },
+        ),
+      );
+      tester.view.physicalSize = const Size(1100, 700);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final map = _report().stage(Stage.plan)!.gate!.map!;
+      expect({for (final p in mapLayout(map.nodes, map.edges).values) p.col}, hasLength(4));
+      final section = tester.getRect(_key('gate-map'));
+      for (final n in map.nodes) {
+        final node = _key('gate-map-node-${n.id}');
+        final rect = tester.getRect(node);
+        expect(section.contains(rect.topLeft) && section.contains(rect.bottomRight), isTrue, reason: n.id);
+        final texts = tester.widgetList<Text>(find.descendant(of: node, matching: find.byType(Text))).toList();
+        for (final text in texts.where((t) => t.data!.startsWith('Rótulo') || t.data!.startsWith('Nota'))) {
+          expect(text.maxLines, 2, reason: text.data);
+          expect(text.overflow, TextOverflow.ellipsis, reason: text.data);
+        }
+        expect(texts.where((t) => t.data!.startsWith('Rótulo')), hasLength(1), reason: n.id);
+        expect(texts.where((t) => t.data!.startsWith('Nota')), hasLength(1), reason: n.id);
+      }
+    });
+  });
+
+  group('mapa construído na janela mínima', () {
+    testWidgets('delta com 4 colunas: o texto de estado não é cortado e a contagem fica em outro widget', (
+      tester,
+    ) async {
+      await _openPr(tester);
+      tester.view.physicalSize = const Size(1100, 700);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final map = _deltaReport().stage(Stage.complete)!.gate!.map!;
+      expect({for (final p in mapLayout(map.nodes, map.edges).values) p.col}, hasLength(4));
+      for (final n in map.nodes) {
+        final text = _key('gate-map-node-${n.id}-state');
+        final render = tester.renderObject<RenderParagraph>(text);
+        expect(render.didExceedMaxLines, isFalse, reason: n.id);
+        final widget = tester.widget<Text>(text);
+        final painter = TextPainter(
+          text: TextSpan(text: widget.data, style: widget.style),
+          textDirection: TextDirection.ltr,
+          maxLines: widget.maxLines,
+        )..layout(maxWidth: render.size.width);
+        expect(painter.didExceedMaxLines, isFalse, reason: n.id);
+        expect(widget.data, isNot(contains('arquivo')), reason: n.id);
+        if (n.files.isNotEmpty) {
+          expect(tester.widget<Text>(_key('gate-map-node-${n.id}-count')).data, contains('arquivo'), reason: n.id);
+        }
+      }
+    });
+  });
+
+  group('edgeSegment', () {
+    const from = Rect.fromLTWH(0, 0, 100, 40);
+
+    test('coluna à direita liga a borda direita da origem à borda esquerda do destino', () {
+      expect(edgeSegment(from, const Rect.fromLTWH(140, 56, 100, 40)), (const Offset(100, 20), const Offset(140, 76)));
+    });
+
+    test('mesma coluna liga a borda de baixo à de cima, ou a de cima à de baixo', () {
+      expect(edgeSegment(from, const Rect.fromLTWH(0, 56, 100, 40)), (const Offset(50, 40), const Offset(50, 56)));
+      expect(edgeSegment(const Rect.fromLTWH(0, 56, 100, 40), from), (const Offset(50, 56), const Offset(50, 40)));
+    });
+
+    test('para trás liga a borda esquerda da origem à borda direita do destino', () {
+      expect(edgeSegment(const Rect.fromLTWH(140, 0, 100, 40), from), (const Offset(140, 20), const Offset(100, 20)));
+    });
+  });
+
+  group('mapa construído', () {
+    testWidgets('O que foi construído entre o resumo e os riscos; estado e arquivos por caixa; diferente e igual', (
+      tester,
+    ) async {
+      await _openPr(
+        tester,
+        report: _deltaReport(
+          gate: (gate) => gate['risks'] = [
+            {'id': 'R1', 'text': 'Cache sem invalidação.', 'source': 'critic'},
+          ],
+        ),
+      );
+      final map = _deltaReport().stage(Stage.complete)!.gate!.map!;
+
+      expect(find.text('O que foi construído'), findsOneWidget);
+      final summary = tester.getTopLeft(_key('gate-summary')).dy;
+      final section = tester.getTopLeft(_key('gate-map')).dy;
+      expect(section, greaterThan(summary));
+      expect(tester.getTopLeft(_key('gate-risks')).dy, greaterThan(section));
+
+      for (final n in map.nodes) {
+        final word = switch (n.built!) {
+          BuiltState.planned => 'como planejado',
+          BuiltState.existing => 'não foi tocada',
+          BuiltState.unplanned => 'não estava no plano',
+          BuiltState.untouched => 'planejada e não tocada',
+          BuiltState.touched => 'tocada sem estar no plano',
+        };
+        expect(tester.widget<Text>(_key('gate-map-node-${n.id}-state')).data, word, reason: n.id);
+        final count = _key('gate-map-node-${n.id}-count');
+        if (n.files.isNotEmpty) {
+          expect(
+            tester.widget<Text>(count).data,
+            n.files.length == 1 ? '1 arquivo' : '${n.files.length} arquivos',
+            reason: n.id,
+          );
+        } else {
+          expect(count, findsNothing, reason: n.id);
+        }
+      }
+
+      final diff = _key('gate-map-diff');
+      expect(find.descendant(of: diff, matching: find.text('Diferente do plano')), findsOneWidget);
+      for (final n in map.nodes) {
+        final listed = find.descendant(of: diff, matching: find.textContaining(n.label));
+        final different = {BuiltState.unplanned, BuiltState.untouched, BuiltState.touched}.contains(n.built);
+        expect(listed, different ? findsOneWidget : findsNothing, reason: n.id);
+      }
+      expect(
+        find.descendant(of: _key('gate-map-same'), matching: find.text('2 peças como planejado, 1 não foi tocada')),
+        findsOneWidget,
+      );
+      expect(_key('gate-map-legend'), findsNothing);
+      expect(_key('gate-map-approaches'), findsNothing);
+      expect(_key('gate-map-tradeoffs'), findsNothing);
+
+      final points = [for (var i = 0; i < 2; i++) tester.getTopLeft(_key('gate-point-$i-text')).dy];
+      expect(points[1], greaterThan(points[0]));
+      expect(points[0], greaterThan(section));
+      expect(_lines('gate-point-0-excerpt'), findsWidgets);
+    });
+
+    testWidgets('borda pelo built: neutra em planned e existing, warn em unplanned e touched, fail em untouched', (
+      tester,
+    ) async {
+      await _openPr(tester);
+      final c = _colors(tester);
+      expect(_border(tester, 'view'), c.borderStrong);
+      expect(_border(tester, 'repositorio'), c.borderStrong);
+      expect(_border(tester, 'rotas'), c.borderStrong);
+      expect(_border(tester, 'tema'), c.warn);
+      expect(_border(tester, 'unplanned:lib/shared'), c.warn);
+      expect(_border(tester, 'cache'), c.fail);
+    });
+
+    testWidgets('arquivos: 8 caminhos e mais 2; tocar de novo fecha; outra caixa troca; sem arquivos não toca', (
+      tester,
+    ) async {
+      final many = [for (var i = 0; i < 10; i++) 'lib/delta/part_$i.dart'];
+      await _openPr(
+        tester,
+        report: _deltaReport(
+          gate: (gate) => _mapNodes(gate).firstWhere((n) => n['id'] == 'repositorio')['files'] = many,
+        ),
+      );
+      expect(_key('gate-map-files'), findsNothing);
+
+      await _tap(tester, 'gate-map-node-repositorio');
+      final files = _key('gate-map-files');
+      expect(files, findsOneWidget);
+      expect(find.descendant(of: files, matching: find.text('Repositório do delta')), findsOneWidget);
+      for (var i = 0; i < 10; i++) {
+        expect(find.descendant(of: files, matching: find.text(many[i])), i < 8 ? findsOneWidget : findsNothing);
+      }
+      expect(find.descendant(of: files, matching: find.text('mais 2 arquivos')), findsOneWidget);
+
+      await _tap(tester, 'gate-map-node-repositorio');
+      expect(_key('gate-map-files'), findsNothing);
+
+      await _tap(tester, 'gate-map-node-repositorio');
+      await _tap(tester, 'gate-map-node-view');
+      expect(find.descendant(of: _key('gate-map-files'), matching: find.text('lib/delta/view.dart')), findsOneWidget);
+      expect(find.descendant(of: _key('gate-map-files'), matching: find.text(many[0])), findsNothing);
+
+      await _tap(tester, 'gate-map-node-cache');
+      expect(find.descendant(of: _key('gate-map-files'), matching: find.text('lib/delta/view.dart')), findsOneWidget);
+    });
+  });
+
+  group('perguntar pelo mapa', () {
+    SessionSummary resumable({String? asideOf}) => SessionSummary(
+      id: 's-plan',
+      project: _project,
+      command: '/plan',
+      asideOf: asideOf,
+      title: 'sessão s-plan',
+      status: SessionStatus.waitingPermission,
+      createdAt: '2026-03-10T10:00:00Z',
+      pendingPermissions: 1,
+      resumable: true,
+    );
+
+    testWidgets('com a sessão da etapa apta, o link pergunta à parte sem responder o gate', (tester) async {
+      final (_, sessions) = await _open(
+        tester,
+        report: _report(),
+        sessions: [resumable()],
+        events: {
+          's-plan': [_request(_showQuestions())],
+        },
+      );
+      expect(
+        find.descendant(of: _key('gate-map'), matching: find.text('não entendi, quero perguntar')),
+        findsOneWidget,
+      );
+
+      await _tap(tester, 'gate-map-talk');
+      await tester.enterText(_key('aside-text'), 'por que um estado próprio?');
+      await tester.tap(_key('aside-send'));
+      await tester.pumpAndSettle();
+
+      expect(sessions.asideCalls, [('s-plan', 'por que um estado próprio?')]);
+      expect(sessions.answerCalls, isEmpty);
+    });
+
+    testWidgets('não aparece sem session_id na etapa', (tester) async {
+      await _open(tester, report: parseReport(jsonEncode(_gammaJson()))!, sessions: [resumable()]);
+      expect(_key('gate-map'), findsOneWidget);
+      expect(_key('gate-map-talk'), findsNothing);
+    });
+
+    testWidgets('não aparece com session_id sem a sessão no repositório', (tester) async {
+      await _open(tester, report: _report());
+      expect(_key('gate-map'), findsOneWidget);
+      expect(_key('gate-map-talk'), findsNothing);
+    });
+
+    testWidgets('não aparece com sessão lateral', (tester) async {
+      await _open(
+        tester,
+        report: _report(),
+        sessions: [resumable(asideOf: 's-origem')],
+        events: {
+          's-plan': [_request(_showQuestions())],
+        },
+      );
+      expect(_key('gate-map'), findsOneWidget);
+      expect(_key('gate-map-talk'), findsNothing);
+    });
+  });
 }
+
+const _mapKeys = [
+  'gate-map',
+  'gate-map-approaches',
+  'gate-map-tradeoffs',
+  'gate-map-diff',
+  'gate-map-same',
+  'gate-map-legend',
+  'gate-map-files',
+  'gate-map-talk',
+];
+
+List<Map<String, dynamic>> _mapNodes(Map<String, dynamic> gate) =>
+    ((gate['map'] as Map<String, dynamic>)['nodes'] as List).cast<Map<String, dynamic>>();
+
+bool _isNodeBox(Element e) {
+  final key = (e.widget.key! as ValueKey<String>).value;
+  return !key.endsWith('-state') && !key.endsWith('-count');
+}
+
+Color _border(WidgetTester tester, String id) =>
+    ((tester.widget<Container>(_key('gate-map-node-$id')).decoration! as BoxDecoration).border! as Border).top.color;
