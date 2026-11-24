@@ -288,7 +288,7 @@ void main() {
       expect(sessionGate(report, 'ghost'), isNull);
     });
 
-    test('withoutOpenGateSessions drops the sessions of open spec, plan, tasks and pr gates', () {
+    test('withoutOpenGateSessions drops only the session of the gate the card shows', () {
       const report = ReportDoc(
         feature: 'f',
         startedAt: null,
@@ -322,7 +322,8 @@ void main() {
         createdAt: '2026-03-10T08:00:00Z',
       );
       final all = [s('s-spec'), s('s-plan'), s('s-pr'), s('s-free')];
-      expect(withoutOpenGateSessions(all, report).map((x) => x.id), ['s-plan', 's-free']);
+      final open = openGates(report);
+      expect(withoutOpenGateSessions(all, open.first).map((x) => x.id), ['s-plan', 's-pr', 's-free']);
       expect(withoutOpenGateSessions(all, null), all);
     });
 

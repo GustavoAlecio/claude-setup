@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +8,7 @@ import '../../app/config_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/budget.dart';
@@ -15,6 +18,7 @@ import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_reducer.dart';
 import '../../data/session_models.dart';
+import '../launcher/command_palette.dart';
 import '../launcher/kickoff_form.dart';
 import 'cycle_actions.dart';
 import 'flow_panels.dart';
@@ -47,7 +51,9 @@ class FlowPage extends StatelessWidget {
   }
 }
 
-class _FlowView extends StatelessWidget {
+/// Holds what the cycle column has open: above the split and the drawer, so switching between them keeps it. A new
+/// project gets a new state through the provider's key.
+class _FlowView extends StatefulWidget {
   const _FlowView({required this.projectName, required this.project, required this.stage});
 
   final String projectName;
@@ -55,8 +61,25 @@ class _FlowView extends StatelessWidget {
   final Stage? stage;
 
   @override
+  State<_FlowView> createState() => _FlowViewState();
+}
+
+class _FlowViewState extends State<_FlowView> {
+  late bool _timelineOpen = widget.stage != null;
+  bool _detailsOpen = false;
+
+  @override
+  void didUpdateWidget(_FlowView old) {
+    super.didUpdateWidget(old);
+    // Only the arrival of `?stage=` opens the timeline: moving between stages must not reopen one the user closed.
+    if (old.stage == null && widget.stage != null) _timelineOpen = true;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final project = this.project;
+    final projectName = widget.projectName;
+    final stage = widget.stage;
+    final project = widget.project;
     final report = project?.cycle?.report;
     final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     final stageSession = project == null ? null : runningStageSession(sessions, project);
@@ -86,6 +109,7 @@ class _FlowView extends StatelessWidget {
         final main = _FlowMain(
           projectName: projectName,
           project: project,
+          sessions: sessions,
           stageSession: stageSession,
           showOpenLink:
               stageSession == null ||
@@ -96,6 +120,10 @@ class _FlowView extends StatelessWidget {
                 stageSessionId: stageSession.id,
               ),
           selected: stage,
+          timelineOpen: _timelineOpen,
+          detailsOpen: _detailsOpen,
+          onToggleTimeline: () => setState(() => _timelineOpen = !_timelineOpen),
+          onToggleDetails: () => setState(() => _detailsOpen = !_detailsOpen),
         );
         return split
             ? _split(c, main, side)
@@ -161,31 +189,51 @@ class _FlowView extends StatelessWidget {
   );
 }
 
-/// Left side of the Fluxo: the stage timeline and the cycle panels, or the empty state without a cycle.
+/// Left side of the Fluxo: the cycle column, or the empty state without a cycle.
 class _FlowMain extends StatelessWidget {
   const _FlowMain({
     required this.projectName,
     required this.project,
+    required this.sessions,
     required this.stageSession,
     required this.showOpenLink,
     required this.selected,
+    required this.timelineOpen,
+    required this.detailsOpen,
+    required this.onToggleTimeline,
+    required this.onToggleDetails,
   });
 
   final String projectName;
   final Project? project;
+  final List<SessionSummary> sessions;
 
   /// The project's live pipeline session ([runningStageSession]).
   final SessionSummary? stageSession;
   final bool showOpenLink;
   final Stage? selected;
+  final bool timelineOpen;
+  final bool detailsOpen;
+  final VoidCallback onToggleTimeline;
+  final VoidCallback onToggleDetails;
+
+  void _act(BuildContext context, Project project, CycleNow now) {
+    if (now.route case final route?) {
+      context.go(route);
+    } else if (now.kind == CycleNowKind.paused) {
+      unawaited(resumeCycle(context, project));
+    } else {
+      unawaited(showCommandPalette(context, ProjectTarget(project)));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final project = this.project;
     final cycle = project?.cycle;
     final stageSession = this.stageSession;
-    final banner = stageSession == null ? null : StageBanner(session: stageSession, showOpenLink: showOpenLink);
     if (project == null || cycle == null) {
+      final banner = stageSession == null ? null : StageBanner(session: stageSession, showOpenLink: showOpenLink);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -221,61 +269,100 @@ class _FlowMain extends StatelessWidget {
     }
     final run = cycle.latestRun;
     final report = cycle.report;
-    final decision = blockedDecision(project);
-    final gates = gateReport(cycle);
-    return ListView(
+    final now = cycleNow(project, sessions);
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
-      children: [
-        if (decision != null) ...[
-          _DecisionBanner(project: project.name, decision: decision),
-          const SizedBox(height: 16),
-        ],
-        if (banner != null) ...[banner, const SizedBox(height: 16)],
-        if (cycle.paused) PausedBanner(project: project) else _BudgetBanner(project: project, cycle: cycle),
-        for (final s in openGates(gates)) ...[
-          GateDecideRow(key: ValueKey('flow-gate-row-${s.gate!.name}'), project: project.name, gate: s.gate!),
-          const SizedBox(height: 12),
-        ],
-        StageTimeline(
-          report: report,
-          derived: derivedStageStates(cycle),
-          stageMinutes: cycle.stageMinutes,
-          project: project.name,
-          selected: selected,
-          onSelect: (stage) => context.go(
-            Uri(pathSegments: ['', 'p', projectName, 'flow'], queryParameters: {'stage': stage.name}).toString(),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (!cycle.paused) _BudgetBanner(project: project, cycle: cycle),
+              CycleSteps(steps: cycleSteps(cycle), open: timelineOpen, onToggle: onToggleTimeline),
+              if (timelineOpen) ...[
+                const SizedBox(height: 12),
+                StageTimeline(
+                  report: report,
+                  derived: derivedStageStates(cycle),
+                  stageMinutes: cycle.stageMinutes,
+                  project: project.name,
+                  selected: selected,
+                  onSelect: (stage) => context.go(
+                    Uri(
+                      pathSegments: ['', 'p', projectName, 'flow'],
+                      queryParameters: {'stage': stage.name},
+                    ).toString(),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              CycleNowCard(now: now, onAction: () => _act(context, project, now)),
+              CycleTaskList(project: project.name, cycle: cycle),
+              PassedGates(project: project.name, stages: passedGates(gateReport(cycle))),
+              const SizedBox(height: 20),
+              _CycleFooter(project: project, cycle: cycle, detailsOpen: detailsOpen, onToggleDetails: onToggleDetails),
+              if (detailsOpen) ...[
+                const SizedBox(height: 16),
+                _CycleCard(project: project, cycle: cycle),
+                const SizedBox(height: 16),
+                if (run == null) const _NoRun() else _RunSummary(project: project.name, run: run),
+                const SizedBox(height: 16),
+                VerifyPanel(runs: cycle.runs, projectPath: project.path),
+                const SizedBox(height: 16),
+                DecisionsPanel(report: report),
+                ReportExtras(report: report),
+              ],
+            ],
           ),
         ),
-        PassedGates(project: project.name, stages: passedGates(gates)),
-        const SizedBox(height: 16),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final cycleCard = _CycleCard(project: project, cycle: cycle);
-            final runCard = run == null ? const _NoRun() : _RunSummary(project: project.name, run: run);
-            // Next to the side panel the left column is too narrow for both cards side by side.
-            if (constraints.maxWidth < 960) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [cycleCard, const SizedBox(height: 16), runCard],
-              );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(flex: 2, child: cycleCard),
-                const SizedBox(width: 16),
-                Expanded(flex: 3, child: runCard),
-              ],
-            );
-          },
+      ),
+    );
+  }
+}
+
+/// Card, branch, cost, the cycle's menu and the link that opens the details below.
+class _CycleFooter extends StatelessWidget {
+  const _CycleFooter({
+    required this.project,
+    required this.cycle,
+    required this.detailsOpen,
+    required this.onToggleDetails,
+  });
+
+  final Project project;
+  final Cycle cycle;
+  final bool detailsOpen;
+  final VoidCallback onToggleDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Wrap(
+      key: const ValueKey('cycle-footer'),
+      spacing: 14,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (cycle.tracker case final tracker?) Mono(tracker, color: c.textPrimary),
+        if (cycle.branch case final branch?)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: Text(
+              branch,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontFamily: monoFamily, fontSize: 12, color: c.textSecondary),
+            ),
+          ),
+        _CycleCostText(key: const ValueKey('flow-cycle-cost'), project: project, cycle: cycle),
+        CycleMenu(project: project),
+        TextButton(
+          key: const ValueKey('cycle-details-toggle'),
+          style: TextButton.styleFrom(foregroundColor: c.accent),
+          onPressed: onToggleDetails,
+          child: Text(detailsOpen ? 'ocultar detalhes' : 'detalhes do ciclo', style: const TextStyle(fontSize: 12)),
         ),
-        const SizedBox(height: 16),
-        TasksPanel(cycle: cycle),
-        const SizedBox(height: 16),
-        VerifyPanel(runs: cycle.runs, projectPath: project.path),
-        const SizedBox(height: 16),
-        DecisionsPanel(report: report),
-        ReportExtras(report: report),
       ],
     );
   }
@@ -320,7 +407,6 @@ class _CycleCard extends StatelessWidget {
     );
     return Panel(
       title: 'Ciclo',
-      trailing: CycleMenu(project: project),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -328,7 +414,7 @@ class _CycleCard extends StatelessWidget {
           if (cycle.branch case final branch?) row('Branch', Mono(branch)),
           if (project.stack case final stack?) row('Stack', Mono(stack)),
           if (project.path case final path?) row('Repo', Mono(path)),
-          _CostRow(project: project, cycle: cycle, row: row),
+          row('Custo', _CycleCostText(project: project, cycle: cycle)),
           if (run != null) ...[
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -455,57 +541,6 @@ class _Stat extends StatelessWidget {
   );
 }
 
-/// Top of the Fluxo while a task is blocked: the cycle does not move until the user picks a way out.
-class _DecisionBanner extends StatelessWidget {
-  const _DecisionBanner({required this.project, required this.decision});
-
-  final String project;
-  final ({Run run, TaskRun task}) decision;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final task = decision.task;
-    return Container(
-      key: const ValueKey('flow-decision-banner'),
-      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
-      decoration: BoxDecoration(
-        color: c.fail.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: c.fail.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.report_outlined, color: c.fail, size: 18),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                children: [
-                  const TextSpan(
-                    text: 'Ciclo parado: ',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  TextSpan(
-                    text: '${task.id} · ${task.title} bloqueou. O diagnóstico está pronto e espera a sua decisão.',
-                  ),
-                ],
-              ),
-              style: TextStyle(fontSize: 13, color: c.textPrimary),
-            ),
-          ),
-          const SizedBox(width: 10),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: c.fail, foregroundColor: Colors.white),
-            onPressed: () => context.go(decisionLocation(project, decision)),
-            child: const Text('Decidir', style: TextStyle(fontSize: 12)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 ({double cost, double? budget, BudgetState state}) _budgetOf(BuildContext context, Project project, Cycle cycle) {
   final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
   final config = context.watch<ConfigCubit>().state.data;
@@ -514,12 +549,12 @@ class _DecisionBanner extends StatelessWidget {
   return (cost: cost, budget: budget, state: budgetState(cost, budget));
 }
 
-class _CostRow extends StatelessWidget {
-  const _CostRow({required this.project, required this.cycle, required this.row});
+/// The cycle's cost against its budget; only the footer gives it the `flow-cycle-cost` key.
+class _CycleCostText extends StatelessWidget {
+  const _CycleCostText({super.key, required this.project, required this.cycle});
 
   final Project project;
   final Cycle cycle;
-  final Widget Function(String, Widget) row;
 
   @override
   Widget build(BuildContext context) {
@@ -530,25 +565,22 @@ class _CostRow extends StatelessWidget {
       BudgetState.near => c.warn,
       BudgetState.ok || BudgetState.none => c.textPrimary,
     };
-    return row(
-      'Custo',
-      Row(
-        key: const ValueKey('flow-cycle-cost'),
-        children: [
-          Mono(budget == null ? usd(cost) : '${usd(cost)} de ${usd(budget)}', color: color),
-          if (budget == null) ...[
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'sem orçamento (Configurações)',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: c.textMuted),
-              ),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Mono(budget == null ? usd(cost) : '${usd(cost)} de ${usd(budget)}', color: color),
+        if (budget == null) ...[
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'sem orçamento (Configurações)',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: c.textMuted),
             ),
-          ],
+          ),
         ],
-      ),
+      ],
     );
   }
 }

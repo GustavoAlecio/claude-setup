@@ -40,7 +40,7 @@ class FlowSidePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final session = this.session;
-    final gates = gateReport(project?.cycle);
+    final gate = cardGate(project);
     return LayoutBuilder(
       key: const ValueKey('flow-side-panel'),
       builder: (context, constraints) => Column(
@@ -51,13 +51,18 @@ class FlowSidePanel extends StatelessWidget {
             constraints: BoxConstraints(maxHeight: constraints.maxHeight * (session == null ? 0.7 : 0.45)),
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              child: AwaitingPanel(projectName: projectName, report: report, gates: gates, shownSessionId: session?.id),
+              child: AwaitingPanel(
+                projectName: projectName,
+                report: report,
+                cardGate: gate,
+                shownSessionId: session?.id,
+              ),
             ),
           ),
           Expanded(
             child: session == null
                 ? _NoSession(project: project, orphanStage: orphanStage)
-                : SessionPanel(session: session, requestOverride: gateRequestOverride(gates)),
+                : SessionPanel(session: session, requestOverride: gateRequestOverride(gate)),
           ),
         ],
       ),

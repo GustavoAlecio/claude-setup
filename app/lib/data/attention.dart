@@ -196,8 +196,6 @@ OrgQueue orgQueue(String org, List<SessionSummary> sessions, List<Project> proje
 /// One line of the inbox "Precisa de você" section.
 typedef InboxRow = ({String context, String title, String detail, String action, String route});
 
-String _pendingTitle(int n) => n == 1 ? '1 pedido esperando resposta' : '$n pedidos esperando resposta';
-
 String _withFeature(String project, Project? p) {
   final feature = p?.cycle?.feature;
   return feature == null || feature.isEmpty ? project : '$project · $feature';
@@ -235,7 +233,7 @@ List<InboxRow> inboxRows(
           context: item.project == null
               ? '$org · conversa'
               : '${item.project} · ${feature == null || feature.isEmpty ? 'conversa' : feature}',
-          title: _pendingTitle(item.pending),
+          title: pendingRequestsTitle(item.pending),
           detail: item.body,
           action: 'Responder',
           route: item.route,

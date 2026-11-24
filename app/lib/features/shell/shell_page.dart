@@ -812,71 +812,98 @@ class _TopBar extends StatelessWidget {
   final Project? paletteProject;
   final int pending;
 
+  /// Header width from which the tracker card fits beside the name; below it the card lives in the cycle footer.
+  static const _trackerMinWidth = 1000.0;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final cycle = project.cycle;
-    return Container(
-      height: 52,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: c.border)),
-      ),
-      child: Row(
-        children: [
-          Text(project.name, style: Theme.of(context).textTheme.titleMedium),
-          if (cycle != null) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Text('/', style: TextStyle(color: c.textMuted)),
+    return LayoutBuilder(
+      builder: (context, constraints) => Container(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: c.border)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Row(
+                children: [
+                  ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: constraints.maxWidth / 2),
+                    child: Text(
+                      project.name,
+                      key: const ValueKey('header-project-name'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  if (cycle != null) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text('/', style: TextStyle(color: c.textMuted)),
+                    ),
+                    Flexible(
+                      child: Text(
+                        cycle.feature ?? project.name,
+                        key: const ValueKey('header-feature'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: c.textSecondary),
+                      ),
+                    ),
+                    if (cycle.tracker case final tracker? when constraints.maxWidth >= _trackerMinWidth) ...[
+                      const SizedBox(width: 10),
+                      Mono(tracker, key: const ValueKey('header-tracker'), color: c.textMuted, size: 11),
+                    ],
+                  ],
+                ],
+              ),
             ),
-            Text(cycle.feature ?? project.name, style: TextStyle(color: c.textSecondary)),
-            if (cycle.tracker case final tracker?) ...[
-              const SizedBox(width: 10),
-              Mono(tracker, color: c.textMuted, size: 11),
+            if (pending > 0) ...[
+              _PendingPill(
+                pending: pending,
+                // Only the blocked cycle waits: the pill goes to its diagnosis, not to an empty session list.
+                location: switch (blockedDecision(project)) {
+                  final decision? when pending == 1 => decisionLocation(project.name, decision),
+                  _ => '/p/${project.name}/sessions',
+                },
+              ),
+              const SizedBox(width: 12),
             ],
-          ],
-          const Spacer(),
-          if (pending > 0) ...[
-            _PendingPill(
-              pending: pending,
-              // Only the blocked cycle waits: the pill goes to its diagnosis, not to an empty session list.
-              location: switch (blockedDecision(project)) {
-                final decision? when pending == 1 => decisionLocation(project.name, decision),
-                _ => '/p/${project.name}/sessions',
-              },
+            Tooltip(
+              message: paletteProject == null ? 'repositório fora das suas orgs: adicione-o em Configurações' : '',
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: c.textPrimary,
+                  side: BorderSide(color: c.borderStrong),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+                onPressed: paletteProject == null ? null : () => showKickoffForm(context, paletteProject),
+                icon: const Icon(Icons.rocket_launch_outlined, size: 15),
+                label: const Text('Kickoff'),
+              ),
             ),
-            const SizedBox(width: 12),
-          ],
-          Tooltip(
-            message: paletteProject == null ? 'repositório fora das suas orgs: adicione-o em Configurações' : '',
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: c.textPrimary,
-                side: BorderSide(color: c.borderStrong),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: c.accent,
+                foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                 textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
               ),
-              onPressed: paletteProject == null ? null : () => showKickoffForm(context, paletteProject),
-              icon: const Icon(Icons.rocket_launch_outlined, size: 15),
-              label: const Text('Kickoff'),
+              onPressed: () => showCommandPalette(context, ProjectTarget(paletteProject)),
+              icon: const Icon(Icons.play_arrow_rounded, size: 16),
+              label: const Text('Executar skill  ⌘K'),
             ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: c.accent,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-            ),
-            onPressed: () => showCommandPalette(context, ProjectTarget(paletteProject)),
-            icon: const Icon(Icons.play_arrow_rounded, size: 16),
-            label: const Text('Executar skill  ⌘K'),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

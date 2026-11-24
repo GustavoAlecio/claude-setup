@@ -28,15 +28,15 @@ class AwaitingPanel extends StatelessWidget {
     super.key,
     required this.projectName,
     required this.report,
-    required this.gates,
+    required this.cardGate,
     required this.shownSessionId,
   });
 
   final String projectName;
   final ReportDoc? report;
 
-  /// `gateReport` of the cycle: sessions whose stage holds an open gate are decided in the Fluxo's "Decidir" row.
-  final ReportDoc? gates;
+  /// The gate the Fluxo's cycle card shows (`cardGate`): its session is decided there.
+  final StageReport? cardGate;
   final String? shownSessionId;
 
   @override
@@ -44,7 +44,7 @@ class AwaitingPanel extends StatelessWidget {
     final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     final pending = withoutOpenGateSessions(
       awaitingSessions(pendingProjectSessions(all, projectName), shownSessionId),
-      gates,
+      cardGate,
     );
     final ended = awaitingEnded(endedStageSessions(report, all), shownSessionId);
     if (pending.isEmpty && ended.isEmpty) return const SizedBox.shrink();

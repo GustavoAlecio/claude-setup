@@ -80,7 +80,7 @@ Future<void> archiveCycle(BuildContext context, Project project) async {
   if (context.mounted) await _run(context, project, CycleAction.archive, live);
 }
 
-/// "⋯" of the Ciclo panel.
+/// "⋯" of the cycle footer.
 class CycleMenu extends StatelessWidget {
   const CycleMenu({super.key, required this.project});
 
@@ -126,53 +126,6 @@ class CycleMenu extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Top of a paused cycle's Fluxo: since when, and the way back.
-class PausedBanner extends StatelessWidget {
-  const PausedBanner({super.key, required this.project});
-
-  final Project project;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final since = project.cycle?.pausedAt;
-    final when = since == null || since.millisecondsSinceEpoch == 0
-        ? ''
-        : ' desde ${since.toLocal().day.toString().padLeft(2, '0')}/${since.toLocal().month.toString().padLeft(2, '0')}';
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Container(
-        key: const ValueKey('flow-paused-banner'),
-        padding: const EdgeInsets.fromLTRB(14, 6, 8, 6),
-        decoration: BoxDecoration(
-          color: c.idle.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: c.idle.withValues(alpha: 0.4)),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.pause_circle_outline, size: 18, color: c.textSecondary),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Ciclo pausado$when: sem cobranças de decisão nem avisos de orçamento.',
-                style: TextStyle(fontSize: 12.5, color: c.textPrimary),
-              ),
-            ),
-            TextButton.icon(
-              key: const ValueKey('flow-resume-cycle'),
-              style: TextButton.styleFrom(foregroundColor: c.accent),
-              onPressed: () => resumeCycle(context, project),
-              icon: const Icon(Icons.play_arrow_rounded, size: 16),
-              label: const Text('Retomar', style: TextStyle(fontSize: 12)),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

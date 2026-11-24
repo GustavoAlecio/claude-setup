@@ -1044,6 +1044,377 @@ void main() {
     });
   });
 
+  group('stageStateOf', () {
+    final doc = parseReport(
+      _report([_stage('specify'), _stage('plan', status: 'running'), _stage('tasks', status: 'blocked')]),
+    );
+    const derived = {Stage.specify: StageState.pending, Stage.verify: StageState.current};
+
+    test('entrada do relatório vence o derivado', () {
+      expect(stageStateOf(Stage.specify, doc, derived), StageState.done);
+      expect(stageStateOf(Stage.plan, doc, derived), StageState.current);
+      expect(stageStateOf(Stage.tasks, doc, derived), StageState.blocked);
+    });
+
+    test('sem entrada vale o derivado; sem derivado, pending', () {
+      expect(stageStateOf(Stage.verify, doc, derived), StageState.current);
+      expect(stageStateOf(Stage.verify, null, derived), StageState.current);
+      expect(stageStateOf(Stage.complete, doc, derived), StageState.pending);
+    });
+  });
+
+  group('cycleSteps', () {
+    test('posição 6 de 8 em implement; blocked do relatório mesmo sem run bloqueado; sem entrada, derivado', () {
+      final cycle = Cycle(
+        stage: Stage.implement,
+        stageMinutes: const {},
+        runs: const [],
+        report: parseReport(_report([_stage('specify'), _stage('plan', status: 'blocked')])),
+        reportIsCurrent: true,
+      );
+
+      final steps = cycleSteps(cycle);
+
+      expect(steps.position, 6);
+      expect(steps.total, 8);
+      expect(steps.states, {
+        Stage.kickoff: StageState.done,
+        Stage.specify: StageState.done,
+        Stage.challenge: StageState.done,
+        Stage.plan: StageState.blocked,
+        Stage.tasks: StageState.done,
+        Stage.implement: StageState.current,
+        Stage.verify: StageState.pending,
+        Stage.complete: StageState.pending,
+      });
+    });
+
+    test('relatório de outro ciclo ainda pinta a barra, como a linha do tempo', () {
+      Cycle cycle({required bool current}) => Cycle(
+        stage: Stage.complete,
+        stageMinutes: const {},
+        runs: const [],
+        report: parseReport(_report([_stage('complete')])),
+        reportIsCurrent: current,
+      );
+
+      expect(cycleSteps(cycle(current: true)).states[Stage.complete], StageState.done);
+      expect(cycleSteps(cycle(current: false)).states[Stage.complete], StageState.done);
+      expect(cycleSteps(cycle(current: false)).position, 8);
+    });
+  });
+
+  group('cycleTaskLines', () {
+    TaskRun planned(String id, {Tier tier0 = Tier.sonnet}) =>
+        TaskRun(id: id, title: 'Task $id', complexity: Complexity.m, tier0: tier0, status: Verdict.pending);
+
+    final cycle = Cycle(
+      stage: Stage.implement,
+      stageMinutes: const {},
+      plan: [
+        planned('T1', tier0: Tier.opus),
+        for (final id in ['T2', 'T3', 'T4', 'T5', 'T6']) planned(id),
+      ],
+      runs: [
+        _run('impl-2', 'implement', [
+          _task('T1', tier: Tier.fable),
+          _task('T2', attempts: 2, status: Verdict.running),
+          _task('T3', status: Verdict.fail),
+          _task('T4', attempts: 0, status: Verdict.inconclusive),
+        ]),
+        _run('impl-1', 'implement', [_task('T1'), _task('T4'), _task('T6', status: Verdict.blocked)]),
+      ],
+    );
+
+    test('estado, nota e run de destino por linha, na ordem do plano', () {
+      final lines = cycleTaskLines(cycle);
+
+      expect([for (final l in lines) l.id], ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']);
+      expect([for (final l in lines) l.title], ['Task T1', 'Task T2', 'Task T3', 'Task T4', 'Task T5', 'Task T6']);
+      expect(
+        [for (final l in lines) l.state],
+        [
+          TaskLineState.done,
+          TaskLineState.running,
+          TaskLineState.blocked,
+          TaskLineState.queued,
+          TaskLineState.queued,
+          TaskLineState.blocked,
+        ],
+      );
+      expect([for (final l in lines) l.note], ['opus → fable', '2 tentativas', '', '', '', '']);
+      expect([for (final l in lines) l.run], ['impl-2', 'impl-2', 'impl-2', 'impl-1', null, 'impl-1']);
+    });
+
+    test('sem tasks a lista é vazia', () {
+      const empty = Cycle(stage: Stage.kickoff, stageMinutes: {}, runs: []);
+      expect(cycleTaskLines(empty), isEmpty);
+    });
+  });
+
+  group('cycleNow', () {
+    Map<String, Object?> gateStage({
+      String gate = 'plan',
+      String summary = '  Resumo do plano.  ',
+      int questions = 1,
+    }) => _stage(
+      kGateOwner[gate]!.name,
+      status: 'running',
+      extra: {
+        'gate': {
+          'name': gate,
+          'status': 'open',
+          'round': 1,
+          'summary': summary,
+          'questions': [
+            for (var i = 1; i <= questions; i++)
+              {
+                'id': 'Q$i',
+                'text': 'Pergunta $i?',
+                'options': [
+                  {'id': 'a', 'label': 'A'},
+                ],
+              },
+          ],
+        },
+      },
+    );
+
+    Project project({
+      Stage stage = Stage.plan,
+      List<Map<String, Object?>>? report,
+      bool current = true,
+      List<Run> runs = const [],
+      List<TaskRun> plan = const [],
+      DateTime? pausedAt,
+    }) => Project(
+      name: 'alpha',
+      cycle: Cycle(
+        stage: stage,
+        stageMinutes: const {},
+        runs: runs,
+        plan: plan,
+        report: report == null ? null : parseReport(_report(report)),
+        reportIsCurrent: current,
+        pausedAt: pausedAt,
+      ),
+    );
+
+    final blockedRun = _run('impl-1', 'implement', [
+      _task('T1'),
+      _task('T2', status: Verdict.blocked),
+    ], status: Verdict.blocked);
+
+    String text(CycleNow n) => [n.eyebrow, n.title, n.detail, n.action ?? '', n.route ?? ''].join(' | ');
+
+    test('1 blocked: task travada, Decidir leva à task', () {
+      final now = cycleNow(project(stage: Stage.implement, runs: [blockedRun]), const []);
+
+      expect(now.kind, CycleNowKind.blocked);
+      expect(
+        text(now),
+        'Precisa de você | A task T2 travou | T2: o diagnóstico espera a sua decisão | Decidir | /p/alpha/runs/impl-1/T2',
+      );
+    });
+
+    test('bloqueio vem antes de gate, pedido e /fix rodando', () {
+      final now = cycleNow(project(stage: Stage.implement, runs: [blockedRun], report: [gateStage()]), [
+        _session('p', '/plan', pending: 1),
+        _session('fix', '/fix bug'),
+      ]);
+
+      expect(now.kind, CycleNowKind.blocked);
+    });
+
+    test('2 gate: título do gate, summary sem espaços nas pontas, Decidir leva ao gate', () {
+      final now = cycleNow(project(report: [gateStage()]), const []);
+
+      expect(now.kind, CycleNowKind.gate);
+      expect(
+        text(now),
+        'Precisa de você | 1 decisão antes de gerar as tasks | Resumo do plano. | Decidir | /p/alpha/gate/plan',
+      );
+    });
+
+    test('gate com summary vazio; gate antes de pedido, mesmo de outra sessão; gate com ciclo pausado', () {
+      final empty = cycleNow(project(report: [gateStage(summary: '   ', questions: 0)]), const []);
+      expect(empty.title, 'Aprovar o plano?');
+      expect(empty.detail, 'Nada roda antes da sua resposta.');
+
+      final withRequest = cycleNow(project(report: [gateStage()]), [_session('outra', 'revise', pending: 2)]);
+      expect(withRequest.kind, CycleNowKind.gate);
+
+      final paused = cycleNow(project(report: [gateStage()], pausedAt: DateTime.utc(2026, 3, 10, 12)), const []);
+      expect(paused.kind, CycleNowKind.gate);
+    });
+
+    test('3 request: plural soma as sessões, detalhe e rota da mais antiga', () {
+      final now = cycleNow(project(), [
+        _session('nova', '/plan', pending: 2, createdAt: '2026-03-10T11:00:00Z'),
+        _session('velha', 'revise', pending: 1, createdAt: '2026-03-10T09:00:00Z'),
+        _session('fora', '/plan', project: 'beta', pending: 1),
+      ]);
+
+      expect(now.kind, CycleNowKind.request);
+      expect(
+        text(now),
+        'Precisa de você | 3 pedidos esperando resposta | revise | Responder | /p/alpha/sessions/velha',
+      );
+    });
+
+    test('pedido no singular e antes de pausado e de rodando', () {
+      final now = cycleNow(project(pausedAt: DateTime.utc(2026, 3, 10, 12)), [
+        _session('p', 'revise', pending: 1),
+        _session('r', '/plan'),
+      ]);
+
+      expect(now.kind, CycleNowKind.request);
+      expect(now.title, '1 pedido esperando resposta');
+    });
+
+    test('4 paused: com e sem data, Retomar sem rota', () {
+      final dated = cycleNow(project(pausedAt: DateTime.utc(2026, 3, 10, 12)), [_session('r', '/plan')]);
+      expect(dated.kind, CycleNowKind.paused);
+      expect(
+        text(dated),
+        'Ciclo pausado | Pausado na etapa plan | Pausado desde 10/03. Nada roda até você retomar. | Retomar | ',
+      );
+
+      final undated = cycleNow(project(pausedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)), const []);
+      expect(undated.detail, 'Nada roda até você retomar.');
+      expect(undated.route, isNull);
+    });
+
+    test('5 running: título genérico, sessão no detalhe e na rota', () {
+      final now = cycleNow(project(report: [_stage('plan')]), [_session('r', '/plan')]);
+
+      expect(now.kind, CycleNowKind.running);
+      expect(
+        text(now),
+        'Nada precisa de você | Etapa plan em andamento | /plan | Acompanhar a conversa | /p/alpha/sessions/r',
+      );
+    });
+
+    test('running em implement: task 2 de 3; sem task rodando, título genérico; /fix, título de correção', () {
+      final plan = [
+        for (final id in ['T1', 'T2', 'T3'])
+          TaskRun(id: id, title: id, complexity: Complexity.m, tier0: Tier.sonnet, status: Verdict.pending),
+      ];
+      final session = [_session('r', '/implement')];
+
+      final running = project(
+        stage: Stage.implement,
+        plan: plan,
+        runs: [
+          _run('impl-1', 'implement', [_task('T1'), _task('T2', status: Verdict.running)], status: Verdict.running),
+        ],
+      );
+      expect(cycleNow(running, session).title, 'Implementando a task 2 de 3');
+
+      final idle = project(
+        stage: Stage.implement,
+        plan: plan,
+        runs: [
+          _run('impl-1', 'implement', [_task('T1')]),
+        ],
+      );
+      expect(cycleNow(idle, session).title, 'Etapa implement em andamento');
+
+      final fix = cycleNow(running, [_session('f', '/fix quebrou')]);
+      expect(fix.kind, CycleNowKind.running);
+      expect(fix.title, 'Correção em andamento (/fix)');
+    });
+
+    test('6 done: complete done no relatório, mesmo com /complete idle', () {
+      final now = cycleNow(project(stage: Stage.complete, report: [_stage('complete')]), [
+        _session('c', '/complete', status: SessionStatus.idle),
+      ]);
+
+      expect(now.kind, CycleNowKind.done);
+      expect(
+        text(now),
+        'Nada precisa de você | Ciclo concluído | O relatório e o PR estão nos detalhes do ciclo. |  | ',
+      );
+      expect(now.action, isNull);
+    });
+
+    test('7 idle: plan done no relatório com sessão idle dá idle, não running', () {
+      final now = cycleNow(project(report: [_stage('plan')]), [_session('i', '/plan', status: SessionStatus.idle)]);
+
+      expect(now.kind, CycleNowKind.idle);
+      expect(
+        text(now),
+        'Precisa de você | A conversa da etapa plan está parada | /plan | Abrir a conversa | /p/alpha/sessions/i',
+      );
+    });
+
+    test('8 next: status implemented com implement done e sem sessão dá Rodar /verify', () {
+      final cycle = parseCycle(
+        {'status': 'implemented', 'feature': 'F', 'start_date': '2026-03-10T08:00:00Z'},
+        projectName: 'alpha',
+        report: parseReport(_report([_stage('tasks'), _stage('implement')])),
+      );
+      expect(cycle.stage, Stage.implement);
+      expect(cycle.reportIsCurrent, isTrue);
+
+      final now = cycleNow(Project(name: 'alpha', cycle: cycle), const []);
+
+      expect(now.kind, CycleNowKind.next);
+      expect(text(now), 'Precisa de você | Etapa implement concluída | A próxima é /verify. | Rodar /verify | ');
+    });
+
+    test('9 stalled: etapa running sem sessão; sessão encerrada com a etapa running também (transitório)', () {
+      final p = project(
+        stage: Stage.verify,
+        report: [
+          _stage('verify', status: 'running', extra: {'session_id': 'v'}),
+        ],
+      );
+
+      final now = cycleNow(p, const []);
+      expect(now.kind, CycleNowKind.stalled);
+      expect(
+        text(now),
+        'Precisa de você | A etapa verify parou sem terminar | Nenhuma conversa está rodando esta etapa. | Retomar /verify | ',
+      );
+
+      expect(cycleNow(p, [_session('v', '/verify', status: SessionStatus.done)]).kind, CycleNowKind.stalled);
+      expect(cycleNow(project(stage: Stage.verify), const []).kind, CycleNowKind.stalled);
+    });
+
+    test('10 waiting: etapa bloqueada no relatório, sem sessão', () {
+      final now = cycleNow(project(report: [_stage('plan', status: 'blocked')]), const []);
+
+      expect(now.kind, CycleNowKind.waiting);
+      expect(
+        text(now),
+        'Precisa de você | Etapa plan | Nenhuma conversa está rodando. Use a paleta para seguir. | Abrir a paleta | ',
+      );
+    });
+
+    test('relatório de outro ciclo tira done e next', () {
+      final done = project(stage: Stage.complete, report: [_stage('complete')], current: false);
+      expect(cycleNow(done, const []).kind, CycleNowKind.waiting);
+
+      final next = project(stage: Stage.implement, report: [_stage('implement')], current: false);
+      expect(cycleNow(next, const []).kind, CycleNowKind.waiting);
+
+      final gate = project(report: [gateStage()], current: false);
+      expect(cycleNow(gate, const []).kind, isNot(CycleNowKind.gate));
+    });
+  });
+
+  test('taskLocation e decisionLocation levam à mesma tela da task', () {
+    final run = _run('impl-1', 'implement', [_task('T2', status: Verdict.blocked)]);
+    expect(taskLocation('alpha', 'impl-1', 'T2'), '/p/alpha/runs/impl-1/T2');
+    expect(decisionLocation('alpha', (run: run, task: run.tasks.single)), '/p/alpha/runs/impl-1/T2');
+  });
+
+  test('pendingRequestsTitle no singular e no plural', () {
+    expect(pendingRequestsTitle(1), '1 pedido esperando resposta');
+    expect(pendingRequestsTitle(2), '2 pedidos esperando resposta');
+  });
+
   test('realDataMarkdown ignora markdown só com espaço', () {
     ReportDoc doc(String? md) => parseReport(jsonEncode({'version': 1, 'stages': [], 'real_data_md': md}))!;
     expect(doc('  \n').realDataMarkdown, isNull);

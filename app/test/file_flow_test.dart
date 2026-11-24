@@ -55,6 +55,15 @@ Future<void> _go(WidgetTester tester, String location) async {
   await tester.pumpAndSettle();
 }
 
+/// Timeline (`cycle-steps-toggle`) and cycle details (`cycle-details-toggle`) start collapsed.
+Future<void> _reveal(WidgetTester tester, String toggle) async {
+  final link = find.byKey(ValueKey(toggle));
+  await tester.ensureVisible(link);
+  await tester.pumpAndSettle();
+  await tester.tap(link);
+  await tester.pumpAndSettle();
+}
+
 Finder _tierChip(Tier tier) => find.byWidgetPredicate((w) => w is TierChip && w.tier == tier);
 
 Finder _currentStage(String stage) => find.descendant(
@@ -90,6 +99,8 @@ void main() {
 
     expect(find.text('Pagina alpha'), findsWidgets);
     expect(find.text('AB#1001'), findsWidgets);
+    expect(find.text('em andamento'), findsNothing);
+    await _reveal(tester, 'cycle-steps-toggle');
     expect(find.text('em andamento'), findsOneWidget);
 
     await _go(tester, '/p/alpha/runs');
@@ -201,6 +212,7 @@ void main() {
   testWidgets('legacy: partial current.json omits rows and shows the empty runs message', (tester) async {
     final data = await _loadFixtures(tester);
     await _open(tester, data, '/p/legacy/flow');
+    await _reveal(tester, 'cycle-details-toggle');
 
     final header = find.descendant(of: find.byKey(const ValueKey('group-cycle')), matching: find.text('Ciclo'));
     expect(find.text('Ciclo').evaluate().length - header.evaluate().length, 1, reason: 'the cycle card title');
@@ -256,6 +268,7 @@ void main() {
     await tester.pumpWidget(_app(repo));
     await tester.pump();
     await _go(tester, '/p/alpha/flow');
+    await _reveal(tester, 'cycle-steps-toggle');
     expect(_currentStage('implement'), findsOneWidget);
 
     final watch = Stopwatch();
