@@ -13,6 +13,8 @@ Stage report for the smart pipeline: $WF_DIR/report.json, written only by this s
   wf-report.py reset       --workflow-dir W
   wf-report.py gate        spec|plan|tasks|pr --workflow-dir W
   wf-report.py brief      spec|plan|tasks|pr --workflow-dir W --file JSON [--candidates JSON] [--tree @FILE]
+                           [--drop-map] [--repo DIR]
+  wf-report.py built-map   --workflow-dir W --tree @FILE [--repo DIR]
   wf-report.py answer      spec|plan|tasks|pr --workflow-dir W
                            (--question ID (--option ID [--text-file MD] | --text-file MD) | --text-file MD
                             | --approve | --reject)
@@ -38,6 +40,27 @@ answers cleared. Over a `revising` block it writes round + 1: the answered quest
 `history`, the file must bring 1 to 3 `changes` and no id already in `history`; round 4 exits 2
 with `rodadas esgotadas`. Over any other block of round 2 or more, only the same file is
 accepted (a no-op).
+Architecture map. In gate `plan` the file's `map` is the author's, cut by the critic:
+{summary, nodes[], edges[]?, approaches[]?, gains[]?, costs[]?, ignore[]?}. Each node is
+{id, label, state new|changed|existing, note?, paths[]} (up to 8 nodes, 1 to 6 relative globs each,
+required on `new` and `changed`, an id never starts with `unplanned:`); edges join node ids;
+`approaches` has up to 3 entries and exactly one `chosen`. Any other gate refuses `map`, and
+`--drop-map` (plan only) writes the block without it, for the retry after a refusal that starts
+with `wf-report: map`. In gate `pr` the map is the script's, never the file's: `brief pr` computes
+it from `git diff --no-renames --name-only` between `exec.base_checkpoint` and `--tree`, run in
+`--repo` (default: `project_path` of current.json), against the map recorded in gate `plan`. Each
+changed file goes to the first node whose glob matches it, and each piece carries `built`:
+`planned`, `untouched` (planned and not touched), `touched` (existing, touched without being in the
+plan), `existing`, or `unplanned` (files in no node and not in `ignore`, grouped by directory as
+`unplanned:<dir>`, the tail folded into `unplanned:outros`, which also takes a directory named
+`outros`; the planned pieces plus at least one `unplanned` group, so 9 pieces when the plan uses 8).
+No plan map: the block is written without a map, silently. No file list or no git: the block is
+written without a map and stderr says `mapa construído indisponível`; exit 0 in both. Resending
+the same file over a round 2 or later block with the same base and tree keeps that block's map, or
+its lack of one, whatever git says now.
+`built-map` prints that same map as JSON without writing anything (`{}` when unavailable); it
+needs `--tree`, resolves `base` like `brief pr` and never archives the report.
+
 `answer` records one answer; the block leaves `open` only when every question has one: all equal
 to `assumed` → `approved`, any other option or free text → `revising`. `--option` with `--text-file`
 records the option plus the text of the adjust (`answer_text`) and only exists in gate pr with
@@ -75,7 +98,9 @@ import fcntl
 import hashlib
 import json
 import os
+import posixpath
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -110,7 +135,20 @@ CAPS = {
     "map.summary": 200,
     "node.label": 32,
     "node.note": 80,
+    "edge.label": 60,
+    "approach.label": 40,
+    "approach.text": 200,
+    "map.item": 160,
+    "glob": 120,
 }
+MAP_NODES_MAX = 8
+NODE_PATHS_MAX = 6
+APPROACHES_MAX = 3
+MAP_ITEMS_MAX = 3
+IGNORE_MAX = 10
+UNPLANNED = "unplanned:"
+GIT_TIMEOUT = 10
+BUILT_TEXT = {"unplanned": "fora do plano", "untouched": "não tocada", "touched": "tocada sem estar no plano"}
 SENTENCE_END = re.compile(r"[.!?](?:\s|$)")
 RISK_SOURCE_RE = re.compile(r"^(challenger:\S+|critic|author)$")
 NODE_STATES = ("new", "changed", "existing")
@@ -507,30 +545,209 @@ def check_option_ref(field, v, option_ids):
         raise InputError(f"{field}: {excerpt(v)} não é opção da pergunta (opções: {', '.join(option_ids)})")
 
 
+def glob_re(pattern):
+    out, i = "", 0
+    while i < len(pattern):
+        c = pattern[i]
+        if pattern.startswith("**/", i):
+            out += "(?:.*/)?"
+            i += 3
+        elif pattern.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif c == "*":
+            out += "[^/]*"
+            i += 1
+        elif c == "?":
+            out += "[^/]"
+            i += 1
+        else:
+            out += re.escape(c)
+            i += 1
+    return re.compile("^" + out + "$")
+
+
+def glob_match(glob: str, path: str) -> bool:
+    """`*` stays inside one directory, `**` crosses them, `x/` is `x/**`, a glob without wildcards is one file."""
+    return bool(glob_re(glob + "**" if glob.endswith("/") else glob).match(path))
+
+
+def check_glob(field, v) -> str:
+    check_text(field, v, CAPS["glob"])
+    if v.startswith("/"):
+        raise InputError(f"{field}: glob absoluto; use caminho relativo à raiz do repo (valor: {excerpt(v)})")
+    if ".." in v.split("/"):
+        raise InputError(f"{field}: glob com segmento .. (valor: {excerpt(v)})")
+    if v.startswith("./"):
+        raise InputError(f"{field}: glob com prefixo ./ (valor: {excerpt(v)})")
+    if "\\" in v:
+        raise InputError(f"{field}: glob com barra invertida; use / (valor: {excerpt(v)})")
+    return v
+
+
+def check_short_list(field, v, cap, unit) -> list:
+    items = check_list(field, v)
+    if len(items) > cap:
+        raise InputError(f"{field}: {len(items)} {unit}, teto {cap}")
+    return items
+
+
 def validate_map(m):
     m = check_obj("map", m)
     if "summary" in m:
         check_text("map.summary", m["summary"], CAPS["map.summary"])
     nodes = check_list("map.nodes", m.get("nodes", []))
-    if len(nodes) > 8:
-        raise InputError(f"map.nodes: {len(nodes)} nós, teto 8")
+    if len(nodes) > MAP_NODES_MAX:
+        raise InputError(f"map.nodes: {len(nodes)} nós, teto {MAP_NODES_MAX}")
     ids = []
     for k, n in enumerate(nodes):
         f = f"map.nodes[{k}]"
         check_obj(f, n)
-        ids.append(check_text(f"{f}.id", n.get("id")))
-        check_text(f"{f}.label", n.get("label"), CAPS["node.label"])
+        nid = check_text(f"{f}.id", n.get("id"))
+        if nid in ids:
+            raise InputError(f"{f}.id: {excerpt(nid)} repetido (já usado em map.nodes[{ids.index(nid)}])")
+        if nid.startswith(UNPLANNED):
+            raise InputError(f"{f}.id: {excerpt(nid)} começa com {UNPLANNED}, reservado ao mapa construído")
+        ids.append(nid)
+        label = check_text(f"{f}.label", n.get("label"), CAPS["node.label"])
+        if "/" in label:
+            raise InputError(f"{f}.label: caminho de arquivo; o rótulo é o nome da peça (valor: {excerpt(label)})")
         if n.get("state") not in NODE_STATES:
             raise InputError(f"{f}.state: {excerpt(n.get('state'))} fora de {'|'.join(NODE_STATES)}")
         if "note" in n:
             check_text(f"{f}.note", n["note"], CAPS["node.note"])
+        if "paths" not in n and n["state"] != "existing":
+            raise InputError(f"{f}.paths: obrigatório em peça {n['state']} (1 a {NODE_PATHS_MAX} globs)")
+        if "paths" in n:
+            paths = check_short_list(f"{f}.paths", n["paths"], NODE_PATHS_MAX, "globs")
+            if not paths:
+                raise InputError(f"{f}.paths: 0 globs, precisa de 1 a {NODE_PATHS_MAX}")
+            for i, g in enumerate(paths):
+                check_glob(f"{f}.paths[{i}]", g)
     for j, e in enumerate(check_list("map.edges", m.get("edges", []))):
         f = f"map.edges[{j}]"
         check_obj(f, e)
         for end in ("from", "to"):
             if e.get(end) not in ids:
                 raise InputError(f"{f}.{end}: {excerpt(e.get(end))} não é nó do mapa (nós: {', '.join(ids)})")
-    check_list("map.approaches", m.get("approaches", []))
+        if "label" in e:
+            check_text(f"{f}.label", e["label"], CAPS["edge.label"])
+    approaches = check_short_list("map.approaches", m.get("approaches", []), APPROACHES_MAX, "formas")
+    for j, ap in enumerate(approaches):
+        f = f"map.approaches[{j}]"
+        check_obj(f, ap)
+        check_text(f"{f}.id", ap.get("id"))
+        check_text(f"{f}.label", ap.get("label"), CAPS["approach.label"])
+        check_text(f"{f}.text", ap.get("text"), CAPS["approach.text"])
+        if not isinstance(ap.get("chosen"), bool):
+            raise InputError(f"{f}.chosen: precisa ser booleano (valor: {excerpt(ap.get('chosen'))})")
+    chosen = sum(1 for ap in approaches if ap["chosen"])
+    if approaches and chosen != 1:
+        raise InputError(f"map.approaches: {chosen} escolhidas, precisa de exatamente 1")
+    for key in ("gains", "costs"):
+        for j, t in enumerate(check_short_list(f"map.{key}", m.get(key, []), MAP_ITEMS_MAX, "itens")):
+            check_text(f"map.{key}[{j}]", t, CAPS["map.item"])
+    for j, g in enumerate(check_short_list("map.ignore", m.get("ignore", []), IGNORE_MAX, "globs")):
+        check_glob(f"map.ignore[{j}]", g)
+
+
+def left_trunc(text: str, cap: int) -> str:
+    return text if len(text) <= cap else "…" + text[len(text) - cap + 1:]
+
+
+def built_map(plan: dict, files) -> dict:
+    """The map of what was built: each changed file goes to the first planned piece whose paths match it."""
+    nodes = plan.get("nodes", [])
+    ignore = plan.get("ignore", [])
+    owned = {n["id"]: [] for n in nodes}
+    loose = {}
+    for path in sorted(set(files)):
+        owner = next((n["id"] for n in nodes if any(glob_match(g, path) for g in n.get("paths", []))), None)
+        if owner is not None:
+            owned[owner].append(path)
+        elif not any(glob_match(g, path) for g in ignore):
+            loose.setdefault(posixpath.dirname(path) or ".", []).append(path)
+    pieces = []
+    for n in nodes:
+        got = owned[n["id"]]
+        if n["state"] == "existing":
+            built = "touched" if got else "existing"
+        else:
+            built = "planned" if got else "untouched"
+        piece = {"id": n["id"], "label": n["label"], "state": n["state"], "built": built, "files": got}
+        for k in ("note", "paths"):
+            if k in n:
+                piece[k] = copy.deepcopy(n[k])
+        pieces.append(piece)
+    groups = [(UNPLANNED + d, left_trunc(d, CAPS["node.label"]), fs)
+              for d, fs in sorted(loose.items(), key=lambda kv: (-len(kv[1]), kv[0]))]
+    slots = max(1, MAP_NODES_MAX - len(nodes))
+    if len(groups) > slots:
+        tail = UNPLANNED + "outros"
+        kept = [g for g in groups if g[0] != tail][:slots - 1]
+        rest = sorted(p for g in groups if g not in kept for p in g[2])
+        groups = kept + [(tail, "outros", rest)]
+    pieces += [{"id": gid, "label": label, "built": "unplanned", "files": fs} for gid, label, fs in groups]
+    count = {b: sum(1 for p in pieces if p["built"] == b) for b in ("planned", "unplanned", "untouched")}
+    return {
+        "summary": f"{count['planned']} como planejado, {count['unplanned']} fora do plano, "
+                   f"{count['untouched']} sem tocar.",
+        "nodes": pieces,
+        "edges": copy.deepcopy(plan.get("edges", [])),
+    }
+
+
+def list_changed(repo, base: str, tree: str) -> tuple:
+    """(files, None) from `git diff` between base and tree, or (None, reason); never raises."""
+    if not repo:
+        return None, "sem --repo nem project_path"
+    if not Path(repo).is_dir():
+        return None, f"repo não é diretório: {repo}"
+    try:
+        r = subprocess.run(["git", "-C", str(repo), "diff", "--no-renames", "--name-only", "-z", base, tree],
+                           capture_output=True, timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, f"git diff passou de {GIT_TIMEOUT} s"
+    except OSError as e:
+        return None, f"git indisponível ({e.strerror or e})"
+    if r.returncode != 0:
+        err = r.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        return None, f"git diff saiu com {r.returncode}" + (f": {err[0]}" if err else "")
+    return [p for p in r.stdout.decode("utf-8", errors="replace").split("\0") if p], None
+
+
+def plan_map(report: dict):
+    s = find_stage(report, GATE_OWNER["plan"])
+    block = s.get("gate") if s else None
+    m = block.get("map") if isinstance(block, dict) else None
+    return m if isinstance(m, dict) else None
+
+
+def built_map_for(report: dict, files):
+    """The built map `brief pr` writes and `built-map` prints; None without a plan map or without the file list."""
+    m = plan_map(report)
+    return built_map(m, files) if m is not None and files is not None else None
+
+
+def pr_map_refs(report: dict, refs: dict, files, reason):
+    """(refs with the built map, warning). Over the same base and tree, a failed git keeps the previous map,
+    and a round 2 or later block that is not revising keeps its map or its lack of one whatever git says,
+    so resending the same file stays the no-op of that block."""
+    s = find_stage(report, GATE_OWNER["pr"])
+    prev = s.get("gate") if s else None
+    same = isinstance(prev, dict) and all(prev.get(k) == refs[k] for k in ("base", "tree"))
+    if same and prev.get("status") != "revising" and int(prev.get("round") or 1) > 1:
+        if isinstance(prev.get("map"), dict):
+            return dict(refs, map=prev["map"]), None
+        return refs, reason if files is None and plan_map(report) is not None else None
+    m = built_map_for(report, files)
+    if m is not None:
+        return dict(refs, map=m), None
+    if files is not None or plan_map(report) is None:
+        return refs, None
+    if same and isinstance(prev.get("map"), dict):
+        return dict(refs, map=prev["map"]), None
+    return refs, reason
 
 
 def check_line(field, v) -> int:
@@ -618,6 +835,10 @@ def validate_brief(payload, gate=None):
         check_text(f"changes[{i}]", c, CAPS["change"])
 
     if "map" in p:
+        if gate in ("spec", "tasks"):
+            raise InputError("map: só vale no gate plan")
+        if gate == "pr":
+            raise InputError("map: campo do script no gate pr")
         validate_map(p["map"])
 
 
@@ -793,9 +1014,26 @@ def render_option(o: dict, prefers: dict) -> dict:
     return {"id": o["id"], "label": label, "description": description}
 
 
+NODE_STATE_TEXT = {"new": "nova", "changed": "muda", "existing": "já existe"}
+
+
+def architecture_lines(m: dict) -> list:
+    lines = [m["summary"]] if m.get("summary") else []
+    lines += [f"- {n['label']} ({NODE_STATE_TEXT[n['state']]})" for n in m.get("nodes", [])]
+    lines += [f"- {ap['label']}: {ap['text']}" + (" (escolhida)" if ap["chosen"] else "")
+              for ap in m.get("approaches", [])]
+    return lines
+
+
 def render(block: dict) -> dict:
     """The AskUserQuestion payload of a block; the skill asks from this, never from the raw report."""
     lines = [f"**Gate {block['name']}** (rodada {block['round']})", "", block["summary"]]
+    if block.get("name") == "plan" and isinstance(block.get("map"), dict):
+        lines += ["", "Arquitetura:"] + architecture_lines(block["map"])
+    if block.get("name") == "pr" and isinstance(block.get("map"), dict):
+        m = block["map"]
+        lines += ["", "Construído:", m["summary"]] + [
+            f"- {n['label']} ({BUILT_TEXT[n['built']]})" for n in m["nodes"] if n["built"] in BUILT_TEXT]
     if block.get("risks"):
         lines += ["", "Riscos:"] + [f"- {r['text']} ({r['source']})" for r in block["risks"]]
     if block.get("changes"):
@@ -841,14 +1079,37 @@ def cmd_brief(a, report, payload, candidates, refs) -> str:
     return dumps_compact(render(s["gate"]))
 
 
-def pr_refs(a, inputs, current):
-    if a.name != "pr":
-        return None
+def pr_base(cmd: str, current: dict) -> str:
     exec_ = current.get("exec")
     base = exec_.get("base_checkpoint") if isinstance(exec_, dict) else None
     if not isinstance(base, str) or not SHA_RE.fullmatch(base):
-        raise InputError(f"brief pr: exec.base_checkpoint do current.json não é um sha de 40 hex (valor: {excerpt(base)})")
-    return {"base": base, "tree": inputs["tree"]}
+        raise InputError(f"{cmd}: exec.base_checkpoint do current.json não é um sha de 40 hex (valor: {excerpt(base)})")
+    return base
+
+
+def pr_refs(a, inputs, current):
+    if a.name != "pr":
+        return None
+    return {"base": pr_base("brief pr", current), "tree": inputs["tree"]}
+
+
+def pr_repo(a, current: dict):
+    return getattr(a, "repo", None) or current.get("project_path")
+
+
+def cmd_built_map(a, inputs, wf: Path, cycle: dict, current: dict) -> str:
+    base = pr_base("built-map", current)
+    try:
+        report = json.loads((wf / "report.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        report = None
+    if not (isinstance(report, dict) and report.get("version") == 1 and cycle_compatible(report.get("cycle"), cycle)
+            and isinstance(report.get("stages"), list)) or plan_map(report) is None:
+        return dumps_compact({})
+    files, reason = list_changed(pr_repo(a, current), base, inputs["tree"])
+    if files is None:
+        print(f"wf-report: mapa construído indisponível: {reason}", file=sys.stderr)
+    return dumps_compact(built_map_for(report, files) or {})
 
 
 def change_text(q: dict) -> str:
@@ -1020,6 +1281,12 @@ def parse_args():
     sp.add_argument("--file", required=True)
     sp.add_argument("--candidates")
     sp.add_argument("--tree")
+    sp.add_argument("--drop-map", action="store_true")
+    sp.add_argument("--repo")
+    sp = sub.add_parser("built-map")
+    sp.add_argument("--workflow-dir", required=True)
+    sp.add_argument("--tree", required=True)
+    sp.add_argument("--repo")
     answer = sub.add_parser("answer")
     answer.add_argument("name", choices=GATES)
     answer.add_argument("--workflow-dir", required=True)
@@ -1098,9 +1365,18 @@ def load_inputs(a):
         return {"pr": {"url": a.url, "number": int(m.group(1))}}
     if a.cmd == "brief":
         payload = read_json(a.file)
+        if getattr(a, "drop_map", False):
+            if a.name != "plan":
+                raise InputError("--drop-map: só vale no gate plan")
+            if isinstance(payload, dict):
+                payload.pop("map", None)
+        if getattr(a, "repo", None) is not None and a.name != "pr":
+            raise InputError("--repo: só vale no gate pr")
         validate_brief(payload, a.name)
         candidates = validate_candidates(read_json(a.candidates)) if a.candidates else None
         return {"payload": payload, "candidates": candidates, "tree": read_tree(a.name, getattr(a, "tree", None))}
+    if a.cmd == "built-map":
+        return {"tree": read_tree("pr", a.tree)}
     if a.cmd == "answer" and getattr(a, "text_file", None):
         return {"text": check_text("--text-file", read_text(a.text_file))}
     return {}
@@ -1123,9 +1399,14 @@ def main():
         sys.exit(3)
     current = read_current_json(str(wf))
     cycle = {"feature": current.get("feature"), "started_at": current.get("start_date")}
-    if a.cmd in ("show", "reopen"):
+    if a.cmd in ("show", "reopen", "built-map"):
         try:
-            print(cmd_show(a, wf, cycle) if a.cmd == "show" else cmd_reopen(wf, cycle))
+            if a.cmd == "show":
+                print(cmd_show(a, wf, cycle))
+            elif a.cmd == "reopen":
+                print(cmd_reopen(wf, cycle))
+            else:
+                print(cmd_built_map(a, inputs, wf, cycle, current))
         except InputError as e:
             print(f"wf-report: {e}", file=sys.stderr)
             sys.exit(2)
@@ -1136,7 +1417,10 @@ def main():
         except InputError as e:
             print(f"wf-report: {e}", file=sys.stderr)
             sys.exit(2)
+        if a.name == "pr":
+            inputs["changed"] = list_changed(pr_repo(a, current), inputs["refs"]["base"], inputs["refs"]["tree"])
     out = []
+    warn = []
 
     def modify(report):
         if isinstance(report, dict) and report.get("version") == 1 and cycle_compatible(report.get("cycle"), cycle):
@@ -1166,7 +1450,11 @@ def main():
         elif a.cmd == "pr":
             cmd_pr(report, inputs["pr"])
         elif a.cmd == "brief":
-            out.append(cmd_brief(a, report, inputs["payload"], inputs["candidates"], inputs["refs"]))
+            refs = inputs["refs"]
+            if a.name == "pr":
+                refs, reason = pr_map_refs(report, refs, *inputs["changed"])
+                warn[:] = [reason] if reason else []
+            out.append(cmd_brief(a, report, inputs["payload"], inputs["candidates"], refs))
         elif a.cmd == "answer":
             cmd_answer(a, report, inputs.get("text"))
         return report
@@ -1177,6 +1465,8 @@ def main():
     except InputError as e:
         print(f"wf-report: {e}", file=sys.stderr)
         sys.exit(2)
+    for reason in warn:
+        print(f"wf-report: mapa construído indisponível: {reason}", file=sys.stderr)
     for line in out:
         print(line)
 

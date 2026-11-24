@@ -167,9 +167,24 @@ Escreva com **Write** em `$WF_DIR/.gate-plan.candidates.json` uma lista JSON com
 
 `assumed` é a opção que o `plan.md` já assume.
 
+Mapa de arquitetura: só quando a tabela "Arquivos impactados" do `plan.md` tem ao menos uma linha, escreva também com **Write** o rascunho do mapa em `$WF_DIR/.gate-plan.map.json`, derivado do `plan.md` atual (nunca de uma rodada anterior). Tabela vazia: não há rascunho nesta rodada.
+
+```json
+{"summary": "<o desenho em uma frase>",
+ "nodes": [{"id": "n1", "label": "<nome da peça>", "state": "new", "note": "<papel da peça>", "paths": ["bin/x.py"]}],
+ "edges": [{"from": "n1", "to": "n2", "label": "<o que passa>"}],
+ "approaches": [{"id": "a1", "label": "<forma de fazer>", "text": "<como seria>", "chosen": true}],
+ "gains": ["<o que a escolhida ganha>"], "costs": ["<do que abre mão>"],
+ "ignore": ["tests/**"]}
+```
+
+- `nodes`: peças que agrupam os arquivos da tabela por papel, não um nó por arquivo; `state` `new` (peça criada), `changed` (peça que muda) ou `existing` (já existe e só é usada). Peça `new` ou `changed` leva `paths`: 1 a 6 globs relativos à raiz do repo (`*` não atravessa `/`, `**` atravessa, `x/` cobre a pasta), sem `./`, `..` nem `\`, que casam os arquivos dela na tabela. `id` único, sem o prefixo `unplanned:`.
+- `approaches`: a forma escolhida (`chosen: true`) e até duas alternativas descartadas da seção "Decisoes"; `gains` e `costs` da escolhida, até 3 cada.
+- `ignore`: testes, fixtures e arquivos gerados que não são peça.
+
 ### 9b. Crítico
 
-Spawne o agente `gate-critic` (Agent tool, `subagent_type: gate-critic`) com: gate `plan`, artefato `plan.md` (em `$WF_DIR`), candidatas `$WF_DIR/.gate-plan.candidates.json` e saída `$WF_DIR/.gate-plan.json`. Não resuma o plano no prompt; ele lê.
+Spawne o agente `gate-critic` (Agent tool, `subagent_type: gate-critic`) com: gate `plan`, artefato `plan.md` (em `$WF_DIR`), candidatas `$WF_DIR/.gate-plan.candidates.json`, rascunho do mapa `$WF_DIR/.gate-plan.map.json` (só se você o escreveu nesta rodada) e saída `$WF_DIR/.gate-plan.json`. Não resuma o plano no prompt; ele lê.
 
 ### 9c. Brief
 
@@ -181,7 +196,12 @@ python3 ~/.claude/bin/wf-report.py brief plan --workflow-dir "$WF_DIR" --file "$
 
 - Saída 0: siga ao gate.
 - Saída 2 com `rodadas esgotadas` no stderr: vá para "Rodadas esgotadas" (9f).
-- Outra saída 2: reenvie o stderr ao `gate-critic` uma única vez (mesmo prompt + o stderr) e rode o `brief` de novo. Na segunda recusa siga sem bloco: o gate devolve `ask` e você faz a pergunta única do ramo sem perguntas, avisando "resumo indisponível".
+- Outra saída 2: reenvie o stderr ao `gate-critic` uma única vez (mesmo prompt + o stderr) e rode o `brief` de novo. Na segunda recusa:
+  - stderr começando com `wf-report: map`: rode o `brief` uma terceira vez, sem o mapa, e avise "mapa indisponível". Saída 0 segue ao gate; outra recusa segue sem bloco, como abaixo.
+    ```bash
+    python3 ~/.claude/bin/wf-report.py brief plan --workflow-dir "$WF_DIR" --file "$WF_DIR/.gate-plan.json" --candidates "$WF_DIR/.gate-plan.candidates.json" --drop-map
+    ```
+  - qualquer outra recusa: siga sem bloco. O gate devolve `ask` e você faz a pergunta única do ramo sem perguntas, avisando "resumo indisponível".
 
 ### 9d. Gate
 
@@ -210,7 +230,7 @@ python3 ~/.claude/bin/wf-report.py show plan --workflow-dir "$WF_DIR"
 
 ### 9e. Revising
 
-Revise o `plan.md` com as respostas (opções diferentes de `assumed` e textos livres), reescreva as candidatas (9a) e chame o `gate-critic` (9b) dizendo o que mudou desde a rodada anterior, que vira `changes` (1 a 3 linhas). Rode o `brief` (9c), que grava a rodada seguinte, e o gate (9d) de novo.
+Revise o `plan.md` com as respostas (opções diferentes de `assumed` e textos livres), reescreva as candidatas e o rascunho do mapa `$WF_DIR/.gate-plan.map.json` a partir do `plan.md` revisado (9a) e chame o `gate-critic` (9b) dizendo o que mudou desde a rodada anterior, que vira `changes` (1 a 3 linhas). Rode o `brief` (9c), que grava a rodada seguinte, e o gate (9d) de novo.
 
 ### 9f. Rodadas esgotadas
 
