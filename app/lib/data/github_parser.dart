@@ -132,24 +132,85 @@ bool isClosedStage(String stage) =>
 
 bool canResolve(PullRequest pr) => pr.unresolved.isNotEmpty && !isClosedStage(pr.stage);
 
-enum StageColorRole { accent, warn, pass, idle }
+String stageLabel(String stage) {
+  if (stage.startsWith('closed_')) return 'fechado';
+  if (stage.startsWith('deployed_')) return 'publicado';
+  return switch (stage) {
+    'awaiting_review' => 'aguardando revisão',
+    'merge_ready' => 'pronto para mergear',
+    'resolving' => 'resolvendo comentários',
+    'changes_requested' => 'mudanças pedidas',
+    'approved' => 'aprovado',
+    'merged' => 'mergeado',
+    'draft' => 'rascunho',
+    'closed' => 'fechado',
+    _ => stage,
+  };
+}
 
-String stageLabel(String stage) => switch (stage) {
-  'awaiting_review' => 'aguardando review',
-  'changes_requested' => 'mudanças pedidas',
-  'approved' => 'aprovado',
-  'merged' => 'mergeado',
-  'draft' => 'rascunho',
-  'closed' => 'fechado',
-  _ => stage,
-};
+enum PrTone { attention, normal, done }
 
-StageColorRole stageColorRole(String stage) => switch (stage) {
-  'awaiting_review' => StageColorRole.accent,
-  'changes_requested' => StageColorRole.warn,
-  'approved' || 'merged' => StageColorRole.pass,
-  _ => StageColorRole.idle,
-};
+/// One line saying what a PR needs from the user; the first rule that holds wins. `unresolved` is empty
+/// without live data, so the comment rule never fires for a cached PR.
+({String text, PrTone tone}) prStateLine(PullRequest pr, DateTime now) {
+  final n = pr.unresolved.length;
+  final failing = pr.checks == PrChecks.failing;
+  final (String, PrTone) line;
+  if (canResolve(pr)) {
+    line = (n == 1 ? '1 comentário esperando você' : '$n comentários esperando você', PrTone.attention);
+  } else if (pr.stage == 'changes_requested') {
+    line = ('mudanças pedidas', PrTone.attention);
+  } else if (pr.stage == 'approved' && failing) {
+    line = ('aprovado, mas o CI falhou', PrTone.attention);
+  } else if (failing && !isClosedStage(pr.stage)) {
+    line = ('CI falhou', PrTone.attention);
+  } else if (pr.stage == 'merged') {
+    final at = pr.mergedAt ?? pr.updatedAt;
+    final age = relativeAge(at, now);
+    line = (
+      at == null
+          ? 'mergeado'
+          : age.startsWith('agora') || age.startsWith('há')
+          ? 'mergeado $age'
+          : 'mergeado em $age',
+      PrTone.done,
+    );
+  } else if (isClosedStage(pr.stage)) {
+    line = (stageLabel(pr.stage), PrTone.done);
+  } else if (pr.stage == 'approved') {
+    line = ('aprovado', PrTone.normal);
+  } else if (pr.checks == PrChecks.pending) {
+    line = ('CI rodando', PrTone.normal);
+  } else {
+    line = (stageLabel(pr.stage), PrTone.normal);
+  }
+  return (text: pr.live ? line.$1 : '${line.$1} · do cache', tone: line.$2);
+}
+
+String prNeedsYouTitle(PullRequest pr) {
+  final n = pr.unresolved.length;
+  final who = pr.number == null ? 'O PR' : 'O PR #${pr.number}';
+  return '$who recebeu ${n == 1 ? '1 comentário' : '$n comentários'} de revisão';
+}
+
+String prNeedsYouDetail(PullRequest pr) {
+  const tail = 'O agente resolve; você confere antes do push.';
+  final names = <String>[];
+  for (final t in pr.unresolved) {
+    final path = t.path;
+    if (path == null || path.isEmpty) continue;
+    final name = path.split('/').last;
+    if (!names.contains(name)) names.add(name);
+  }
+  final files = switch (names.length) {
+    0 => null,
+    1 => 'Em ${names[0]}.',
+    2 => 'Em ${names[0]} e ${names[1]}.',
+    3 => 'Em ${names[0]}, ${names[1]} e ${names[2]}.',
+    _ => 'Em ${names[0]}, ${names[1]}, ${names[2]} e mais ${names.length - 3}.',
+  };
+  return files == null ? tail : '$files $tail';
+}
 
 /// The app's path for a project named like the repo, only when it is the `cwd` the engine validated by
 /// remote. `cwdCandidates` are never remote-checked (ambiguous scan, or the one whose remote diverged),

@@ -199,21 +199,131 @@ void main() {
       expect(canResolve(_pr(stage: 'changes_requested')), isFalse);
     });
 
-    test('labels and roles', () {
-      expect(stageLabel('awaiting_review'), 'aguardando review');
+    test('labels', () {
+      expect(stageLabel('awaiting_review'), 'aguardando revisão');
       expect(stageLabel('changes_requested'), 'mudanças pedidas');
       expect(stageLabel('approved'), 'aprovado');
       expect(stageLabel('merged'), 'mergeado');
       expect(stageLabel('draft'), 'rascunho');
       expect(stageLabel('closed'), 'fechado');
-      expect(stageLabel('deployed_prod'), 'deployed_prod');
-      expect(stageColorRole('awaiting_review'), StageColorRole.accent);
-      expect(stageColorRole('changes_requested'), StageColorRole.warn);
-      expect(stageColorRole('approved'), StageColorRole.pass);
-      expect(stageColorRole('merged'), StageColorRole.pass);
-      expect(stageColorRole('draft'), StageColorRole.idle);
-      expect(stageColorRole('closed'), StageColorRole.idle);
-      expect(stageColorRole('deployed_prod'), StageColorRole.idle);
+      expect(stageLabel('deployed_prod'), 'publicado');
+      expect(stageLabel('closed_unmerged'), 'fechado');
+      expect(stageLabel('merge_ready'), 'pronto para mergear');
+      expect(stageLabel('resolving'), 'resolvendo comentários');
+      expect(stageLabel('mystery'), 'mystery');
+    });
+  });
+
+  group('prStateLine', () {
+    final now = DateTime.utc(2026, 11, 25, 12);
+    PullRequest pr({
+      String stage = 'awaiting_review',
+      PrChecks? checks,
+      int threads = 0,
+      DateTime? mergedAt,
+      DateTime? updatedAt,
+      bool live = true,
+    }) => PullRequest(
+      number: 1,
+      stage: stage,
+      checks: checks,
+      live: live,
+      mergedAt: mergedAt,
+      updatedAt: updatedAt,
+      unresolved: [for (var i = 0; i < threads; i++) const ReviewThread(body: 'x')],
+    );
+    void expectLine(PullRequest p, String text, PrTone tone) {
+      final line = prStateLine(p, now);
+      expect(line.text, text);
+      expect(line.tone, tone);
+    }
+
+    test('comments beat everything', () {
+      expectLine(
+        pr(stage: 'changes_requested', threads: 1, checks: PrChecks.failing),
+        '1 comentário esperando você',
+        PrTone.attention,
+      );
+      expectLine(pr(threads: 3), '3 comentários esperando você', PrTone.attention);
+    });
+
+    test('closed PRs ignore comments', () {
+      expectLine(pr(stage: 'merged', threads: 2, mergedAt: now), 'mergeado agora', PrTone.done);
+    });
+
+    test('changes requested', () {
+      expectLine(pr(stage: 'changes_requested'), 'mudanças pedidas', PrTone.attention);
+    });
+
+    test('approved with failing CI', () {
+      expectLine(pr(stage: 'approved', checks: PrChecks.failing), 'aprovado, mas o CI falhou', PrTone.attention);
+    });
+
+    test('failing CI on an open PR, not on a closed one', () {
+      expectLine(pr(checks: PrChecks.failing), 'CI falhou', PrTone.attention);
+      expectLine(pr(stage: 'closed', checks: PrChecks.failing), 'fechado', PrTone.done);
+      expectLine(pr(stage: 'merged', checks: PrChecks.failing), 'mergeado', PrTone.done);
+    });
+
+    test('merged ages', () {
+      expectLine(pr(stage: 'merged', mergedAt: now.subtract(const Duration(days: 3))), 'mergeado há 3 d', PrTone.done);
+      final old = now.subtract(const Duration(days: 40));
+      expectLine(pr(stage: 'merged', mergedAt: old), 'mergeado em ${relativeAge(old, now)}', PrTone.done);
+      expect(
+        prStateLine(pr(stage: 'merged', mergedAt: old), now).text,
+        matches(RegExp(r'^mergeado em \d{2}/\d{2}/\d{4}$')),
+      );
+      expectLine(
+        pr(stage: 'merged', updatedAt: now.subtract(const Duration(hours: 2))),
+        'mergeado há 2 h',
+        PrTone.done,
+      );
+      expectLine(pr(stage: 'merged'), 'mergeado', PrTone.done);
+    });
+
+    test('closed and deployed', () {
+      expectLine(pr(stage: 'closed_unmerged'), 'fechado', PrTone.done);
+      expectLine(pr(stage: 'deployed_prod'), 'publicado', PrTone.done);
+    });
+
+    test('approved, running CI and plain stages', () {
+      expectLine(pr(stage: 'approved'), 'aprovado', PrTone.normal);
+      expectLine(pr(checks: PrChecks.pending), 'CI rodando', PrTone.normal);
+      expectLine(pr(), 'aguardando revisão', PrTone.normal);
+      expectLine(pr(stage: 'draft'), 'rascunho', PrTone.normal);
+      expectLine(pr(stage: 'mystery'), 'mystery', PrTone.normal);
+    });
+
+    test('cached data adds a suffix and keeps the tone', () {
+      expectLine(pr(stage: 'merge_ready', live: false), 'pronto para mergear · do cache', PrTone.normal);
+      expectLine(pr(stage: 'changes_requested', live: false), 'mudanças pedidas · do cache', PrTone.attention);
+    });
+  });
+
+  group('prNeedsYou', () {
+    PullRequest pr(List<String?> paths, {int? number = 7}) => PullRequest(
+      number: number,
+      unresolved: [for (final p in paths) ReviewThread(path: p, body: 'x')],
+    );
+    const tail = 'O agente resolve; você confere antes do push.';
+
+    test('title', () {
+      expect(prNeedsYouTitle(pr(['a.dart'])), 'O PR #7 recebeu 1 comentário de revisão');
+      expect(prNeedsYouTitle(pr(['a.dart', 'b.dart'])), 'O PR #7 recebeu 2 comentários de revisão');
+      expect(prNeedsYouTitle(pr(['a.dart'], number: null)), 'O PR recebeu 1 comentário de revisão');
+    });
+
+    test('detail lists distinct file names', () {
+      expect(prNeedsYouDetail(pr(['lib/a.dart'])), 'Em a.dart. $tail');
+      expect(prNeedsYouDetail(pr(['a.dart', 'x/b.dart'])), 'Em a.dart e b.dart. $tail');
+      expect(prNeedsYouDetail(pr(['a.dart', 'b.dart', 'c.dart'])), 'Em a.dart, b.dart e c.dart. $tail');
+      expect(
+        prNeedsYouDetail(pr(['a.dart', 'b.dart', 'c.dart', 'd.dart', 'e.dart'])),
+        'Em a.dart, b.dart, c.dart e mais 2. $tail',
+      );
+      expect(prNeedsYouDetail(pr(['lib/a/index.dart', 'lib/b/index.dart'])), 'Em index.dart. $tail');
+      expect(prNeedsYouDetail(pr([null, null])), tail);
+      expect(prNeedsYouDetail(pr([null, 'a.dart'])), 'Em a.dart. $tail');
     });
   });
 

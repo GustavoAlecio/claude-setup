@@ -23,14 +23,9 @@ class FileDocsRepository implements DocsRepository {
     final base = await _projectDir(project);
     if (base == null) return DocsListing.empty;
     final entries = <DocEntry>[];
-    try {
-      entries.addAll(await _files(base, ''));
-      for (final sub in _subdirs) {
-        entries.addAll(await _files(base, '$sub/'));
-      }
-    } on FileSystemException catch (e, st) {
-      log('cannot list $project', name: 'FileDocsRepository', error: e, stackTrace: st);
-      return DocsListing.empty;
+    entries.addAll(await _files(base, ''));
+    for (final sub in _subdirs) {
+      entries.addAll(await _files(base, '$sub/'));
     }
     return DocsListing.fromEntries(entries);
   }

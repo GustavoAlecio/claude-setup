@@ -107,6 +107,23 @@ void main() {
       }
     });
 
+    test('existing project without reviews/ lists the rest', () async {
+      _write('$proj/spec.md', 'x');
+
+      final listing = await repo.list('demo');
+
+      expect(listing.artifacts.map((e) => e.rel), ['spec.md']);
+      expect(listing.reviews, isEmpty);
+    });
+
+    test('an unreadable reviews/ throws instead of listing empty', () async {
+      _write('$proj/reviews/PR-1.md', 'x');
+      Process.runSync('chmod', ['000', '$proj/reviews']);
+      addTearDown(() => Process.runSync('chmod', ['755', '$proj/reviews']));
+
+      await expectLater(repo.list('demo'), throwsA(isA<FileSystemException>()));
+    }, skip: Platform.isWindows);
+
     test('skips symlinks that resolve outside the project', () async {
       _write('${tmp.path}/outside.md', 'secret');
       Link('$proj/leak.md').createSync('${tmp.path}/outside.md');

@@ -27,6 +27,72 @@ String stripFrontMatter(String raw) {
   return end < 0 ? raw : lines.sublist(end + 1).join('\n');
 }
 
+enum ReviewStatus { draft, approved, published, unknown }
+
+final _findingCounts = {
+  for (final k in ['critical', 'major', 'minor', 'nit']) k: RegExp('(\\d+)\\s+$k', caseSensitive: false),
+};
+
+const _monthsPt = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+String _unquote(String v) {
+  if (v.length >= 2 && (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'"))) {
+    return v.substring(1, v.length - 1);
+  }
+  return v;
+}
+
+String _plural(int n, String one, String many) => n == 1 ? '1 $one' : '$n $many';
+
+/// One line about a review report from its front-matter (`title`, `status`, `published_at`) and its
+/// `**Achados:**` line. Never throws: anything unreadable is `unknown`.
+({String? title, ReviewStatus status, String text}) reviewLine(String report) {
+  final lines = report.split('\n');
+  final end = frontMatterEnd(lines);
+  final fields = <String, String>{};
+  if (end > 0) {
+    for (final line in lines.sublist(1, end)) {
+      final i = line.indexOf(':');
+      if (i <= 0) continue;
+      fields[line.substring(0, i).trim()] = _unquote(line.substring(i + 1).trim());
+    }
+  }
+  final title = fields['title'];
+  final status = switch (fields['status']) {
+    'draft' => ReviewStatus.draft,
+    'approved' => ReviewStatus.approved,
+    'published' => ReviewStatus.published,
+    _ => ReviewStatus.unknown,
+  };
+  final text = switch (status) {
+    ReviewStatus.draft => _draftText(lines),
+    ReviewStatus.approved => 'aprovada, falta publicar',
+    ReviewStatus.published => switch (DateTime.tryParse(fields['published_at'] ?? '')?.toLocal()) {
+      final d? => 'publicada em ${d.day} ${_monthsPt[d.month - 1]}',
+      null => 'publicada',
+    },
+    ReviewStatus.unknown => 'revisão',
+  };
+  return (title: title, status: status, text: text);
+}
+
+String _draftText(List<String> lines) {
+  final line = lines.where((l) => l.contains('**Achados:**')).firstOrNull;
+  if (line == null) return 'rascunho pronto';
+  final counts = <String, int?>{
+    for (final e in _findingCounts.entries) e.key: int.tryParse(e.value.firstMatch(line)?.group(1) ?? ''),
+  };
+  if (counts.values.every((v) => v == null)) return 'rascunho pronto';
+  int c(String k) => counts[k] ?? 0;
+  final serious = c('critical') + c('major');
+  final small = c('minor') + c('nit');
+  final parts = [
+    if (serious > 0) _plural(serious, 'problema sério', 'problemas sérios'),
+    if (small > 0) _plural(small, 'menor', 'menores'),
+  ];
+  return parts.isEmpty ? 'rascunho pronto, sem problemas' : 'rascunho pronto: ${parts.join(', ')}';
+}
+
 const kCollapseThreshold = 400;
 
 bool startsCollapsed(DiffFile file, int commentCount) =>

@@ -288,15 +288,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(_route(tester), '/p/demo-app/prs');
       expect(find.text('nenhum PR registrado; abra com /pr-open'), findsOneWidget);
-      expect(find.byKey(const ValueKey('subtab-prs')), findsOneWidget);
-      expect(find.byKey(const ValueKey('subtab-reviews')), findsOneWidget);
-      expect(_weight(tester, 'subtab-prs'), FontWeight.w600);
+      expect(find.byKey(const ValueKey('subtabs')), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('subtab-reviews')));
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/demo-app/reviews?pr=157');
       await tester.pumpAndSettle();
-      expect(_route(tester), '/p/demo-app/reviews');
-      expect(find.text('nenhum review; rode /review em um PR'), findsOneWidget);
       expect(_weight(tester, 'group-prs'), FontWeight.w600);
+      expect(find.byKey(const ValueKey('subtabs')), findsNothing);
+      expect(find.byKey(const ValueKey('reviews-back')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('reviews-back')));
+      await tester.pumpAndSettle();
+      expect(_route(tester), '/p/demo-app/prs');
 
       await tester.tap(find.byKey(const ValueKey('group-reference')));
       await tester.pumpAndSettle();

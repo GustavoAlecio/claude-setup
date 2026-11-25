@@ -54,6 +54,10 @@ String? routeOrg(String location, List<Project> projects) {
 /// `/o/<org>/sessions[/<session>]`, encoded segment by segment: org names may carry spaces and accents.
 String orgQueueLocation(String org) => Uri(pathSegments: ['', 'o', org, 'fila']).toString();
 
+/// `/p/<project>/reviews?pr=<n>`: the review screen of PR [pr].
+String reviewLocation(String project, int pr) =>
+    Uri(pathSegments: ['', 'p', project, 'reviews'], queryParameters: {'pr': '$pr'}).toString();
+
 String orgInboxLocation(String org) => Uri(pathSegments: ['', 'o', org, 'revisar']).toString();
 
 String orgSessionsLocation(String org, {String? session}) =>

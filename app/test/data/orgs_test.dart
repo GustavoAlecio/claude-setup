@@ -1399,4 +1399,9 @@ void main() {
     expect(sessionLocation(s()), '/p/demo/sessions/a%20b');
     expect(sessionLocation(s(org: 'OTG')), orgSessionsLocation('OTG', session: 'a b'));
   });
+
+  test('reviewLocation points at the review of a PR', () {
+    expect(reviewLocation('demo-app', 157), '/p/demo-app/reviews?pr=157');
+    expect(reviewLocation('a b', 1), '/p/a%20b/reviews?pr=1');
+  });
 }

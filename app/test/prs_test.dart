@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/widgets/markdown_view.dart';
+import 'package:claude_flow/core/widgets/primitives.dart';
 import 'package:claude_flow/data/config_mutations.dart';
+import 'package:claude_flow/data/docs_repository.dart';
 import 'package:claude_flow/data/github_models.dart';
 import 'package:claude_flow/data/github_repository.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';
@@ -91,12 +93,14 @@ PullRequest _pr({
   CardRef? card,
   PrChecks? checks,
   String? url,
+  bool noUrl = false,
+  String? title,
 }) => PullRequest(
   number: number,
   card: card,
   target: 'main',
-  title: 'PR $number',
-  url: url ?? 'https://github.com/$owner/$repo/pull/$number',
+  title: title ?? 'PR $number',
+  url: noUrl ? null : url ?? 'https://github.com/$owner/$repo/pull/$number',
   stage: stage,
   repo: repo,
   nameWithOwner: '$owner/$repo',
@@ -107,6 +111,18 @@ PullRequest _pr({
   unresolved: unresolved,
   updatedAt: DateTime.utc(2020, 1, 2, 12),
 );
+
+class _FailingDocs extends MockDocsRepository {
+  @override
+  Future<DocsListing> list(String project) => Future.error(StateError('docs offline'));
+}
+
+class _FlakyDocs extends MockDocsRepository {
+  bool failing = false;
+
+  @override
+  Future<DocsListing> list(String project) => failing ? Future.error(StateError('docs offline')) : super.list(project);
+}
 
 final _projects = [const Project(name: 'x', path: '/dev/org/x')];
 
@@ -167,6 +183,8 @@ class _IdentityGitHub extends MockGitHubRepository {
 
 Finder _resolve(int n) => find.byKey(ValueKey('pr-resolve-$n'));
 
+String? _state(WidgetTester tester, int n) => tester.widget<Text>(find.byKey(ValueKey('pr-state-$n'))).data;
+
 bool _enabled(WidgetTester tester, int n) => tester.widget<OutlinedButton>(_resolve(n)).onPressed != null;
 
 void main() {
@@ -176,7 +194,35 @@ void main() {
     view.devicePixelRatio = 1;
   });
 
-  testWidgets('columns: #PR link, AB#, title, repo, target, stage, CI and age', (tester) async {
+  testWidgets('PRs without url keep distinct row keys (same number, or no number)', (tester) async {
+    final github = MockGitHubRepository(
+      pullRequests: [
+        _pr(number: 7, noUrl: true),
+        _pr(number: 7, noUrl: true),
+        _pr(number: 8, noUrl: true, unresolved: const []),
+      ],
+    );
+    await _open(tester, github);
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('prs-needs-you')), findsOneWidget);
+    expect(find.byKey(const ValueKey('prs-mine')), findsOneWidget);
+  });
+
+  testWidgets('PRs without url and without number render without key collisions', (tester) async {
+    final updatedAt = DateTime.utc(2020, 1, 2, 12);
+    final github = MockGitHubRepository(
+      pullRequests: [
+        PullRequest(title: 'A', stage: 'changes_requested', unresolved: const [_thread], updatedAt: updatedAt),
+        PullRequest(title: 'B', stage: 'changes_requested', unresolved: const [_thread], updatedAt: updatedAt),
+      ],
+    );
+    await _open(tester, github);
+    expect(tester.takeException(), isNull);
+    expect(find.text('A'), findsWidgets);
+    expect(find.text('B'), findsWidgets);
+  });
+
+  testWidgets('rows: #PR link, card, title and the state line; no table', (tester) async {
     final docs = MockDocsRepository();
     final github = MockGitHubRepository(
       pullRequests: [
@@ -190,24 +236,49 @@ void main() {
     );
     await _open(tester, github, docs: docs);
 
+    expect(find.byKey(const ValueKey('prs-mine')), findsOneWidget);
+    expect(find.text('Seus PRs'), findsOneWidget);
+    expect(find.byKey(const ValueKey('pr-row-12')), findsOneWidget);
+    expect(find.byKey(const ValueKey('pr-row-13')), findsOneWidget);
     expect(find.text('#12'), findsOneWidget);
     expect(find.text('AB#4821'), findsOneWidget);
     expect(find.text('PR 12'), findsOneWidget);
-    expect(find.text('a'), findsNWidgets(2));
-    expect(find.text('main'), findsNWidgets(2));
-    expect(find.text('mudanças pedidas'), findsOneWidget);
-    expect(find.text('aprovado'), findsOneWidget);
-    expect(find.text('falhando'), findsOneWidget);
-    expect(find.text('ok'), findsOneWidget);
-    expect(find.text('02/01/2020'), findsNWidgets(2));
+    expect(_state(tester, 12), '1 comentário esperando você');
+    expect(_state(tester, 13), 'aprovado');
+    expect(find.byType(TableHeaderRow), findsNothing);
+    expect(find.byKey(const ValueKey('prs-waiting')), findsNothing);
+    expect(find.text('main'), findsNothing);
+    expect(find.text('falhando'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('pr-link-12')));
     await tester.pump();
     expect(docs.opened, [Uri.parse('https://github.com/acme/a/pull/12')]);
     expect(find.byKey(const ValueKey('pr-link-13')), findsNothing, reason: 'file: does not pass opensExternally');
+
+    await tester.tap(find.text('PR 12'));
+    await tester.pump();
+    expect(docs.opened, hasLength(2), reason: 'the whole row opens the PR');
+    await tester.tap(find.text('PR 13'));
+    await tester.pump();
+    expect(docs.opened, hasLength(2));
   });
 
-  testWidgets('repo shows owner/repo when the owner differs from the first PR', (tester) async {
+  testWidgets('state line has no repo prefix when every PR is in the same repo', (tester) async {
+    await _open(
+      tester,
+      MockGitHubRepository(
+        pullRequests: [
+          _pr(number: 1),
+          _pr(number: 2, unresolved: const []),
+        ],
+      ),
+    );
+
+    expect(_state(tester, 1), '1 comentário esperando você');
+    expect(_state(tester, 2), 'mudanças pedidas');
+  });
+
+  testWidgets('state line shows owner/repo when the owner differs from the first PR', (tester) async {
     final github = MockGitHubRepository(
       pullRequests: [
         _pr(number: 1),
@@ -216,8 +287,8 @@ void main() {
     );
     await _open(tester, github);
 
-    expect(find.text('a'), findsOneWidget);
-    expect(find.text('other/b'), findsOneWidget);
+    expect(_state(tester, 1), 'a · 1 comentário esperando você');
+    expect(_state(tester, 2), 'other/b · 1 comentário esperando você');
   });
 
   testWidgets('same repo under two owners shows both in full', (tester) async {
@@ -231,47 +302,166 @@ void main() {
       ),
     );
 
-    expect(find.text('acme/a'), findsOneWidget);
-    expect(find.text('fork/a'), findsOneWidget);
+    expect(_state(tester, 1), 'acme/a · 1 comentário esperando você');
+    expect(_state(tester, 2), 'fork/a · 1 comentário esperando você');
   });
 
-  testWidgets('live: false shows the cache badge with liveError as tooltip and the top banner', (tester) async {
+  testWidgets('live: false ends the state in "do cache" with liveError as tooltip and the top banner', (tester) async {
     final github = MockGitHubRepository(
       pullRequests: [_pr(live: false, liveError: 'gh sem login (gh auth login)', unresolved: const [])],
     );
     await _open(tester, github);
 
-    expect(find.text('cache'), findsOneWidget);
+    expect(_state(tester, 1), 'mudanças pedidas · do cache');
     expect(find.byTooltip('gh sem login (gh auth login)'), findsOneWidget);
     expect(find.text('não consegui consultar o GitHub'), findsOneWidget);
+    expect(find.byKey(const ValueKey('prs-needs-you')), findsNothing);
   });
 
-  testWidgets('waiting banner counts only open PRs with threads', (tester) async {
-    final github = MockGitHubRepository(
-      pullRequests: [
-        _pr(number: 1),
-        _pr(number: 2, stage: 'awaiting_review'),
-        _pr(number: 3, stage: 'merged'),
-      ],
-    );
-    await _open(tester, github);
+  group('needs you', () {
+    Finder inBlock(String text) =>
+        find.descendant(of: find.byKey(const ValueKey('prs-needs-you')), matching: find.text(text));
 
-    expect(find.text('2 PRs com comentários esperando você'), findsOneWidget);
-    expect(find.text('não consegui consultar o GitHub'), findsNothing);
+    testWidgets('one block per open PR with threads, in list order', (tester) async {
+      final github = MockGitHubRepository(
+        pullRequests: [
+          _pr(number: 1),
+          _pr(number: 2, stage: 'awaiting_review'),
+          _pr(number: 3, stage: 'merged'),
+        ],
+      );
+      await _open(tester, github);
+
+      expect(inBlock('Precisa de você'), findsOneWidget);
+      expect(inBlock('O PR #1 recebeu 1 comentário de revisão'), findsOneWidget);
+      expect(inBlock('O PR #2 recebeu 1 comentário de revisão'), findsOneWidget);
+      expect(inBlock('Em a.dart. O agente resolve; você confere antes do push.'), findsNWidgets(2));
+      expect(inBlock('O PR #3 recebeu 1 comentário de revisão'), findsNothing);
+      expect(_resolve(3), findsNothing);
+      expect(find.byKey(const ValueKey('prs-waiting')), findsNothing);
+      expect(find.text('não consegui consultar o GitHub'), findsNothing);
+    });
+
+    testWidgets('2 threads with cwd, a merged PR and an approved one with failing CI', (tester) async {
+      final sessions = MockSessionsRepository();
+      final github = MockGitHubRepository(
+        pullRequests: [
+          _pr(
+            number: 7,
+            unresolved: const [
+              _thread,
+              ReviewThread(path: 'lib/b.dart', author: 'rev', body: 'Renomeie.'),
+            ],
+          ),
+          _pr(number: 8, stage: 'merged', unresolved: const []),
+          _pr(number: 9, stage: 'approved', unresolved: const [], checks: PrChecks.failing),
+        ],
+      );
+      await _open(tester, github, sessions: sessions);
+
+      expect(inBlock('O PR #7 recebeu 2 comentários de revisão'), findsOneWidget);
+      expect(inBlock('Em a.dart e b.dart. O agente resolve; você confere antes do push.'), findsOneWidget);
+      expect(_state(tester, 7), '2 comentários esperando você');
+      expect(_state(tester, 8), startsWith('mergeado'));
+      expect(_state(tester, 9), 'aprovado, mas o CI falhou');
+      expect(find.byType(TableHeaderRow), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('pr-comments-7')));
+      await tester.pumpAndSettle();
+      expect(find.text('lib/a.dart:10 @rev'), findsOneWidget);
+      expect(find.text('lib/b.dart @rev'), findsOneWidget);
+
+      await tester.tap(_resolve(7));
+      await tester.pumpAndSettle();
+      expect(sessions.createCalls.single, ('x', '/pr-status', '/tmp/a', null, PermissionMode.acceptEdits));
+    });
+
+    testWidgets('no PR with comments, no block', (tester) async {
+      await _open(
+        tester,
+        MockGitHubRepository(
+          pullRequests: [_pr(stage: 'approved', unresolved: const [])],
+        ),
+      );
+
+      expect(find.byKey(const ValueKey('prs-needs-you')), findsNothing);
+      expect(find.byKey(const ValueKey('pr-comments-1')), findsNothing);
+      expect(find.byKey(const ValueKey('pr-row-1')), findsOneWidget);
+    });
+
+    testWidgets('pr-comments shows path:line @author and the body in MarkdownView', (tester) async {
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr()]));
+
+      expect(find.text('lib/a.dart:10 @rev'), findsNothing);
+      expect(inBlock('ver 1 comentário'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('pr-comments-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('lib/a.dart:10 @rev'), findsOneWidget);
+      expect(find.byWidgetPredicate((w) => w is MarkdownView && w.source == 'Extraia **isto**.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('pr-comments-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('lib/a.dart:10 @rev'), findsNothing);
+    });
   });
 
-  testWidgets('expanding comments shows path:line @author and the body in MarkdownView', (tester) async {
-    await _open(tester, MockGitHubRepository(pullRequests: [_pr()]));
+  group('layout', () {
+    testWidgets('two #1 in different repos render without duplicate keys', (tester) async {
+      await _open(
+        tester,
+        MockGitHubRepository(
+          pullRequests: [
+            _pr(number: 1),
+            _pr(number: 1, repo: 'b'),
+          ],
+        ),
+      );
 
-    expect(find.text('lib/a.dart:10 @rev'), findsNothing);
-    await tester.tap(find.text('▸ 1 comentário'));
-    await tester.pumpAndSettle();
-    expect(find.text('lib/a.dart:10 @rev'), findsOneWidget);
-    expect(find.byWidgetPredicate((w) => w is MarkdownView && w.source == 'Extraia **isto**.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      final states = tester.widgetList<Text>(find.byKey(const ValueKey('pr-state-1')));
+      expect(states.map((t) => t.data), ['a · 1 comentário esperando você', 'b · 1 comentário esperando você']);
+      expect(find.byKey(const ValueKey('pr-row-1')), findsNWidgets(2));
+      expect(_resolve(1), findsNWidgets(2));
+    });
 
-    await tester.tap(find.text('▾ 1 comentário'));
-    await tester.pumpAndSettle();
-    expect(find.text('lib/a.dart:10 @rev'), findsNothing);
+    testWidgets('1100x700 with long titles in 2 repos, comments and 3 reviews does not overflow', (tester) async {
+      final view = TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
+      view.physicalSize = const Size(1100, 700);
+      view.devicePixelRatio = 1;
+      final title = 'x' * 120;
+      final docs = MockDocsRepository()
+        ..write('reviews/PR-200.md', '---\ntitle: $title\nstatus: approved\n---\n# Review PR-200\n');
+      final github = MockGitHubRepository(
+        pullRequests: [
+          _pr(
+            number: 1,
+            title: title,
+            card: const CardRef(kind: TrackerKind.ado, id: '4821'),
+          ),
+          _pr(number: 2, title: title, repo: 'b', owner: 'other-organization', cwd: null),
+          _pr(number: 3, title: title, stage: 'merged', unresolved: const []),
+          _pr(number: 4, title: title, stage: 'approved', unresolved: const [], checks: PrChecks.failing),
+          _pr(number: 5, title: title, repo: 'b', owner: 'other-organization', live: false, unresolved: const []),
+        ],
+      );
+      await _open(tester, github, docs: docs);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('prs-needs-you')), findsOneWidget);
+      expect(_resolve(1), findsOneWidget);
+      expect(_resolve(2), findsOneWidget);
+      for (var n = 1; n <= 5; n++) {
+        expect(find.byKey(ValueKey('pr-row-$n')), findsOneWidget);
+      }
+      for (final n in [157, 9, 200]) {
+        expect(find.byKey(ValueKey('review-row-$n')), findsOneWidget);
+      }
+      expect(find.byKey(const ValueKey('review-open-200')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('pr-comments-1')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('Resolver follows canResolve and is disabled without cwd', (tester) async {
@@ -293,7 +483,7 @@ void main() {
     expect(_resolve(3), findsNothing);
     expect(_resolve(4), findsNothing);
     expect(_resolve(5), findsOneWidget, reason: 'unknown stage is not closed');
-    expect(find.text('algo_novo'), findsOneWidget);
+    expect(_state(tester, 5), 'a · 1 comentário esperando você', reason: 'comments win over the raw stage');
     expect(_resolve(6), findsOneWidget);
     expect(_enabled(tester, 6), isFalse);
     expect(find.byTooltip('sem checkout local de c'), findsOneWidget);
@@ -471,6 +661,121 @@ void main() {
     github.gates['y']!.complete([_pr(number: 12)]);
     await tester.pumpAndSettle();
     expect(find.text('PR 12'), findsOneWidget);
+  });
+
+  group('reviews load', () {
+    testWidgets('without endpoint the reviews still show and open the review screen', (tester) async {
+      final engine = _LateEngine();
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr(number: 12)]), engine: engine);
+
+      expect(
+        find.descendant(of: find.byKey(const ValueKey('prs-mine')), matching: find.text('engine iniciando')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('prs-reviews')),
+          matching: find.byKey(const ValueKey('review-row-157')),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('feat: cache de partidas'), findsOneWidget);
+      expect(find.text('rascunho pronto: 2 problemas sérios, 1 menor'), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-open-157')), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-open-9')), findsNothing);
+      expect(find.text('publicada em 28 set'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('review-row-157')));
+      await tester.pumpAndSettle();
+      final uri = _router(tester).routerDelegate.currentConfiguration.uri;
+      expect(uri.toString(), '/p/x/reviews?pr=157');
+    });
+
+    testWidgets('a PR load error keeps the reviews', (tester) async {
+      final github = MockGitHubRepository(pullRequests: [_pr(number: 12)]);
+      github.prsError = const GitHubException('engine desatualizado; reinicie');
+      await _open(tester, github);
+
+      expect(find.text('engine desatualizado; reinicie'), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-row-157')), findsOneWidget);
+    });
+
+    testWidgets('docs failing on list show prs-reviews-error and keep the PRs', (tester) async {
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr(number: 12)]), docs: _FailingDocs());
+
+      expect(find.byKey(const ValueKey('prs-reviews-error')), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-row-157')), findsNothing);
+      expect(find.text('PR 12'), findsOneWidget);
+    });
+
+    testWidgets('a failing round after a good load keeps the rows and shows the error above them', (tester) async {
+      final docs = _FlakyDocs();
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr(number: 12)]), docs: docs);
+      expect(find.byKey(const ValueKey('review-row-157')), findsOneWidget);
+      expect(find.byKey(const ValueKey('prs-reviews-error')), findsNothing);
+
+      docs.failing = true;
+      await tester.pump(const Duration(seconds: 61));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('prs-reviews-error')), findsOneWidget);
+      expect(find.byKey(const ValueKey('review-row-157')), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('prs-reviews-error'))).dy,
+        lessThan(tester.getTopLeft(find.byKey(const ValueKey('review-row-157'))).dy),
+      );
+
+      docs.failing = false;
+      await tester.pump(const Duration(seconds: 61));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('prs-reviews-error')), findsNothing);
+      expect(find.byKey(const ValueKey('review-row-157')), findsOneWidget);
+    });
+
+    testWidgets('an empty front-matter title falls back to the meta, then to Review PR-n', (tester) async {
+      final docs = MockDocsRepository.empty()
+        ..write('reviews/PR-5.md', '---\ntitle:\nstatus: draft\n---\n# x\n')
+        ..write('reviews/PR-5.meta.json', '{"number": 5, "title": "fix: do meta"}')
+        ..write('reviews/PR-6.md', '---\ntitle: ""\nstatus: draft\n---\n# x\n')
+        ..write('reviews/PR-6.meta.json', '{"number": 6, "title": ""}');
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr(number: 12)]), docs: docs);
+
+      expect(find.text('fix: do meta'), findsOneWidget);
+      expect(find.text('Review PR-6'), findsOneWidget);
+    });
+
+    testWidgets('no reviews, no section', (tester) async {
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr(number: 12)]), docs: MockDocsRepository.empty());
+
+      expect(find.byKey(const ValueKey('prs-reviews')), findsNothing);
+      expect(find.byKey(const ValueKey('prs-reviews-error')), findsNothing);
+    });
+
+    testWidgets('the 60 s timer reloads without rereading unchanged reports', (tester) async {
+      final docs = MockDocsRepository();
+      final github = MockGitHubRepository(pullRequests: [_pr(number: 12)]);
+      await _open(tester, github, docs: docs);
+      expect(docs.reads['reviews/PR-157.md'], 1);
+      expect(github.prsCalls, hasLength(1));
+
+      await tester.pump(const Duration(seconds: 61));
+      await tester.pumpAndSettle();
+      expect(github.prsCalls, hasLength(2));
+      expect(docs.reads['reviews/PR-157.md'], 1);
+      expect(docs.reads['reviews/PR-9.meta.json'], 1);
+    });
+
+    testWidgets('a changed report is reread; a report above the limit reads as revisão', (tester) async {
+      final docs = MockDocsRepository();
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr(number: 12)]), docs: docs);
+
+      docs.write('reviews/PR-157.md', 'x' * (kDocSizeLimit + 1));
+      await tester.tap(find.text('Recarregar'));
+      await tester.pumpAndSettle();
+      expect(docs.reads['reviews/PR-157.md'], 2);
+      expect(find.text('revisão'), findsOneWidget);
+      expect(find.text('feat: cache de partidas'), findsOneWidget);
+    });
   });
 
   group('permission mode of the cwd org', () {
