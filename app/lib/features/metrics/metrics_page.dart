@@ -9,6 +9,7 @@ import '../../core/widgets/refresh_loop.dart';
 import '../../data/inventory_models.dart';
 import '../../data/inventory_repository.dart';
 import '../../data/metrics_models.dart';
+import '../../data/metrics_parser.dart';
 import '../../data/metrics_repository.dart';
 import '../../data/models.dart';
 import '../../data/session_reducer.dart';
@@ -30,6 +31,8 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
   Routing? _routing;
   bool _started = false;
   final _expanded = <String>{};
+  bool _showCycles = false;
+  bool _showTokens = false;
 
   @override
   String get logName => 'MetricsPage';
@@ -101,6 +104,12 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
           : const SizedBox.shrink();
     }
     final cycles = metrics.cycles;
+    final c = context.colors;
+    final routing = _routing ?? const Routing();
+    final insight = metricsInsight(routing);
+    Widget toggleLabel(String label) => Flexible(
+      child: Text(label, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+    );
     return CustomScrollView(
       slivers: [
         if (refreshFailed)
@@ -108,57 +117,95 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
             padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
             sliver: SliverToBoxAdapter(child: Muted('não foi possível atualizar; mostrando a leitura anterior')),
           ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-          sliver: SliverToBoxAdapter(
-            child: _Cards(
+        _column(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          children: [
+            if (insight != null) ...[
+              _Insight(title: insight.title, detail: insight.detail),
+              const SizedBox(height: 24),
+            ],
+            _Numbers(
               metrics: metrics,
               sessionsCost: projectSessionsCost(
                 context.watch<SessionsCubit>().state.data ?? const [],
                 widget.projectName,
               ),
             ),
-          ),
+            const SizedBox(height: 28),
+            _Bands(routing: routing, insightBand: insight?.band),
+            const SizedBox(height: 16),
+            DisclosureToggle(
+              key: const ValueKey('metrics-show-cycles'),
+              open: _showCycles,
+              onTap: () => setState(() => _showCycles = !_showCycles),
+              children: [toggleLabel('Ver ciclo por ciclo')],
+            ),
+          ],
         ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
-          sliver: SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Ciclos', style: Theme.of(context).textTheme.titleSmall),
-                const SizedBox(height: 4),
-                if (cycles.isEmpty)
-                  const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Muted('nenhum ciclo registrado'))
-                else
-                  const TableHeaderRow(_cycleColumns),
-              ],
+        if (_showCycles) ...[
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Ciclos', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  if (cycles.isEmpty)
+                    const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Muted('nenhum ciclo registrado'))
+                  else
+                    const TableHeaderRow(_cycleColumns),
+                ],
+              ),
             ),
           ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          sliver: SliverList.builder(
-            itemCount: cycles.length,
-            itemBuilder: (context, i) {
-              final cycle = cycles[i];
-              return _CycleRow(
-                key: ValueKey('metrics-cycle-${cycle.dir}'),
-                cycle: cycle,
-                expanded: _expanded.contains(cycle.dir),
-                onToggle: () => _toggle(cycle.dir),
-              );
-            },
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+            sliver: SliverList.builder(
+              itemCount: cycles.length,
+              itemBuilder: (context, i) {
+                final cycle = cycles[i];
+                return _CycleRow(
+                  key: ValueKey('metrics-cycle-${cycle.dir}'),
+                  cycle: cycle,
+                  expanded: _expanded.contains(cycle.dir),
+                  onToggle: () => _toggle(cycle.dir),
+                );
+              },
+            ),
           ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
-          sliver: SliverToBoxAdapter(child: _Bands(routing: _routing ?? const Routing())),
+        ],
+        _column(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
+          children: [
+            DisclosureToggle(
+              key: const ValueKey('metrics-show-tokens'),
+              open: _showTokens,
+              onTap: () => setState(() => _showTokens = !_showTokens),
+              children: [toggleLabel('Ver gasto por papel do agente')],
+            ),
+            if (_showTokens) ...[const SizedBox(height: 8), _TokenCards(metrics: metrics)],
+          ],
         ),
       ],
     );
   }
+
+  Widget _column({required EdgeInsets padding, required List<Widget> children}) => SliverPadding(
+    padding: padding,
+    sliver: SliverToBoxAdapter(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: _columnWidth),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
+        ),
+      ),
+    ),
+  );
 }
+
+const _columnWidth = 720.0;
 
 const _cycleColumns = <(String, double?)>[
   ('', 20),
@@ -174,8 +221,40 @@ const _cycleColumns = <(String, double?)>[
   ('', 96),
 ];
 
-class _Cards extends StatelessWidget {
-  const _Cards({required this.metrics, required this.sessionsCost});
+class _Insight extends StatelessWidget {
+  const _Insight({required this.title, required this.detail});
+
+  final String title;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      key: const ValueKey('metrics-insight'),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: c.textPrimary),
+          ),
+          const SizedBox(height: 6),
+          Text(detail, style: TextStyle(fontSize: 13, height: 1.45, color: c.textSecondary)),
+        ],
+      ),
+    );
+  }
+}
+
+class _Numbers extends StatelessWidget {
+  const _Numbers({required this.metrics, required this.sessionsCost});
 
   final ProjectMetrics metrics;
 
@@ -184,54 +263,85 @@ class _Cards extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     final percent = metrics.passTier0Percent;
-    String tokens(String role) => metrics.hasTokens ? formatTokens(metrics.tokensByRole[role] ?? 0) : '—';
-    final otherTokens = metrics.tokensByRole['outros'] ?? 0;
-    Widget group(String title, List<Widget> cards) => Column(
+    Widget number(String id, String value, String label) => Expanded(
+      child: Column(
+        key: ValueKey('metrics-card-$id'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 28, fontWeight: FontWeight.w600, color: c.textPrimary),
+          ),
+          const SizedBox(height: 4),
+          Text(label, style: TextStyle(fontSize: 12, height: 1.35, color: c.textSecondary)),
+        ],
+      ),
+    );
+    const gap = SizedBox(width: 16);
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Muted(title, size: 10),
-        const SizedBox(height: 8),
-        Wrap(spacing: 12, runSpacing: 12, children: cards),
+        number(
+          'completed',
+          '${metrics.completedCycles}',
+          metrics.completedCycles == 1 ? 'ciclo concluído' : 'ciclos concluídos',
+        ),
+        gap,
+        number('pass-tier0', percent == null ? '—' : '${percent.round()}%', 'das tasks passaram sem trocar de modelo'),
+        gap,
+        number(
+          'escalations',
+          '${metrics.escalations}',
+          metrics.escalations == 1 ? 'task escalou de modelo' : 'tasks escalaram de modelo',
+        ),
+        gap,
+        number('cost', '\$${sessionsCost.toStringAsFixed(2)}', 'gastos nas conversas'),
       ],
     );
-    // Outcomes and consumption in separate rows: one flowing Wrap left a lone card on the last line.
+  }
+}
+
+class _TokenCards extends StatelessWidget {
+  const _TokenCards({required this.metrics});
+
+  final ProjectMetrics metrics;
+
+  @override
+  Widget build(BuildContext context) {
+    String tokens(String role) => metrics.hasTokens ? formatTokens(metrics.tokensByRole[role] ?? 0) : '—';
+    final otherTokens = metrics.tokensByRole['outros'] ?? 0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        group('Resultado', [
-          _StatCard(id: 'completed', label: 'Ciclos concluídos', value: '${metrics.completedCycles}'),
-          _StatCard(id: 'tasks', label: 'Tasks', value: '${metrics.tasks}'),
-          _StatCard(
-            id: 'pass-tier0',
-            label: 'Aprovadas no 1º modelo',
-            value: percent == null ? '—' : '${percent.round()}%',
-            detail: '${metrics.passedTier0}/${metrics.tasks}',
-          ),
-          _StatCard(id: 'escalations', label: 'Escaladas', value: '${metrics.escalations}'),
-          _StatCard(id: 'cost', label: 'Custo das sessões', value: '\$${sessionsCost.toStringAsFixed(2)}'),
-        ]),
-        const SizedBox(height: 16),
-        group('Tokens por papel', [
-          _StatCard(id: 'tokens-dev', label: 'Implementação', value: tokens('dev')),
-          _StatCard(id: 'tokens-g0', label: 'Checagens', value: tokens('g0')),
-          _StatCard(id: 'tokens-g1', label: 'Revisão de código', value: tokens('g1')),
-          _StatCard(id: 'tokens-g2', label: 'QA', value: tokens('g2')),
-          if (metrics.hasTokens && otherTokens > 0)
-            _StatCard(id: 'tokens-outros', label: 'Outros', value: formatTokens(otherTokens)),
-        ]),
+        const Muted('Tokens por papel', size: 10),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _StatCard(id: 'tokens-dev', label: 'Implementação', value: tokens('dev')),
+            _StatCard(id: 'tokens-g0', label: 'Checagens', value: tokens('g0')),
+            _StatCard(id: 'tokens-g1', label: 'Revisão de código', value: tokens('g1')),
+            _StatCard(id: 'tokens-g2', label: 'QA', value: tokens('g2')),
+            if (metrics.hasTokens && otherTokens > 0)
+              _StatCard(id: 'tokens-outros', label: 'Outros', value: formatTokens(otherTokens)),
+          ],
+        ),
       ],
     );
   }
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.id, required this.label, required this.value, this.detail});
+  const _StatCard({required this.id, required this.label, required this.value});
 
   final String id;
   final String label;
   final String value;
-  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -256,16 +366,9 @@ class _StatCard extends StatelessWidget {
             style: TextStyle(fontSize: 11, color: c.textMuted),
           ),
           const Spacer(),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(
-                value,
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: c.textPrimary),
-              ),
-              if (detail != null) ...[const SizedBox(width: 8), Muted(detail!, size: 11)],
-            ],
+          Text(
+            value,
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: c.textPrimary),
           ),
         ],
       ),
@@ -414,9 +517,12 @@ class _TierPill extends StatelessWidget {
 }
 
 class _Bands extends StatelessWidget {
-  const _Bands({required this.routing});
+  const _Bands({required this.routing, required this.insightBand});
 
   final Routing routing;
+
+  /// `<c>:<r>` of the band the insight card talks about, the one drawn in highlight.
+  final String? insightBand;
 
   @override
   Widget build(BuildContext context) {
@@ -425,8 +531,8 @@ class _Bands extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Por tamanho e risco da task', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 4),
+        Text('Passaram sem trocar de modelo, por tipo de task', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
         if (error != null)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -434,17 +540,14 @@ class _Bands extends StatelessWidget {
           )
         else if (routing.bands.isEmpty)
           const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Muted('rode /complete para gerar as faixas'))
-        else ...[
-          const TableHeaderRow([
-            ('Faixa', 80),
-            ('Aprovadas no 1º modelo', 130),
-            ('Escaladas', 80),
-            ('Bloqueios', 80),
-            ('Tentativas/task', 110),
-            ('Modelo final', null),
-          ]),
-          for (final b in routing.bands) _BandRow(band: b),
-        ],
+        else
+          Column(
+            key: const ValueKey('metrics-bands'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final b in orderedBands(routing.bands)) _BandRow(band: b, highlighted: bandId(b) == insightBand),
+            ],
+          ),
         if (routing.overrides.isNotEmpty) ...[
           const SizedBox(height: 12),
           Wrap(
@@ -465,34 +568,66 @@ class _Bands extends StatelessWidget {
 }
 
 class _BandRow extends StatelessWidget {
-  const _BandRow({required this.band});
+  const _BandRow({required this.band, required this.highlighted});
 
   final RoutingBand band;
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    Widget cell(String s, double width) => SizedBox(
-      width: width,
-      child: Text(s, style: TextStyle(fontSize: 12, color: c.textSecondary)),
-    );
-    final pct = band.n == 0 ? 0 : (band.passTier0 * 100 / band.n).round();
-    final tiers = band.finalTiers.entries.map((e) => '${e.key}: ${e.value}').join(', ');
-    return Container(
-      key: ValueKey('metrics-band-${band.complexity}:${band.risk}'),
+    final id = bandId(band);
+    // The file is external: a band with more passes than tasks must not push the fill past the track.
+    final share = band.n == 0 ? 0.0 : (band.passTier0 / band.n).clamp(0.0, 1.0);
+    return Padding(
+      key: ValueKey('metrics-band-$id'),
       padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: c.border)),
-      ),
       child: Row(
         children: [
-          SizedBox(width: 80, child: Mono('${band.complexity}:${band.risk}', color: c.textPrimary)),
-          cell('${band.passTier0}/${band.n} ($pct%)', 130),
-          cell('${band.escalated}', 80),
-          cell('${band.blocked}', 80),
-          cell(band.attemptsPerTask.toStringAsFixed(2), 110),
+          SizedBox(
+            width: 180,
+            child: Text(
+              bandLabel(band.complexity, band.risk),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: highlighted ? FontWeight.w600 : FontWeight.w400,
+                color: c.textPrimary,
+              ),
+            ),
+          ),
           Expanded(
-            child: Text(tiers.isEmpty ? '—' : tiers, style: TextStyle(fontSize: 12, color: c.textSecondary)),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: SizedBox(
+                height: 8,
+                child: ColoredBox(
+                  color: c.border,
+                  child: FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: share,
+                    child: ColoredBox(key: ValueKey('metrics-band-bar-$id'), color: highlighted ? c.warn : c.textMuted),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 52,
+            child: Text(
+              '${bandRowPercent(band)}%',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: c.textPrimary),
+            ),
+          ),
+          SizedBox(
+            width: 84,
+            child: Text(
+              '${band.passTier0} de ${band.n}',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontSize: 12, color: c.textMuted),
+            ),
           ),
         ],
       ),

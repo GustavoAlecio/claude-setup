@@ -167,6 +167,16 @@ const _projectData = ProjectInventory(
   routing: Routing(
     bands: [
       RoutingBand(
+        complexity: 'L',
+        risk: 'high',
+        n: 5,
+        passTier0: 2,
+        escalated: 3,
+        blocked: 0,
+        attemptsPerTask: 2.0,
+        finalTiers: {'opus': 3, 'sonnet': 2},
+      ),
+      RoutingBand(
         complexity: 'M',
         risk: 'low',
         n: 4,

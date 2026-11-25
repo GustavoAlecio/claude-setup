@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:claude_flow/data/inventory_models.dart';
 import 'package:claude_flow/data/metrics_models.dart';
 import 'package:claude_flow/data/metrics_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -239,4 +240,115 @@ void main() {
       expect(projectSummary(const []).passTier0Percent, isNull);
     });
   });
+
+  group('bandLabel', () {
+    test('rótulos em português e risco alto', () {
+      expect(bandLabel('S', 'low'), 'Pequena');
+      expect(bandLabel('M', 'high'), 'Média, risco alto');
+      expect(bandLabel('L', 'high'), 'Grande, risco alto');
+      expect(bandLabel('?', 'high'), 'Sem tamanho, risco alto');
+      expect(bandLabel('XL', 'low'), 'XL');
+      expect(bandLabel('XL', 'high'), 'XL, risco alto');
+    });
+  });
+
+  group('bandPercent', () {
+    test('piso inteiro e zero sem tasks', () {
+      expect(bandPercent(band('M', 'low', 2, 3)), 66);
+      expect(bandPercent(band('M', 'low', 0, 0)), 0);
+    });
+  });
+
+  group('bandRowPercent', () {
+    test('arredonda o meio para cima e limita a 0..100', () {
+      expect(bandRowPercent(band('M', 'low', 23, 40)), 58);
+      expect(bandRowPercent(band('M', 'low', 2, 3)), 67);
+      expect(bandRowPercent(band('M', 'low', 0, 0)), 0);
+      expect(bandRowPercent(band('M', 'low', 6, 5)), 100);
+    });
+  });
+
+  group('bandId', () {
+    test('complexidade e risco', () {
+      expect(bandId(band('L', 'high', 1, 1)), 'L:high');
+    });
+  });
+
+  group('orderedBands', () {
+    test('tamanho S, M, L, demais; low antes de high', () {
+      final r = orderedBands([
+        band('L', 'high', 1, 1),
+        band('M', 'low', 1, 1),
+        band('S', 'low', 1, 1),
+        band('?', 'low', 1, 1),
+        band('M', 'high', 1, 1),
+      ]);
+      expect([for (final b in r) '${b.complexity}:${b.risk}'], ['S:low', 'M:low', 'M:high', 'L:high', '?:low']);
+    });
+  });
+
+  group('metricsInsight', () {
+    ({String title, String detail, String band})? insight(List<RoutingBand> b, {String? error}) =>
+        metricsInsight(Routing(bands: b, error: error));
+
+    test('faixa que trava com as outras em 90% ou mais', () {
+      final i = insight([band('L', 'high', 2, 5), band('M', 'low', 9, 10), band('S', 'low', 19, 20)]);
+      expect(i!.title, 'Tasks grandes e de risco alto travam mais');
+      expect(
+        i.detail,
+        'Nos ciclos deste projeto, só 2 de 5 passaram sem trocar de modelo. '
+        'Todas as outras faixas ficam em 90% ou mais. '
+        'Vale quebrar essas tasks antes de implementar.',
+      );
+      expect(i.band, 'L:high');
+    });
+
+    test('outras em 100% e em 75%', () {
+      expect(
+        insight([band('L', 'high', 2, 5), band('M', 'low', 4, 4)])!.detail,
+        contains('Todas as outras faixas passaram em 100%.'),
+      );
+      expect(insight([band('L', 'high', 2, 5), band('M', 'low', 3, 4)])!.detail, contains('ficam em 75% ou mais'));
+    });
+
+    test('margem de 15 pontos entre a pior e as outras', () {
+      expect(insight([band('M', 'low', 6, 10), band('S', 'low', 74, 100)]), isNull);
+      expect(insight([band('M', 'low', 6, 10), band('S', 'low', 75, 100)]), isNotNull);
+    });
+
+    test('pior faixa em 75% ou mais não trava', () {
+      expect(insight([band('L', 'high', 3, 4), band('S', 'low', 10, 10)]), isNull);
+    });
+
+    test('complexidade ? não é elegível', () {
+      expect(insight([band('?', 'low', 0, 5), band('S', 'low', 5, 5)]), isNull);
+    });
+
+    test('empate de porcentagem: maior n, depois a primeira do arquivo', () {
+      expect(insight([band('M', 'low', 1, 4), band('L', 'high', 2, 8), band('S', 'low', 10, 10)])!.band, 'L:high');
+      expect(insight([band('M', 'low', 1, 4), band('L', 'high', 2, 8)])!.band, 'L:high');
+      expect(insight([band('M', 'low', 1, 4), band('L', 'high', 1, 4)])!.band, 'M:low');
+    });
+
+    test('faixa única elegível: detalhe sem a frase das outras', () {
+      final i = insight([band('M', 'low', 1, 4)]);
+      expect(
+        i!.detail,
+        'Nos ciclos deste projeto, só 1 de 4 passaram sem trocar de modelo. Vale quebrar essas tasks antes de implementar.',
+      );
+      expect(i.title, 'Tasks médias travam mais');
+    });
+
+    test('n < 3 é ignorada', () {
+      expect(insight([band('L', 'high', 0, 2), band('S', 'low', 5, 5)]), isNull);
+    });
+
+    test('routing.error e sem faixas', () {
+      expect(insight([band('L', 'high', 2, 5)], error: 'x'), isNull);
+      expect(insight(const []), isNull);
+    });
+  });
 }
+
+RoutingBand band(String c, String r, int pass, int n) =>
+    RoutingBand(complexity: c, risk: r, n: n, passTier0: pass, escalated: n - pass, blocked: 0, attemptsPerTask: 1);
