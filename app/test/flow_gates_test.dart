@@ -381,7 +381,7 @@ void main() {
 
       expect(_inCard(find.text(_gate)), findsOneWidget);
       expect(find.descendant(of: _side, matching: _card), findsOneWidget);
-      expect(find.text('Nenhum ciclo ativo. Comece com /kickoff ou /specify.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('cycle-start')), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -669,6 +669,22 @@ void main() {
         expect(_inNow(find.text('3 decisões antes de gerar as tasks')), findsNothing);
       });
     }
+
+    testWidgets('com dois gates abertos, um só Decidir no cartão e a sessão do segundo gate no Aguardando você', (
+      tester,
+    ) async {
+      await _openGamma(tester, size: const Size(1400 + _sidebar, 1400), withSpec: true);
+      // With the first gate's stage selected the panel shows its session, so the second gate's one is left to the card.
+      _router(tester).go('/p/$_gamma/flow?stage=challenge');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Decidir'), findsOneWidget);
+      expect(find.descendant(of: _action, matching: find.text('Decidir')), findsOneWidget);
+      expect(_inNow(find.text('Aprovar a spec?')), findsOneWidget);
+      expect(_byKey('flow-gate-request-spec'), findsOneWidget);
+      expect(_inCard(_byKey('awaiting-s-plan')), findsOneWidget);
+      expect(_byKey('awaiting-s-spec'), findsNothing);
+    });
 
     testWidgets(
       'com spec e plano abertos, a pergunta do plano continua respondível no painel e a sessão no Aguardando',

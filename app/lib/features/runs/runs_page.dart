@@ -26,21 +26,21 @@ class RunsPage extends StatelessWidget {
       child: BlocBuilder<StreamCubit<Project?>, AsyncSnapshot<Project?>>(
         builder: (context, snapshot) => snapshot.connectionState == ConnectionState.waiting
             ? const SizedBox.shrink()
-            : _RunsBody(projectName: projectName, cycle: snapshot.data?.cycle),
+            : _RunsBody(projectName: projectName, project: snapshot.data),
       ),
     );
   }
 }
 
 class _RunsBody extends StatelessWidget {
-  const _RunsBody({required this.projectName, required this.cycle});
+  const _RunsBody({required this.projectName, required this.project});
 
   final String projectName;
-  final Cycle? cycle;
+  final Project? project;
 
   @override
   Widget build(BuildContext context) {
-    final cycle = this.cycle;
+    final cycle = project?.cycle;
     if (cycle == null || cycle.runs.isEmpty) {
       return Center(
         child: Muted(
@@ -51,16 +51,17 @@ class _RunsBody extends StatelessWidget {
         ),
       );
     }
-    return _RunsView(projectName: projectName, cycle: cycle);
+    return _RunsView(projectName: projectName, project: project, cycle: cycle);
   }
 }
 
 enum _Mode { byRun, cycle }
 
 class _RunsView extends StatefulWidget {
-  const _RunsView({required this.projectName, required this.cycle});
+  const _RunsView({required this.projectName, required this.project, required this.cycle});
 
   final String projectName;
+  final Project? project;
   final Cycle cycle;
 
   @override
@@ -121,7 +122,15 @@ class _RunsViewState extends State<_RunsView> {
       final blocked = run.blockedTask;
       if (blocked != null && finalStatus[blocked.id] == Verdict.blocked) {
         items
-          ..add(DiagnosisPanel(task: blocked, onExpand: () => context.go('/p/$project/runs/${run.id}/${blocked.id}')))
+          ..add(
+            DiagnosisPanel(
+              key: ValueKey('diagnosis-${run.id}'),
+              task: blocked,
+              run: run,
+              project: widget.project,
+              onExpand: () => context.go('/p/$project/runs/${run.id}/${blocked.id}'),
+            ),
+          )
           ..add(const SizedBox(height: 16));
       }
       items.add(

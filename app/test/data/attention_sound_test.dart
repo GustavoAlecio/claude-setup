@@ -26,6 +26,16 @@ SessionSummary _session(String id, int pending) => SessionSummary(
   pendingPermissions: pending,
 );
 
+const _orphanGate = AttentionItem(
+  key: 'gate:p:plan:1',
+  title: 't',
+  body: 'b',
+  route: '/p/p/gate/plan',
+  kind: AttentionKind.gate,
+  project: 'p',
+  gate: 'plan',
+);
+
 final _t0 = DateTime.utc(2026, 1, 1, 12);
 
 void main() {
@@ -72,6 +82,14 @@ void main() {
       expect(shouldSound(empty, items, lastSound: _t0, at: _t0.add(kSoundInterval)), isTrue);
     });
 
+    test('ignora gate sem conversa', () {
+      expect(_orphanGate.isOrphanGate, isTrue);
+      expect(shouldSound(empty, const [_orphanGate], at: _t0), isFalse);
+      final before = AttentionSnapshot.of([_pending('a', 1)]);
+      expect(shouldSound(before, [_pending('a', 1), _orphanGate], at: _t0), isFalse);
+      expect(shouldSound(before, [_pending('a', 2), _orphanGate], at: _t0), isTrue);
+    });
+
     test('kSoundInterval is 3 seconds', () {
       expect(kSoundInterval, const Duration(seconds: 3));
     });
@@ -82,6 +100,12 @@ void main() {
       final snap = AttentionSnapshot.of([_pending('a:b:c', 4), _blocked('p:r:T1')]);
       expect(snap.pending, {'a:b:c': 4});
       expect(snap.blocked, {'blocked:p:r:T1'});
+    });
+
+    test('a gate without a session does not throw and counts in neither set', () {
+      final snap = AttentionSnapshot.of([_orphanGate, _pending('a', 1)]);
+      expect(snap.pending, {'a': 1});
+      expect(snap.blocked, isEmpty);
     });
 
     test('round trip over pendingAttention', () {

@@ -89,7 +89,12 @@ class _GatePageState extends State<GatePage> {
     final projects = context.watch<ProjectsCubit>().state.data;
     final config = context.watch<ConfigCubit>().state.data;
     final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
-    final items = projects == null ? const <AttentionItem>[] : pendingAttention(sessions, projects);
+    // Only what can be answered: a gate without a conversation is not a step of this walk.
+    final items = [
+      if (projects != null)
+        for (final i in pendingAttention(sessions, projects))
+          if (!i.isOrphanGate) i,
+    ];
     final header = _Header(
       onBack: () => context.go(gateBackTarget(widget.project, widget.backTo(), config, projects)),
       items: items,

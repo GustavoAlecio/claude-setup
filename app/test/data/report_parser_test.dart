@@ -1392,6 +1392,43 @@ void main() {
       );
     });
 
+    test('running mais antiga vence idle mais nova; só paradas dão idle com a mais nova', () {
+      final now = cycleNow(project(report: [_stage('plan')]), [
+        _session('velha', '/plan', createdAt: '2026-03-10T09:00:00Z'),
+        _session('nova', '/tasks', status: SessionStatus.idle, createdAt: '2026-03-10T11:00:00Z'),
+      ]);
+      expect(now.kind, CycleNowKind.running);
+      expect(now.route, '/p/alpha/sessions/velha');
+
+      final idle = cycleNow(project(report: [_stage('plan')]), [
+        _session('velha', '/plan', status: SessionStatus.idle, createdAt: '2026-03-10T09:00:00Z'),
+        _session('nova', '/tasks', status: SessionStatus.idle, createdAt: '2026-03-10T11:00:00Z'),
+      ]);
+      expect(idle.kind, CycleNowKind.idle);
+      expect(idle.route, '/p/alpha/sessions/nova');
+    });
+
+    test('cardGate e o kind gate andam juntos: bloqueio, dois gates e relatório de outro ciclo', () {
+      void expectEquivalent(Project p, {required bool gate}) {
+        expect(cardGate(p) != null, gate);
+        expect(cycleNow(p, const []).kind == CycleNowKind.gate, gate);
+      }
+
+      expectEquivalent(project(report: [gateStage()]), gate: true);
+      expectEquivalent(project(stage: Stage.implement, runs: [blockedRun], report: [gateStage()]), gate: false);
+      expectEquivalent(project(report: [gateStage()], current: false), gate: false);
+
+      final two = project(
+        report: [
+          gateStage(gate: 'spec'),
+          gateStage(),
+        ],
+      );
+      expectEquivalent(two, gate: true);
+      expect(cardGate(two)!.gate!.name, 'spec');
+      expect(cycleNow(two, const []).route, '/p/alpha/gate/spec');
+    });
+
     test('relatório de outro ciclo tira done e next', () {
       final done = project(stage: Stage.complete, report: [_stage('complete')], current: false);
       expect(cycleNow(done, const []).kind, CycleNowKind.waiting);

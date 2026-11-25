@@ -375,7 +375,7 @@ void main() {
       );
 
       expect(find.byKey(const ValueKey('stage-banner')), findsNothing);
-      expect(find.text('Nenhum ciclo ativo. Comece com /kickoff ou /specify.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('cycle-start')), findsOneWidget);
     });
   });
 

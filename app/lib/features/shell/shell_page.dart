@@ -103,7 +103,7 @@ class _ShellPageState extends State<ShellPage> {
     }, config);
     final activities = orgActivities(sessions, projects, config, org);
     final activitiesPending = activities.fold(0, (sum, s) => sum + pendingOf(s));
-    final pending = withDecisions(pendingByProject(sessions), projects);
+    final pending = withDecisions(pendingByProject(sessions), projects, sessions);
     final location = switch (scope) {
       ShellProjectScope(:final name) => Uri(pathSegments: ['', 'p', name]).toString(),
       ShellOrgScope(:final org) => Uri(pathSegments: ['', 'o', org]).toString(),
@@ -238,7 +238,7 @@ class _Sidebar extends StatelessWidget {
               label: 'Caixa de entrada',
               location: orgQueueLocation(org),
               selected: scope is ShellOrgScope,
-              pending: pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org),
+              pending: pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org, sessions),
             ),
             const SizedBox(height: 12),
           ] else if (hasActivities) ...[
@@ -372,7 +372,7 @@ class _OrgHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final total = pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org);
+    final total = pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org, sessions);
     return PopupMenuButton<String>(
       tooltip: 'Trocar org',
       position: PopupMenuPosition.under,
@@ -388,8 +388,8 @@ class _OrgHeader extends StatelessWidget {
                 SizedBox(width: 16, child: name == org ? Icon(Icons.check, size: 14, color: c.accent) : null),
                 const SizedBox(width: 8),
                 Expanded(child: Text(name, style: const TextStyle(fontSize: 13))),
-                if (pendingInOrg(sessions, projects, config, name) + decisionsInOrg(projects, name) case final n
-                    when n > 0) ...[
+                if (pendingInOrg(sessions, projects, config, name) + decisionsInOrg(projects, name, sessions)
+                    case final n when n > 0) ...[
                   _CountBadge(n),
                   const SizedBox(width: 8),
                 ],

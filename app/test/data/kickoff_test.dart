@@ -23,6 +23,38 @@ void main() {
     });
   });
 
+  group('startCommand', () {
+    const ado = OrgTracker(kind: TrackerKind.ado, org: 'o', project: 'p');
+    const jira = OrgTracker(kind: TrackerKind.jira, site: 's', project: 'LC', email: 'e');
+
+    test('blank text is null', () {
+      expect(startCommand('', ado), isNull);
+      expect(startCommand('  \n\t ', null), isNull);
+    });
+
+    test('a lone card ID of the tracker goes by the tracker form', () {
+      expect(startCommand('4821', ado), '/kickoff 4821');
+      expect(startCommand(' #4821 ', ado), '/kickoff 4821');
+      expect(startCommand('lc-101', jira), '/kickoff LC-101');
+    });
+
+    test('a phrase with the number in the middle is the manual form', () {
+      expect(startCommand('corrigir o card 4821', ado), '/kickoff --manual\n\ncorrigir o card 4821');
+    });
+
+    test('without tracker a number is a description', () {
+      expect(startCommand('4821', null), '/kickoff --manual\n\n4821');
+    });
+
+    test('an ID the tracker does not accept is a description', () {
+      expect(startCommand('LC-101', ado), '/kickoff --manual\n\nLC-101');
+    });
+
+    test('manual description is trimmed and keeps inner line breaks', () {
+      expect(startCommand('  linha 1\nlinha 2 \n', jira), '/kickoff --manual\n\nlinha 1\nlinha 2');
+    });
+  });
+
   group('normalizeCardId', () {
     const ado = OrgTracker(kind: TrackerKind.ado, org: 'o', project: 'p');
     const jira = OrgTracker(kind: TrackerKind.jira, site: 's', project: 'LC', email: 'e');

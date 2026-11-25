@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/theme/app_colors.dart';
+import 'package:claude_flow/data/attention.dart';
 import 'package:claude_flow/data/flow_aggregates.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
@@ -191,11 +192,12 @@ Future<(_Flow, _Sessions)> _open(
   Map<String, List<SessionEvent>> events = const {},
   String gate = 'plan',
   String? from,
+  List<Project> others = const [],
 }) async {
   tester.view.physicalSize = const Size(1400, 1000);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final flow = _Flow([_gamma(report)]);
+  final flow = _Flow([_gamma(report), ...others]);
   final repo = _Sessions(sessions, events);
   await tester.pumpWidget(ClaudeFlowApp(repository: flow, sessions: repo, engine: const MockEngineController()));
   await tester.pumpAndSettle();
@@ -237,9 +239,11 @@ Future<(_Flow, _Sessions)> _deciding(
   WidgetTester tester, {
   List<Question>? questions,
   List<SessionSummary> also = const [],
+  List<Project> others = const [],
 }) => _open(
   tester,
   report: _report(),
+  others: others,
   sessions: [_session('s-plan'), ...also],
   events: {
     's-plan': [_request(questions ?? _showQuestions())],
@@ -701,6 +705,43 @@ void main() {
       flow.current = [_gamma(_report(plan: (gate) => gate['status'] = 'approved'))];
       await tester.pumpAndSettle();
       expect(_location(tester), '/p/gamma/flow');
+    });
+
+    testWidgets('tela do gate ignora gates sem conversa', (tester) async {
+      const other = Project(
+        name: 'alpha',
+        path: '/synthetic/alpha',
+        cycle: Cycle(
+          stage: Stage.plan,
+          runs: [],
+          stageMinutes: {},
+          reportIsCurrent: true,
+          report: ReportDoc(
+            feature: 'Pagina alpha',
+            startedAt: null,
+            stages: [
+              StageReport(
+                stage: Stage.plan,
+                status: ReportStatus.running,
+                gate: ReportGate(name: 'plan', status: GateStatus.open),
+              ),
+            ],
+          ),
+        ),
+      );
+      final (flow, sessions) = await _deciding(tester, others: [other]);
+      final orphans = pendingAttention(sessions.summaries.values.toList(), flow.projects).where((i) => i.isOrphanGate);
+      expect(orphans.map((i) => i.route), ['/p/gamma/gate/spec', '/p/alpha/gate/plan']);
+
+      expect(find.text('Pendência 1 de 1'), findsOneWidget);
+      expect(_key('gate-skip'), findsNothing);
+      expect(find.text('Pular'), findsNothing);
+
+      await _answerAll(tester);
+      await _tap(tester, 'gate-send');
+      flow.current = [_gamma(_report(plan: (gate) => gate['status'] = 'approved')), other];
+      await tester.pumpAndSettle();
+      expect(_location(tester), '/p/$_project/flow');
     });
 
     testWidgets('approved depois do envio, sem pendência, vai para o Fluxo do projeto', (tester) async {

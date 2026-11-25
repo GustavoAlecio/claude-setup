@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/data/flow_aggregates.dart';
 import 'package:claude_flow/data/github_models.dart';
 import 'package:claude_flow/data/github_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
@@ -56,6 +57,31 @@ Project _loja() => Project(
         tasks: [_blockedTask()],
       ),
     ],
+  ),
+);
+
+/// `loja` with [gates] open and no session behind them.
+Project _orphaned(List<String> gates) => Project(
+  name: 'loja',
+  path: '$_root/loja',
+  cycle: Cycle(
+    stage: Stage.plan,
+    feature: 'Carrinho',
+    stageMinutes: const {},
+    runs: const [],
+    reportIsCurrent: true,
+    report: ReportDoc(
+      feature: 'Carrinho',
+      startedAt: null,
+      stages: [
+        for (final gate in gates)
+          StageReport(
+            stage: kGateOwner[gate]!,
+            status: ReportStatus.running,
+            gate: ReportGate(name: gate, status: GateStatus.open),
+          ),
+      ],
+    ),
   ),
 );
 
@@ -188,6 +214,51 @@ void main() {
       await tester.tap(_in('inbox-row-2', find.text('Ajusta frete')));
       await tester.pumpAndSettle();
       expect(_location(tester), '/p/loja/prs');
+    });
+
+    group('gate sem conversa entra na Caixa e na contagem', () {
+      const body = 'A conversa deste gate não está aberta no app.';
+
+      testWidgets('um gate: uma linha, Decidir leva ao gate, a barra lateral conta 1', (tester) async {
+        await _open(
+          tester,
+          projects: [
+            _orphaned(const ['plan']),
+          ],
+        );
+
+        for (final text in ['loja · Carrinho', 'Aprovar o plano?', body, 'Decidir']) {
+          expect(_in('inbox-row-0', find.text(text)), findsOneWidget, reason: text);
+        }
+        expect(_key('inbox-row-1'), findsNothing);
+        expect(_key('inbox-empty'), findsNothing);
+        expect(tester.widget<Text>(_key('sidebar-home-count')).data, '1');
+        expect(_key('project-pending-loja'), findsOneWidget);
+
+        await tester.tap(_key('inbox-row-0-action'));
+        await tester.pumpAndSettle();
+        expect(_location(tester), '/p/loja/gate/plan');
+      });
+
+      testWidgets('dois gates: duas linhas e a barra lateral conta 2', (tester) async {
+        await _open(
+          tester,
+          projects: [
+            _orphaned(const ['plan', 'spec']),
+          ],
+        );
+
+        expect(_in('inbox-row-0', find.text('Aprovar a spec?')), findsOneWidget);
+        expect(_in('inbox-row-1', find.text('Aprovar o plano?')), findsOneWidget);
+        expect(_in('inbox-waiting', find.text('Decidir')), findsNWidgets(2));
+        expect(_key('inbox-row-2'), findsNothing);
+        expect(tester.widget<Text>(_key('sidebar-home-count')).data, '2');
+        expect(_key('project-pending-loja'), findsOneWidget);
+
+        await tester.tap(_key('inbox-row-1-action'));
+        await tester.pumpAndSettle();
+        expect(_location(tester), '/p/loja/gate/plan');
+      });
     });
 
     testWidgets('nothing pending shows the empty line and no row', (tester) async {

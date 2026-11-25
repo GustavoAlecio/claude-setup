@@ -1,15 +1,34 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../app/config_cubit.dart';
+import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/primitives.dart';
+import '../../core/widgets/session_launcher.dart';
+import '../../data/flow_aggregates.dart';
+import '../../data/kickoff.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
+import '../../data/session_models.dart';
+import '../launcher/command_palette.dart';
 
 const _actions = {
   'fix_spec': ('Corrigir spec', '/challenge-spec'),
   'replan': ('Replanejar', '/plan'),
   'fix_environment': ('Corrigir ambiente', '/implement'),
   'split_task': ('Quebrar task', '/tasks'),
-  'human_takeover': ('Assumir a task', null),
+  _takeover: ('Assumir a task', null),
+};
+
+const _takeover = 'human_takeover';
+
+const _notes = {
+  DiagnosisKind.answer: 'A conversa da etapa já está perguntando isto: responda lá.',
+  DiagnosisKind.busy: 'Já há uma conversa do pipeline rodando neste projeto.',
 };
 
 const _reasons = {
@@ -21,17 +40,86 @@ const _reasons = {
       'Um agente caiu (parado, limite de uso ou erro de API). Não diz nada sobre a task: rode /implement de novo.',
 };
 
-class DiagnosisPanel extends StatelessWidget {
-  const DiagnosisPanel({super.key, required this.task, this.onExpand});
+/// The decision buttons do what [diagnosisMode] says for [task] in [run].
+class DiagnosisPanel extends StatefulWidget {
+  const DiagnosisPanel({super.key, required this.task, required this.run, required this.project, this.onExpand});
 
   final TaskRun task;
+  final Run run;
+
+  /// `null` while the project is unknown: the buttons do nothing.
+  final Project? project;
 
   /// Set when the panel is shown outside the task detail: only the top hypothesis is rendered.
   final VoidCallback? onExpand;
 
   @override
+  State<DiagnosisPanel> createState() => _DiagnosisPanelState();
+}
+
+class _DiagnosisPanelState extends State<DiagnosisPanel> with SessionLauncher<DiagnosisPanel> {
+  String? _pathError;
+  String? _lastKey;
+
+  @override
+  String get logName => 'DiagnosisPanel';
+
+  void _launch(Project project, String action, String command) {
+    final config = context.read<ConfigCubit>().state.data;
+    final cwd = project.path;
+    if (cwd == null) {
+      setState(() => _pathError = missingProjectPathError(project));
+      return;
+    }
+    final key = '${widget.task.id}:$action';
+    setState(() {
+      _pathError = null;
+      _lastKey = key;
+    });
+    unawaited(
+      launchSession(
+        key,
+        project.name,
+        command,
+        cwd: cwd,
+        githubAccount: githubFor(project.org, config).account,
+        permissionMode: effectivePermissionMode(null, project.org, config),
+      ),
+    );
+  }
+
+  VoidCallback? _onPressed(DiagnosisMode mode, String action) {
+    final project = widget.project;
+    if (project == null || mode.kind == DiagnosisKind.inert || isCreatingAny) return null;
+    if (action == _takeover) return () => showCommandPalette(context, ProjectTarget(project));
+    final command = _actions[action]?.$2;
+    if (command == null) return null;
+    return switch (mode.kind) {
+      DiagnosisKind.launch => () => _launch(project, action, command),
+      DiagnosisKind.answer => () => context.go(mode.route!),
+      DiagnosisKind.busy || DiagnosisKind.inert => null,
+    };
+  }
+
+  Widget _button(DiagnosisMode mode, Hypothesis h, {required bool primary}) => _ActionButton(
+    buttonKey: ValueKey(
+      widget.onExpand == null ? 'diagnosis-action-${h.action}' : 'diagnosis-action-${widget.run.id}-${h.action}',
+    ),
+    action: h.action,
+    primary: primary,
+    onPressed: _onPressed(mode, h.action),
+  );
+
+  @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final task = widget.task;
+    final onExpand = widget.onExpand;
+    final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
+    final mode = diagnosisMode(widget.project, task, widget.run, sessions);
+    final note = _notes[mode.kind];
+    final lastKey = _lastKey;
+    final error = _pathError ?? (lastKey == null ? null : createError(lastKey));
     final ranked = [...task.diagnosis]..sort((a, b) => b.confidence.compareTo(a.confidence));
     return Container(
       decoration: BoxDecoration(
@@ -56,7 +144,12 @@ class DiagnosisPanel extends StatelessWidget {
           Muted(_reasons[task.blockedReason] ?? '', size: 12),
           const SizedBox(height: 14),
           if (onExpand != null && ranked.isNotEmpty)
-            _CompactTop(h: ranked.first, others: ranked.length - 1, onExpand: onExpand!)
+            _CompactTop(
+              h: ranked.first,
+              others: ranked.length - 1,
+              onExpand: onExpand,
+              button: _button(mode, ranked.first, primary: true),
+            )
           else
             IntrinsicHeight(
               child: Row(
@@ -65,10 +158,28 @@ class DiagnosisPanel extends StatelessWidget {
                   for (final (i, h) in ranked.indexed) ...[
                     if (i > 0) const SizedBox(width: 12),
                     Expanded(
-                      child: _HypothesisCard(h: h, top: i == 0),
+                      child: _HypothesisCard(
+                        h: h,
+                        top: i == 0,
+                        button: _button(mode, h, primary: i == 0),
+                      ),
                     ),
                   ],
                 ],
+              ),
+            ),
+          if (note != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Muted(note, key: const ValueKey('diagnosis-note'), size: 12),
+            ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                error,
+                key: const ValueKey('diagnosis-error'),
+                style: TextStyle(fontSize: 12, color: c.fail),
               ),
             ),
         ],
@@ -78,10 +189,11 @@ class DiagnosisPanel extends StatelessWidget {
 }
 
 class _HypothesisCard extends StatelessWidget {
-  const _HypothesisCard({required this.h, required this.top});
+  const _HypothesisCard({required this.h, required this.top, required this.button});
 
   final Hypothesis h;
   final bool top;
+  final Widget button;
 
   @override
   Widget build(BuildContext context) {
@@ -129,10 +241,7 @@ class _HypothesisCard extends StatelessWidget {
             ),
           const Spacer(),
           const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: _ActionButton(action: h.action, primary: top),
-          ),
+          SizedBox(width: double.infinity, child: button),
         ],
       ),
     );
@@ -140,11 +249,12 @@ class _HypothesisCard extends StatelessWidget {
 }
 
 class _CompactTop extends StatelessWidget {
-  const _CompactTop({required this.h, required this.others, required this.onExpand});
+  const _CompactTop({required this.h, required this.others, required this.onExpand, required this.button});
 
   final Hypothesis h;
   final int others;
   final VoidCallback onExpand;
+  final Widget button;
 
   @override
   Widget build(BuildContext context) {
@@ -176,7 +286,7 @@ class _CompactTop extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          SizedBox(width: 200, child: _ActionButton(action: h.action, primary: true)),
+          SizedBox(width: 200, child: button),
           const SizedBox(width: 8),
           TextButton(
             onPressed: onExpand,
@@ -189,23 +299,26 @@ class _CompactTop extends StatelessWidget {
 }
 
 class _ActionButton extends StatelessWidget {
-  const _ActionButton({required this.action, required this.primary});
+  const _ActionButton({required this.buttonKey, required this.action, required this.primary, required this.onPressed});
 
+  final Key buttonKey;
   final String action;
   final bool primary;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final (label, command) = _actions[action] ?? (action, null);
     return OutlinedButton(
+      key: buttonKey,
       style: OutlinedButton.styleFrom(
         foregroundColor: primary ? c.accent : c.textSecondary,
-        side: BorderSide(color: primary ? c.accent : c.borderStrong),
+        side: BorderSide(color: onPressed == null ? c.border : (primary ? c.accent : c.borderStrong)),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
         padding: const EdgeInsets.symmetric(vertical: 12),
       ),
-      onPressed: () {},
+      onPressed: onPressed,
       child: Text(command == null ? label : '$label  $command', style: const TextStyle(fontSize: 12)),
     );
   }

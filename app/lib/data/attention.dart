@@ -34,7 +34,7 @@ class AttentionItem {
   /// `null` for an org session.
   final String? project;
 
-  /// `null` for [AttentionKind.blocked].
+  /// `null` for [AttentionKind.blocked] and for a gate without a conversation ([isOrphanGate]).
   final String? sessionId;
 
   /// Pending requests of the session in [AttentionKind.gate] and [AttentionKind.request]; 0 otherwise.
@@ -42,6 +42,10 @@ class AttentionItem {
 
   /// Gate name when [kind] is [AttentionKind.gate].
   final String? gate;
+
+  /// An open gate whose conversation is not open in the app: it counts and shows in the inbox, but there is nothing
+  /// to answer, so it neither notifies nor plays the alert.
+  bool get isOrphanGate => kind == AttentionKind.gate && sessionId == null;
 }
 
 String sessionRoute(SessionSummary s) =>
@@ -58,7 +62,8 @@ String _where(SessionSummary s) => s.isOrgSession ? s.org! : s.project;
   return (gate: null, route: sessionRoute(s));
 }
 
-/// What is waiting on the user right now: sessions with pending requests and projects stopped on a decision.
+/// What is waiting on the user right now: sessions with pending requests, open gates without a conversation and
+/// projects stopped on a decision.
 List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project> projects) => [
   for (final s in sessions)
     if (pendingOf(s) > 0)
@@ -74,6 +79,16 @@ List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project
           pending: s.pendingPermissions,
           gate: target.gate,
         ),
+  for (final (:project, :stage) in orphanGates(sessions, projects))
+    AttentionItem(
+      key: 'gate:${project.name}:${stage.gate!.name}:${stage.gate!.round}',
+      title: 'Gate aberto · ${project.name}',
+      body: 'A conversa deste gate não está aberta no app.',
+      route: gateLocation(project.name, stage.gate!.name),
+      kind: AttentionKind.gate,
+      project: project.name,
+      gate: stage.gate!.name,
+    ),
   for (final p in projects)
     if (!p.hidden)
       if (blockedDecision(p) case final decision?)
@@ -87,7 +102,8 @@ List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project
         ),
 ];
 
-/// Pending requests per session id and the keys of the blocked items; finished turns do not count.
+/// Pending requests per session id and the keys of the blocked items; finished turns and gates without a
+/// conversation do not count.
 class AttentionSnapshot {
   const AttentionSnapshot({required this.pending, required this.blocked});
 
@@ -97,7 +113,7 @@ class AttentionSnapshot {
     for (final item in items) {
       switch (item.kind) {
         case AttentionKind.gate || AttentionKind.request:
-          pending[item.sessionId!] = item.pending;
+          if (item.sessionId case final id?) pending[id] = item.pending;
         case AttentionKind.blocked:
           blocked.add(item.key);
         case AttentionKind.finished:
@@ -151,6 +167,7 @@ List<AttentionItem> finishedTurns(Map<String, SessionStatus> before, List<Sessio
 /// Dock badge: everything [pendingAttention] lists.
 int attentionCount(List<SessionSummary> sessions, List<Project> projects) =>
     sessions.fold(0, (sum, s) => sum + pendingOf(s)) +
+    orphanGates(sessions, projects).length +
     projects.where((p) => !p.hidden && blockedDecision(p) != null).length;
 
 /// The org at a glance (the inbox footer and its next-item walk): what waits on the user, what is running, cycles in progress, cycles done.

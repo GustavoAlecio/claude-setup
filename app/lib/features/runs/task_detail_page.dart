@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../app/projects_cubit.dart';
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
@@ -31,9 +32,10 @@ class TaskDetailPage extends StatelessWidget {
       child: BlocBuilder<StreamCubit<Run?>, AsyncSnapshot<Run?>>(
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const SizedBox.shrink();
-          final task = snapshot.data?.tasks.where((t) => t.id == taskId).firstOrNull;
-          if (task == null) return const Center(child: Muted('Task não encontrada.'));
-          return _TaskView(projectName: projectName, task: task);
+          final run = snapshot.data;
+          final task = run?.tasks.where((t) => t.id == taskId).firstOrNull;
+          if (run == null || task == null) return const Center(child: Muted('Task não encontrada.'));
+          return _TaskView(projectName: projectName, run: run, task: task);
         },
       ),
     );
@@ -41,9 +43,10 @@ class TaskDetailPage extends StatelessWidget {
 }
 
 class _TaskView extends StatelessWidget {
-  const _TaskView({required this.projectName, required this.task});
+  const _TaskView({required this.projectName, required this.run, required this.task});
 
   final String projectName;
+  final Run run;
   final TaskRun task;
 
   @override
@@ -103,7 +106,16 @@ class _TaskView extends StatelessWidget {
           _LiveSection(projectName: projectName, task: task),
           const SizedBox(height: 20),
         ],
-        if (task.status == Verdict.blocked) ...[DiagnosisPanel(task: task), const SizedBox(height: 20)],
+        if (task.status == Verdict.blocked) ...[
+          DiagnosisPanel(
+            task: task,
+            run: run,
+            project: context.select<ProjectsCubit, Project?>(
+              (c) => c.state.data?.where((p) => p.name == projectName).firstOrNull,
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
         Text('Tentativas', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 10),
         SingleChildScrollView(
