@@ -311,7 +311,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('subtab-metrics')));
       await tester.pumpAndSettle();
       expect(_route(tester), '/p/demo-app/metrics');
-      expect(find.text('nenhum ciclo registrado'), findsOneWidget);
+      expect(find.byKey(const ValueKey('metrics-show-cycles')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('subtab-adrs')));
       await tester.pumpAndSettle();

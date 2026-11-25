@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'inventory_models.dart';
 import 'metrics_models.dart';
 import 'report_models.dart';
 
@@ -242,3 +243,75 @@ ProjectMetrics projectSummary(List<CycleMetrics> cycles) {
 /// Ciclo arquivado mais recente com `report.json`; o ciclo atual não conta (o Fluxo já o mostra).
 CycleMetrics? lastCycleWithReport(ProjectMetrics metrics) =>
     metrics.cycles.where((c) => !c.current && c.report != null).firstOrNull;
+
+const _sizeOrder = ['S', 'M', 'L'];
+
+String bandLabel(String complexity, String risk) {
+  final size = switch (complexity) {
+    'S' => 'Pequena',
+    'M' => 'Média',
+    'L' => 'Grande',
+    '?' => 'Sem tamanho',
+    _ => complexity,
+  };
+  return risk == 'high' ? '$size, risco alto' : size;
+}
+
+int bandPercent(RoutingBand b) => b.n == 0 ? 0 : b.passTier0 * 100 ~/ b.n;
+
+String bandId(RoutingBand b) => '${b.complexity}:${b.risk}';
+
+/// Rounded half-up; the file is external, so passes above n clamp to 100.
+int bandRowPercent(RoutingBand b) => b.n == 0 ? 0 : ((2 * b.passTier0 * 100 + b.n) ~/ (2 * b.n)).clamp(0, 100);
+
+List<RoutingBand> orderedBands(List<RoutingBand> bands) {
+  int riskRank(String r) => r == 'low' ? 0 : (r == 'high' ? 1 : 2);
+  final out = <RoutingBand>[];
+  for (final size in _sizeOrder) {
+    final group = bands.where((b) => b.complexity == size).toList();
+    final low = group.where((b) => b.risk == 'low');
+    final high = group.where((b) => b.risk == 'high');
+    final rest = group.where((b) => riskRank(b.risk) == 2);
+    out.addAll([...low, ...high, ...rest]);
+  }
+  out.addAll(bands.where((b) => !_sizeOrder.contains(b.complexity)));
+  return out;
+}
+
+({String title, String detail, String band})? metricsInsight(Routing routing) {
+  if (routing.error != null) return null;
+  final eligible = [
+    for (final b in routing.bands)
+      if (b.n >= 3 && b.complexity != '?') b,
+  ];
+  if (eligible.isEmpty) return null;
+  var worst = eligible.first;
+  for (final b in eligible.skip(1)) {
+    final d = bandPercent(b) - bandPercent(worst);
+    if (d < 0 || (d == 0 && b.n > worst.n)) worst = b;
+  }
+  if (worst.passTier0 * 100 >= 75 * worst.n) return null;
+  // Faixas empatadas com a pior são co-piores: não entram na margem nem no "ou mais".
+  final others = eligible.where((b) => bandPercent(b) > bandPercent(worst)).toList();
+  for (final o in others) {
+    if (bandPercent(o) - bandPercent(worst) < 15) return null;
+  }
+  final plural = switch (worst.complexity) {
+    'S' => 'pequenas',
+    'M' => 'médias',
+    'L' => 'grandes',
+    final c => c,
+  };
+  final risk = worst.risk == 'high' ? ' e de risco alto' : '';
+  final detail = StringBuffer(
+    'Nos ciclos deste projeto, só ${worst.passTier0} de ${worst.n} passaram sem trocar de modelo.',
+  );
+  if (others.isNotEmpty) {
+    final p = others.map(bandPercent).reduce((a, b) => a < b ? a : b);
+    detail.write(
+      p == 100 ? ' Todas as outras faixas passaram em 100%.' : ' Todas as outras faixas ficam em $p% ou mais.',
+    );
+  }
+  detail.write(' Vale quebrar essas tasks antes de implementar.');
+  return (title: 'Tasks $plural$risk travam mais', detail: detail.toString(), band: bandId(worst));
+}
