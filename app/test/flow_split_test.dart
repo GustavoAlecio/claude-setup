@@ -459,8 +459,8 @@ void main() {
   testWidgets('responder a pergunta no painel chama answer', (tester) async {
     final sessions = await _open(tester, _withCycle(_twoStages), list, logs);
 
-    await tester.ensureVisible(_inFeed(find.text('Aprovar (Recommended)')));
-    await tester.tap(_inFeed(find.text('Aprovar (Recommended)')));
+    await tester.ensureVisible(_inFeed(find.text('Aprovar')));
+    await tester.tap(_inFeed(find.text('Aprovar')));
     await tester.pumpAndSettle();
     await tester.tap(_inFeed(find.text('Responder')));
     await tester.pumpAndSettle();

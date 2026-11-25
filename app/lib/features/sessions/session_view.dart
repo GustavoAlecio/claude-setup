@@ -94,14 +94,24 @@ class LiveSessionSummary extends StatelessWidget {
   }
 }
 
-class _SessionBody extends StatelessWidget {
+class _SessionBody extends StatefulWidget {
   const _SessionBody({required this.session, required this.requestOverride});
 
   final SessionSummary session;
   final RequestOverride? requestOverride;
 
   @override
+  State<_SessionBody> createState() => _SessionBodyState();
+}
+
+class _SessionBodyState extends State<_SessionBody> {
+  /// Work blocks the user toggled, by position in `feedBlocks`; the others follow `workOpenByDefault`.
+  final _open = <int, bool>{};
+
+  @override
   Widget build(BuildContext context) {
+    final session = widget.session;
+    final requestOverride = widget.requestOverride;
     final detail = context.watch<SessionCubit>().state.data;
     final s = detail?.summary ?? session;
     final sessions = SessionsScope.of(context);
@@ -111,6 +121,8 @@ class _SessionBody extends StatelessWidget {
     Future<void> answer(String requestId, PermissionDecision decision, {Map<String, String>? answers}) =>
         sessionAction(context, () => sessions.answer(s.id, requestId, decision, answers: answers));
     final agy = s.provider == AgentProvider.antigravity;
+    final blocks = feedBlocks(events);
+    bool isOpen(int i) => _open[i] ?? workOpenByDefault(blocks, i, s.status);
     // A link to a file the agent wrote ("artefato de sessão") opens it here; anything else keeps the default.
     void onLink(Uri uri) {
       final name = artifactLinkName(uri);
@@ -120,6 +132,25 @@ class _SessionBody extends StatelessWidget {
         unawaited(showSessionArtifact(context, s.id, name));
       }
     }
+
+    // Opening a block inserts or removes children mid-list; stable keys keep the State of the cards below it.
+    final eventIndex = Map<SessionEvent, int>.identity()..addEntries(events.indexed.map((p) => MapEntry(p.$2, p.$1)));
+    Key eventKey(SessionEvent e) => switch (e) {
+      PendingRequest() => ValueKey('req-${e.requestId}'),
+      _ => ValueKey('ev-${eventIndex[e]}'),
+    };
+
+    Widget eventView(SessionEvent e) =>
+        (e is QuestionRequest && detail != null ? requestOverride?.call(detail, e) : null) ??
+        SessionEventView(
+          e,
+          onAnswer: answer,
+          onLink: agy ? onLink : null,
+          attachmentUri: (name) => sessions.attachmentUri(s.id, name),
+          failureActions: identical(e, events.last) && s.status == SessionStatus.idle
+              ? _FailureActions(session: s)
+              : null,
+        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -136,30 +167,48 @@ class _SessionBody extends StatelessWidget {
           child: _Feed(
             version: (detail?.lastSeq, events.length, partialText.length, partialThinking.length, s.status),
             children: [
-              if (s.isOrgSession) ...[_Directories(session: s), const SizedBox(height: 16)],
-              for (final e in events)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child:
-                      (e is QuestionRequest && detail != null ? requestOverride?.call(detail, e) : null) ??
-                      SessionEventView(
-                        e,
-                        onAnswer: answer,
-                        onLink: agy ? onLink : null,
-                        attachmentUri: (name) => sessions.attachmentUri(s.id, name),
-                        failureActions: identical(e, events.last) && s.status == SessionStatus.idle
-                            ? _FailureActions(session: s)
-                            : null,
+              if (s.isOrgSession) ...[
+                _Directories(key: const ValueKey('directories'), session: s),
+                const SizedBox(key: ValueKey('directories-gap'), height: 16),
+              ],
+              for (final (i, block) in blocks.indexed)
+                if (block.work) ...[
+                  Padding(
+                    key: ValueKey('work-$i'),
+                    padding: EdgeInsets.only(bottom: isOpen(i) ? 0 : 12),
+                    child: _WorkHeader(
+                      index: i,
+                      block: block,
+                      open: isOpen(i),
+                      onToggle: (v) => setState(() => _open[i] = v),
+                    ),
+                  ),
+                  if (isOpen(i))
+                    for (final (j, e) in block.events.indexed)
+                      Padding(
+                        key: eventKey(e),
+                        padding: EdgeInsets.only(top: 8, bottom: j == block.events.length - 1 ? 12 : 0),
+                        child: eventView(e),
                       ),
-                ),
+                ] else
+                  Padding(
+                    key: eventKey(block.events.single),
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: eventView(block.events.single),
+                  ),
               if (partialThinking.isNotEmpty)
-                Padding(padding: const EdgeInsets.only(bottom: 12), child: Muted('pensando… $partialThinking')),
+                Padding(
+                  key: const ValueKey('partial-thinking'),
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Muted('pensando… $partialThinking'),
+                ),
               if (partialText.isNotEmpty)
                 Padding(
+                  key: const ValueKey('partial-text'),
                   padding: const EdgeInsets.only(bottom: 12),
                   child: SessionEventView(AssistantText('', partialText), onAnswer: answer),
                 ),
-              if (s.status == SessionStatus.running && partialText.isEmpty) const _Typing(),
+              if (s.status == SessionStatus.running && partialText.isEmpty) const _Typing(key: ValueKey('typing')),
             ],
           ),
         ),
@@ -180,6 +229,45 @@ class _SessionBody extends StatelessWidget {
           onSend: (text, images) => sessionAction(context, () => sessions.send(s.id, text, images: images)),
         ),
       ],
+    );
+  }
+}
+
+/// Header line of a run of tool calls and thinking; [open] is owned by the feed, which lays the block's events out
+/// as its own lazy children.
+class _WorkHeader extends StatelessWidget {
+  const _WorkHeader({required this.index, required this.block, required this.open, required this.onToggle});
+
+  final int index;
+  final FeedBlock block;
+  final bool open;
+  final ValueChanged<bool> onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final color = block.errors > 0 ? c.fail : c.textSecondary;
+    return InkWell(
+      key: ValueKey('session-work-$index'),
+      onTap: () => onToggle(!open),
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Icon(open ? Icons.expand_more : Icons.chevron_right, size: 16, color: color),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                workLine(block.steps, block.seconds, errors: block.errors),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12.5, color: color),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -240,7 +328,24 @@ class _Header extends StatelessWidget {
       const SizedBox(width: 8),
       _PermissionModeSelector(key: ValueKey('mode-${s.id}'), session: s),
     ];
-    final cost = Mono('\$${s.cost.toStringAsFixed(2)}', size: 12);
+    final title = Text(
+      s.title,
+      key: const ValueKey('session-title'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: c.textPrimary),
+    );
+    final meta = Text(
+      [
+        ?shortModel(s.model),
+        permissionModeLabel(s.permissionMode),
+        if (s.cost > 0) '\$${s.cost.toStringAsFixed(2)}',
+      ].join(' · '),
+      key: const ValueKey('session-meta'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 12, color: c.textSecondary),
+    );
     final aside = s.canAskAside
         ? IconButton(
             key: const ValueKey('session-aside'),
@@ -267,22 +372,28 @@ class _Header extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) => constraints.maxWidth >= _wide
-            ? Container(
-                height: 52,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
+            ? Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Flexible(child: status),
-                    const SizedBox(width: 12),
-                    command,
-                    const SizedBox(width: 12),
-                    ...details,
-                    const Spacer(),
-                    ?aside,
-                    const SizedBox(width: 8),
-                    cost,
-                    const SizedBox(width: 16),
-                    ?interrupt,
+                    title,
+                    const SizedBox(height: 2),
+                    meta,
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Flexible(child: status),
+                        const SizedBox(width: 12),
+                        command,
+                        const SizedBox(width: 12),
+                        ...details,
+                        const Spacer(),
+                        ?aside,
+                        const SizedBox(width: 8),
+                        ?interrupt,
+                      ],
+                    ),
                   ],
                 ),
               )
@@ -291,6 +402,10 @@ class _Header extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    title,
+                    const SizedBox(height: 2),
+                    meta,
+                    const SizedBox(height: 4),
                     SizedBox(
                       height: 36,
                       child: Row(
@@ -304,7 +419,7 @@ class _Header extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Row(children: [command, const SizedBox(width: 8), const Spacer(), cost]),
+                    Row(children: [command]),
                     const SizedBox(height: 6),
                     // Own line: provider, model and mode chips do not fit next to the command in a side panel.
                     Wrap(spacing: 0, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: details),
@@ -585,7 +700,7 @@ class _PermissionModeSelectorState extends State<_PermissionModeSelector> {
 
 /// Where an org session runs: its `cwd` (the org's first root) and the other roots it can reach.
 class _Directories extends StatelessWidget {
-  const _Directories({required this.session});
+  const _Directories({super.key, required this.session});
 
   final SessionSummary session;
 
@@ -659,7 +774,7 @@ class _DetachedBanner extends StatelessWidget {
 }
 
 class _Typing extends StatelessWidget {
-  const _Typing();
+  const _Typing({super.key});
 
   @override
   Widget build(BuildContext context) {

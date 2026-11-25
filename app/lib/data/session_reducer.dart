@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:developer';
 
 import '../engine/engine_config.dart';
+import 'github_parser.dart';
+import 'models.dart';
 import 'session_models.dart';
 import 'sse.dart';
 
@@ -309,13 +311,21 @@ SessionDetail _applyEvent(SessionDetail state, Map<String, dynamic> e, int seq) 
       // The engine sets `idle` right after `reattached`; replay only sends the final status at the end.
       final status = state.summary.status == SessionStatus.detached ? SessionStatus.idle : null;
       // The first attach of a session imported from the terminal resumes it; no process of ours was killed.
-      return _withRequests(state.copyWith(summary: state.summary.copyWith(status: status, interrupted: !isFreshImport(events))), [
-        for (final ev in events) ev is PendingRequest && ev.pending && ev.seq < seq ? ev.expire() : ev,
-        if (e['forked'] == true) SessionNote(at, SessionNoteKind.forked),
-      ]);
+      return _withRequests(
+        state.copyWith(
+          summary: state.summary.copyWith(status: status, interrupted: !isFreshImport(events)),
+        ),
+        [
+          for (final ev in events) ev is PendingRequest && ev.pending && ev.seq < seq ? ev.expire() : ev,
+          if (e['forked'] == true) SessionNote(at, SessionNoteKind.forked),
+        ],
+      );
     case 'imported':
       return state.copyWith(
-        events: [...events, SessionNote(at, SessionNoteKind.imported, dropped: (e['dropped'] as num?)?.toInt() ?? 0)],
+        events: [
+          ...events,
+          SessionNote(at, SessionNoteKind.imported, dropped: (e['dropped'] as num?)?.toInt() ?? 0),
+        ],
       );
     case 'result':
       final cost = (e['cost'] as num?)?.toDouble() ?? state.summary.cost;
@@ -371,7 +381,13 @@ PendingRequest _request(String at, int seq, Map<String, dynamic> e) {
   final toolName = e['toolName'] as String? ?? '';
   final input = _map(e['input']);
   if (toolName == 'AskUserQuestion') {
-    return QuestionRequest(at, requestId: requestId, seq: seq, questions: _questions(input['questions']));
+    return QuestionRequest(
+      at,
+      requestId: requestId,
+      seq: seq,
+      questions: _questions(input['questions']),
+      toolUseId: e['toolUseID'] as String?,
+    );
   }
   final command = input['command'] as String?;
   return PermissionRequest(
@@ -403,3 +419,139 @@ Map<String, dynamic> _map(Object? raw) => raw is Map<String, dynamic> ? raw : co
 /// Total cost of [project]'s sessions (org sessions are left out: they belong to no project).
 double projectSessionsCost(List<SessionSummary> sessions, String project) =>
     sessions.where((s) => !s.isOrgSession && s.project == project).fold(0.0, (sum, s) => sum + s.cost);
+
+/// One line of the session list: the first of waiting, working, aside, ended, else the age of creation.
+String sessionLine(SessionSummary s, DateTime now) {
+  final created = DateTime.tryParse(s.createdAt);
+  if (pendingOf(s) > 0) return 'esperando você';
+  if (s.status == SessionStatus.running || s.status == SessionStatus.starting) return 'trabalhando agora';
+  if (s.asideOf != null) {
+    if (created == null) return 'pergunta à parte';
+    final t = created.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return 'pergunta à parte · ${two(t.hour)}:${two(t.minute)}';
+  }
+  if (s.status == SessionStatus.done || s.status == SessionStatus.stopped || s.status == SessionStatus.error) {
+    return created == null ? 'encerrada' : 'encerrada ${relativeAge(created, now)}';
+  }
+  return created == null ? '' : relativeAge(created, now);
+}
+
+/// A feed entry: [work] is a run of tool calls and thinking (with the assistant texts between them); otherwise
+/// [events] is a single event and the counters are 0.
+typedef FeedBlock = ({List<SessionEvent> events, bool work, int steps, int errors, int seconds});
+
+bool _isStep(SessionEvent e) => e is ToolCall || e is Thinking;
+
+bool _isBoundary(SessionEvent e) =>
+    e is UserText || e is PendingRequest || e is SessionResult || e is SessionError || e is SessionNote;
+
+FeedBlock _single(SessionEvent e) => (events: [e], work: false, steps: 0, errors: 0, seconds: 0);
+
+/// The card replaces the `AskUserQuestion` call whose id the request carries. A request without `toolUseId` (older
+/// recordings) falls back to the next such request after the call. A session imported from the terminal has no
+/// request: the call stays as a step, with the answer as its result.
+bool _hasQuestionCard(List<SessionEvent> events, int i, Set<String> cardIds) {
+  final e = events[i];
+  if (e is! ToolCall || e.name != 'AskUserQuestion') return false;
+  if (cardIds.contains(e.id)) return true;
+  for (var j = i + 1; j < events.length; j++) {
+    final n = events[j];
+    if (n is QuestionRequest && n.toolUseId == null) return true;
+    if (n is ToolCall && n.name == 'AskUserQuestion') return false;
+  }
+  return false;
+}
+
+/// When events are appended, a work block either keeps its index or disappears together with the `AskUserQuestion`
+/// call that just became a card (a block made only of that call); no other work block changes index. The UI keys
+/// open state by this position.
+List<FeedBlock> feedBlocks(List<SessionEvent> events) {
+  final cardIds = {
+    for (final e in events)
+      if (e is QuestionRequest && e.toolUseId != null) e.toolUseId!,
+  };
+  final visible = [
+    for (var k = 0; k < events.length; k++)
+      if (!_hasQuestionCard(events, k, cardIds)) events[k],
+  ];
+  final out = <FeedBlock>[];
+  var i = 0;
+  while (i < visible.length) {
+    if (_isBoundary(visible[i])) {
+      out.add(_single(visible[i++]));
+      continue;
+    }
+    var end = i;
+    while (end < visible.length && !_isBoundary(visible[end])) {
+      end++;
+    }
+    final first = visible.indexWhere(_isStep, i);
+    final last = visible.lastIndexWhere(_isStep, end - 1);
+    if (first < 0 || first >= end) {
+      for (var j = i; j < end; j++) {
+        out.add(_single(visible[j]));
+      }
+    } else {
+      for (var j = i; j < first; j++) {
+        out.add(_single(visible[j]));
+      }
+      final block = visible.sublist(first, last + 1);
+      final start = DateTime.tryParse(block.first.at);
+      // A user turn or an import note after the block means the wait is not work: close at the block's own last event.
+      final next = last + 1 < visible.length ? visible[last + 1] : null;
+      final finish = DateTime.tryParse(
+        (next == null || next is UserText || next is SessionNote ? block.last : next).at,
+      );
+      out.add((
+        events: block,
+        work: true,
+        steps: block.whereType<ToolCall>().length,
+        errors: block.whereType<ToolCall>().where((c) => c.isError).length,
+        seconds: start == null || finish == null ? 0 : finish.difference(start).inSeconds.clamp(0, 1 << 31),
+      ));
+      for (var j = last + 1; j < end; j++) {
+        out.add(_single(visible[j]));
+      }
+    }
+    i = end;
+  }
+  return out;
+}
+
+/// Open by default only while the turn is live and nothing but assistant text follows the block.
+bool workOpenByDefault(List<FeedBlock> blocks, int i, SessionStatus status) {
+  if (!_liveTools.contains(status)) return false;
+  return blocks.skip(i + 1).every((b) => !b.work && b.events.single is AssistantText);
+}
+
+String workLine(int steps, int seconds, {int errors = 0}) {
+  if (steps == 0) return 'Pensou';
+  final out = StringBuffer(steps == 1 ? 'Trabalhou em 1 passo' : 'Trabalhou em $steps passos');
+  if (seconds >= 3600) {
+    out.write(' · ${seconds ~/ 3600}h ${((seconds % 3600) ~/ 60).toString().padLeft(2, '0')}min');
+  } else if (seconds >= 60) {
+    out.write(' · ${seconds ~/ 60}min');
+  }
+  if (errors > 0) out.write(' · $errors com erro');
+  return out.toString();
+}
+
+({String label, bool recommended}) optionView(String label) {
+  for (final suffix in const [' (Recomendado)', ' (Recommended)']) {
+    if (label.endsWith(suffix)) return (label: label.substring(0, label.length - suffix.length), recommended: true);
+  }
+  return (label: label, recommended: false);
+}
+
+/// Inverse of the multiSelect join in [answersFor]: strips the recommended suffix from each part.
+String answerDisplay(String answer) => answer.split(', ').map((p) => optionView(p).label).join(', ');
+
+String? shortModel(String? model) {
+  if (model == null) return null;
+  final id = model.toLowerCase();
+  for (final tier in Tier.values) {
+    if (id.contains(tier.name)) return tier.name;
+  }
+  return model;
+}

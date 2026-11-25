@@ -357,7 +357,7 @@ void main() {
       expect(find.descendant(of: _side, matching: _card), findsOneWidget);
       expect(tester.getTopLeft(_card).dy, lessThan(tester.getTopLeft(find.byKey(const ValueKey('session-feed'))).dy));
 
-      await tester.tap(_inCard(find.text('Aprovar (Recommended)')));
+      await tester.tap(_inCard(find.text('Aprovar')));
       await tester.pumpAndSettle();
       await tester.tap(_inCard(find.text('Responder')));
       await tester.pumpAndSettle();

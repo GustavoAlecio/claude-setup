@@ -9,15 +9,14 @@ import '../../app/config_cubit.dart';
 import '../../app/projects_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/search.dart';
 import '../../data/session_models.dart';
+import '../../data/session_reducer.dart';
 import '../../data/sessions_repository.dart';
 import '../../data/workflow_parser.dart';
-import '../../engine/engine_config.dart';
 import '../launcher/command_palette.dart';
 import '../shell/shell_scope.dart';
 import 'session_view.dart';
@@ -40,6 +39,23 @@ class _SessionsPageState extends State<SessionsPage> {
 
   String _query = '';
 
+  /// Relative ages ("há 5 min") only move on a rebuild; the engine sends nothing while a session sits idle.
+  late final Timer _ageTicker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ageTicker = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ageTicker.cancel();
+    super.dispose();
+  }
+
   @override
   void didUpdateWidget(SessionsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -51,6 +67,7 @@ class _SessionsPageState extends State<SessionsPage> {
     final all = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
     final projects = context.watch<ProjectsCubit>().state.data ?? const <Project>[];
     final config = context.watch<ConfigCubit>().state.data;
+    final now = DateTime.now();
     final SessionSummary? selected;
     final Widget list;
     switch (widget.scope) {
@@ -67,6 +84,7 @@ class _SessionsPageState extends State<SessionsPage> {
           mine: mine.where((s) => matchesSession(s, _query)).toList(),
           others: others.where((s) => matchesSession(s, _query)).toList(),
           selected: selected?.id,
+          now: now,
           query: _query,
           onQuery: (q) => setState(() => _query = q),
         );
@@ -80,6 +98,7 @@ class _SessionsPageState extends State<SessionsPage> {
           target: OrgTarget.of(orgConfigOf(config, org)),
           mine: mine.where((s) => matchesSession(s, _query)).toList(),
           selected: selected?.id,
+          now: now,
           query: _query,
           onQuery: (q) => setState(() => _query = q),
         );
@@ -115,6 +134,7 @@ class _SessionList extends StatelessWidget {
     required this.mine,
     required this.others,
     required this.selected,
+    required this.now,
     required this.query,
     required this.onQuery,
   }) : org = null,
@@ -125,6 +145,7 @@ class _SessionList extends StatelessWidget {
     required this.target,
     required this.mine,
     required this.selected,
+    required this.now,
     required this.query,
     required this.onQuery,
   }) : others = const [],
@@ -142,6 +163,7 @@ class _SessionList extends StatelessWidget {
   final List<SessionSummary> mine;
   final List<SessionSummary> others;
   final String? selected;
+  final DateTime now;
   final String query;
   final ValueChanged<String> onQuery;
 
@@ -205,16 +227,17 @@ class _SessionList extends StatelessWidget {
           for (final s in mine)
             LiveSessionSummary(
               session: s,
-              builder: (_, live) => _SessionTile(session: live, org: org, selected: live.id == selected),
+              builder: (_, live) => _SessionTile(session: live, org: org, selected: live.id == selected, now: now),
             ),
           if (project case Project(:final name, path: final path?) when query.isEmpty)
-            _TerminalSessions(key: ValueKey('terminal-$path'), project: name, cwd: path, header: header),
+            _TerminalSessions(key: ValueKey('terminal-$path'), project: name, cwd: path),
           if (others.isNotEmpty) ...[
             header('Outros projetos'),
             for (final s in others)
               LiveSessionSummary(
                 session: s,
-                builder: (_, live) => _SessionTile(session: live, selected: live.id == selected),
+                builder: (_, live) =>
+                    _SessionTile(session: live, showProject: true, selected: live.id == selected, now: now),
               ),
           ],
         ],
@@ -224,18 +247,28 @@ class _SessionList extends StatelessWidget {
 }
 
 class _SessionTile extends StatelessWidget {
-  const _SessionTile({required this.session, this.org, required this.selected});
+  const _SessionTile({
+    required this.session,
+    this.org,
+    this.showProject = false,
+    required this.selected,
+    required this.now,
+  });
 
   final SessionSummary session;
 
   /// Org the session resolved to, for org sessions; may differ from `session.org` after a rename.
   final String? org;
+
+  /// Prefixes the line with the project: the tile sits in a list of another project's sessions.
+  final bool showProject;
   final bool selected;
+  final DateTime now;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final pending = session.pendingPermissions;
+    final line = sessionLine(session, now);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Material(
@@ -253,15 +286,6 @@ class _SessionTile extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 5),
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(color: statusColor(c, session.status), shape: BoxShape.circle),
-                  ),
-                ),
-                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -277,36 +301,11 @@ class _SessionTile extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Tooltip(
-                              message: session.command,
-                              child: Text(
-                                session.command,
-                                maxLines: 1,
-                                softWrap: false,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontFamily: monoFamily, fontSize: 11, color: c.textMuted),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              [
-                                '',
-                                if (session.asideOf != null) 'à parte',
-                                org ?? session.project,
-                                _createdAt(session.createdAt),
-                              ].join(' · ').trimLeft(),
-                              maxLines: 1,
-                              softWrap: false,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 11, color: c.textMuted),
-                            ),
-                          ),
-                        ],
+                      Text(
+                        [if (showProject) session.project, if (line.isNotEmpty) line].join(' · '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: c.textMuted),
                       ),
                       if (session.showsInterrupted)
                         Padding(
@@ -322,30 +321,14 @@ class _SessionTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (session.permissionMode == PermissionMode.bypassPermissions)
+                if (pendingOf(session) > 0)
                   Padding(
-                    padding: const EdgeInsets.only(left: 6, top: 2),
-                    child: Tooltip(
-                      message: 'bypass: roda sem pedir confirmação',
-                      child: Icon(
-                        Icons.gpp_maybe_outlined,
-                        key: ValueKey('session-bypass-${session.id}'),
-                        size: 13,
-                        color: c.fail.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ),
-                if (pending > 0)
-                  Container(
-                    margin: const EdgeInsets.only(left: 6, top: 1),
-                    constraints: const BoxConstraints(minWidth: 18),
-                    height: 18,
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(color: c.warn, borderRadius: BorderRadius.circular(9)),
-                    child: Text(
-                      '$pending',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: c.canvas),
+                    padding: const EdgeInsets.only(left: 8, top: 5),
+                    child: Container(
+                      key: ValueKey('session-waiting-${session.id}'),
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(color: c.warn, shape: BoxShape.circle),
                     ),
                   ),
               ],
@@ -359,11 +342,10 @@ class _SessionTile extends StatelessWidget {
 
 /// Claude Code sessions opened in a terminal at [cwd]: one tap brings one into the app to keep going there.
 class _TerminalSessions extends StatefulWidget {
-  const _TerminalSessions({super.key, required this.project, required this.cwd, required this.header});
+  const _TerminalSessions({super.key, required this.project, required this.cwd});
 
   final String project;
   final String cwd;
-  final Widget Function(String) header;
 
   @override
   State<_TerminalSessions> createState() => _TerminalSessionsState();
@@ -372,6 +354,7 @@ class _TerminalSessions extends StatefulWidget {
 class _TerminalSessionsState extends State<_TerminalSessions> {
   List<TerminalSession> _items = const [];
   String? _importing;
+  bool _expanded = false;
 
   SessionsRepository? _repo;
 
@@ -409,7 +392,12 @@ class _TerminalSessionsState extends State<_TerminalSessions> {
         permissionMode: launch.mode,
       );
       if (!mounted) return;
-      setState(() => _items = [for (final i in _items) if (i.sdkSessionId != t.sdkSessionId) i]);
+      setState(
+        () => _items = [
+          for (final i in _items)
+            if (i.sdkSessionId != t.sdkSessionId) i,
+        ],
+      );
       context.go(sessionLocation(session));
     });
     if (mounted) setState(() => _importing = null);
@@ -423,68 +411,94 @@ class _TerminalSessionsState extends State<_TerminalSessions> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        widget.header('No terminal'),
-        for (final t in _items)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: InkWell(
-              key: ValueKey('terminal-session-${t.sdkSessionId}'),
-              borderRadius: BorderRadius.circular(6),
-              hoverColor: c.hover,
-              onTap: _importing == null ? () => unawaited(_import(t)) : null,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                child: Row(
-                  children: [
-                    Icon(Icons.terminal, size: 14, color: t.live == null ? c.textMuted : c.running),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            t.title,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12.5, height: 1.3),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            [
-                              formatStartedAt(t.updatedAt.toUtc(), now),
-                              if (t.cwd != widget.cwd && t.cwd.startsWith('${widget.cwd}/'))
-                                t.cwd.substring(widget.cwd.length + 1),
-                              if (t.live != null) 'aberta no terminal',
-                            ].join(' · '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11, color: t.live == null ? c.textMuted : c.running),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (_importing == t.sdkSessionId)
-                      const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5))
-                    else
-                      Tooltip(
-                        message: t.live == null
-                            ? 'Continuar no app'
-                            : 'Continuar no app: enquanto o terminal tiver a sessão aberta, segue num ramo novo',
-                        child: Icon(Icons.open_in_new, size: 14, color: c.textMuted),
-                      ),
-                  ],
-                ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: InkWell(
+            key: const ValueKey('terminal-sessions-toggle'),
+            borderRadius: BorderRadius.circular(6),
+            hoverColor: c.hover,
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(Icons.terminal, size: 14, color: c.textMuted),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(_terminalSummary(_items), style: TextStyle(fontSize: 12, color: c.textMuted)),
+                  ),
+                  Icon(_expanded ? Icons.expand_less : Icons.expand_more, size: 16, color: c.textMuted),
+                ],
               ),
             ),
           ),
+        ),
+        if (_expanded)
+          for (final t in _items)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: InkWell(
+                key: ValueKey('terminal-session-${t.sdkSessionId}'),
+                borderRadius: BorderRadius.circular(6),
+                hoverColor: c.hover,
+                onTap: _importing == null ? () => unawaited(_import(t)) : null,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Row(
+                    children: [
+                      Icon(Icons.terminal, size: 14, color: t.live == null ? c.textMuted : c.running),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              t.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12.5, height: 1.3),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              [
+                                formatStartedAt(t.updatedAt.toUtc(), now),
+                                if (t.cwd != widget.cwd && t.cwd.startsWith('${widget.cwd}/'))
+                                  t.cwd.substring(widget.cwd.length + 1),
+                                if (t.live != null) 'aberta no terminal',
+                              ].join(' · '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 11, color: t.live == null ? c.textMuted : c.running),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_importing == t.sdkSessionId)
+                        const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5))
+                      else
+                        Tooltip(
+                          message: t.live == null
+                              ? 'Continuar no app'
+                              : 'Continuar no app: enquanto o terminal tiver a sessão aberta, segue num ramo novo',
+                          child: Icon(Icons.open_in_new, size: 14, color: c.textMuted),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
       ],
     );
   }
 }
 
-String _createdAt(String iso) {
-  final at = DateTime.tryParse(iso);
-  return at == null ? '' : formatStartedAt(at, DateTime.now());
+String _terminalSummary(List<TerminalSession> items) {
+  final total = items.length;
+  final open = items.where((t) => t.live != null).length;
+  final noun = total == 1 ? 'sessão' : 'sessões';
+  if (open == total) return '$total ${total == 1 ? 'sessão aberta' : 'sessões abertas'} no terminal';
+  if (open == 0) return '$total $noun no terminal';
+  return '$open ${open == 1 ? 'aberta' : 'abertas'} · $total no terminal';
 }
 
 /// Match on title, command and project.
