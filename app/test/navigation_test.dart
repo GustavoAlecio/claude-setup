@@ -65,11 +65,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(t4);
     await tester.pumpAndSettle();
-    expect(find.text('Tentativas'), findsOneWidget);
-    expect(find.text('repetido ×3'), findsNWidgets(3));
-    expect(find.text('igual à #1'), findsNWidgets(2));
-    expect(find.text('→ fable'), findsOneWidget);
+    expect(find.text('O que aconteceu'), findsOneWidget);
+    expect(find.byKey(const ValueKey('task-decide')), findsOneWidget);
+    expect(find.textContaining('mesma falha da tentativa 1'), findsNWidgets(2));
+    expect(find.textContaining('opus → fable'), findsOneWidget);
     expect(_route(tester), startsWith('/p/demo-app/runs/'));
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('task-back')), matching: find.text('Execuções')),
+      findsOneWidget,
+    );
     expect(_weight(tester, 'group-cycle'), FontWeight.w600);
     expect(_weight(tester, 'subtab-runs'), FontWeight.w600);
     expect(_weight(tester, 'subtab-flow'), FontWeight.w400);
@@ -137,8 +141,14 @@ void main() {
     await tester.tap(action);
     await tester.pumpAndSettle();
     expect(_route(tester), matches(RegExp(r'^/p/demo-app/runs/[^/]+/T4$')));
-    expect(find.textContaining('diagnóstico', findRichText: true), findsWidgets);
+    expect(find.byKey(const ValueKey('task-decide')), findsOneWidget);
     expect(now, findsNothing);
+
+    final back = find.byKey(const ValueKey('task-back'));
+    expect(find.descendant(of: back, matching: find.text('Ciclo')), findsOneWidget);
+    await tester.tap(back);
+    await tester.pumpAndSettle();
+    expect(_route(tester), '/p/demo-app/flow');
   });
 
   testWidgets('pending task row is not navigable', (tester) async {
@@ -423,7 +433,7 @@ void main() {
     ];
 
     String location(WidgetTester tester) =>
-        GoRouter.of(tester.element(find.byType(Scaffold).first)).routeInformationProvider.value.uri.path;
+        GoRouter.of(tester.element(find.byType(Scaffold).first)).routeInformationProvider.value.uri.toString();
 
     Future<void> openRuns(WidgetTester tester) async {
       await tester.pumpWidget(_app(MockFlowRepository(data: data)));
@@ -455,13 +465,13 @@ void main() {
 
       await tester.tap(find.text('Titulo T2').first);
       await tester.pumpAndSettle();
-      expect(location(tester), '/p/duplo/runs/impl-20260310T100000Z/T2');
+      expect(location(tester), '/p/duplo/runs/impl-20260310T100000Z/T2?from=runs');
 
       GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/duplo/runs');
       await tester.pumpAndSettle();
       await tester.tap(find.text('Titulo T2').last);
       await tester.pumpAndSettle();
-      expect(location(tester), '/p/duplo/runs/impl-20260311T100000Z/T2');
+      expect(location(tester), '/p/duplo/runs/impl-20260311T100000Z/T2?from=runs');
 
       GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/duplo/runs');
       await tester.pumpAndSettle();
@@ -489,7 +499,7 @@ void main() {
 
       await tester.tap(find.text('Titulo T2'));
       await tester.pumpAndSettle();
-      expect(location(tester), '/p/duplo/runs/impl-20260311T100000Z/T2');
+      expect(location(tester), '/p/duplo/runs/impl-20260311T100000Z/T2?from=runs');
     });
   });
 }

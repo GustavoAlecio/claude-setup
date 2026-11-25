@@ -208,6 +208,31 @@ class Muted extends StatelessWidget {
   );
 }
 
+/// A row that opens and closes what comes under it; the whole row is the 44 px tap target.
+class DisclosureToggle extends StatelessWidget {
+  const DisclosureToggle({super.key, required this.open, required this.onTap, required this.children});
+
+  final bool open;
+  final VoidCallback onTap;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(6),
+    onTap: onTap,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 44),
+      child: Row(
+        children: [
+          Icon(open ? Icons.expand_more : Icons.chevron_right, size: 16, color: context.colors.textMuted),
+          const SizedBox(width: 6),
+          ...children,
+        ],
+      ),
+    ),
+  );
+}
+
 /// `1 projeto`, `3 projetos`: [plural] defaults to [singular] + `s`.
 String countLabel(int n, String singular, [String? plural]) => '$n ${n == 1 ? singular : plural ?? '${singular}s'}';
 

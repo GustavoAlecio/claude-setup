@@ -141,7 +141,7 @@ void main() {
 
     await tester.tap(inWaiting(find.text('A task T4 travou')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('diagnóstico', findRichText: true), findsWidgets);
+    expect(find.byKey(const ValueKey('task-decide')), findsOneWidget);
   });
 
   testWidgets('Caixa de entrada also lists PRs with review comments waiting, and opens the project PRs', (

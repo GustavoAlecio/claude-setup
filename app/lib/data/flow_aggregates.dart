@@ -416,7 +416,114 @@ String findingLocation(String file, int? line, String? root) {
 String decisionLocation(String project, ({Run run, TaskRun task}) decision) =>
     taskLocation(project, decision.run.id, decision.task.id);
 
-String taskLocation(String project, String runId, String taskId) => '/p/$project/runs/$runId/$taskId';
+String taskLocation(String project, String runId, String taskId, {bool fromRuns = false}) =>
+    '/p/$project/runs/$runId/$taskId${fromRuns ? '?from=runs' : ''}';
+
+const _blockedReasons = {
+  'same_failure_across_tiers':
+      'A mesma falha sobreviveu a dois modelos diferentes — não é capacidade, é spec ou plano.',
+  'ladder_exhausted': 'A escada chegou ao topo (fable) sem passar nos gates.',
+  'max_attempts': 'Limite de 5 tentativas atingido.',
+  'agent_failed':
+      'Um agente caiu (parado, limite de uso ou erro de API). Não diz nada sobre a task: rode /implement de novo.',
+};
+
+/// Why a task stopped, in words; empty for an unknown or missing [reason].
+String blockedReasonText(String? reason) => _blockedReasons[reason] ?? '';
+
+String _attemptsCount(int n) => n == 1 ? '1 tentativa' : '$n tentativas';
+
+/// One sentence placing [task] in the cycle: where it is in the table, how it ended and whether it climbed the ladder.
+/// The attempt count is the one of the run [task] belongs to.
+String taskHeadline(TaskRun task, {int? position, int? total}) {
+  final n = task.attempts.length;
+  final outcome = switch (task.status) {
+    Verdict.blocked => 'travou após ${_attemptsCount(n)}',
+    Verdict.pass => n <= 1 ? 'pronta de primeira' : 'pronta na tentativa $n',
+    Verdict.running => 'rodando, tentativa ${n < 1 ? 1 : n}',
+    Verdict.fail => 'reprovou após ${_attemptsCount(n)}',
+    Verdict.pending || Verdict.inconclusive => n > 0 ? 'parou após ${_attemptsCount(n)}' : 'na fila',
+  };
+  return [
+    if (position != null && total != null) 'Task $position de $total',
+    outcome,
+    if (task.tier0 != task.tier) 'escalou de ${task.tier0.name} para ${task.tier.name}',
+  ].join(' · ');
+}
+
+typedef AttemptFinding = ({String message, String location, String rule});
+
+typedef TaskAttemptLine = ({
+  int ordinal,
+  String title,
+  String subtitle,
+  String message,
+  String location,
+  String rule,
+  List<AttemptFinding> others,
+  String note,
+});
+
+final _verifyRound = RegExp(r'^r(\d+)\b');
+
+/// One line per attempt of [task], in order. The finding shown is the most severe blocking one (`critical` before
+/// `major`, first on a tie); the other blocking findings go in `others`. A failed attempt is "same failure" when any of
+/// its blocking findings already blocked an earlier attempt, as the engine's `same_failure_across_tiers` decides.
+List<TaskAttemptLine> taskAttemptLines(TaskRun task, {String? root}) {
+  final firstSeen = <String, int>{};
+  final lines = <TaskAttemptLine>[];
+  for (final (i, a) in task.attempts.indexed) {
+    final blocking = a.blocking;
+    final shown = blocking.where((f) => f.severity == 'critical').firstOrNull ?? blocking.firstOrNull;
+    final repeatedFrom = [
+      for (final f in blocking) ?firstSeen[f.fingerprint],
+    ].fold<int?>(null, (min, k) => min == null || k < min ? k : min);
+    for (final f in blocking) {
+      firstSeen.putIfAbsent(f.fingerprint, () => a.ordinal);
+    }
+    final isLast = i == task.attempts.length - 1;
+    final outcome = switch (a.verdict) {
+      Verdict.pass => 'passou',
+      Verdict.running => 'rodando',
+      Verdict.fail =>
+        repeatedFrom != null
+            ? 'mesma falha da tentativa $repeatedFrom'
+            : 'reprovada em ${a.gates.firstWhere((g) => g.verdict == Verdict.fail).gate.toUpperCase()}',
+      _ => isLast && task.status == Verdict.running ? 'rodando' : 'sem veredito',
+    };
+    final round = _verifyRound.firstMatch(a.label)?.group(1);
+    final note = a.escalatedTo != null
+        ? 'Desfez as mudanças e escalou para um modelo maior: ${a.tier.name} → ${a.escalatedTo!.name}'
+        : isLast && task.status == Verdict.blocked
+        ? blockedReasonText(task.blockedReason)
+        : '';
+    lines.add((
+      ordinal: a.ordinal,
+      title: 'Tentativa ${a.ordinal}',
+      subtitle: '${round == null ? '' : 'rodada $round · '}${a.tier.name} · $outcome',
+      message: shown?.message ?? a.summary ?? '',
+      location: shown == null ? '' : findingLocation(shown.file, shown.line, root),
+      rule: shown?.ruleRef ?? '',
+      others: [
+        for (final f in blocking)
+          if (!identical(f, shown))
+            (message: f.message, location: findingLocation(f.file, f.line, root), rule: f.ruleRef),
+      ],
+      note: note,
+    ));
+  }
+  return lines;
+}
+
+/// Hypotheses by falling confidence; ties keep the order the diagnosis came in.
+List<Hypothesis> rankedHypotheses(TaskRun task) {
+  final indexed = task.diagnosis.indexed.toList()
+    ..sort((a, b) {
+      final byConfidence = b.$2.confidence.compareTo(a.$2.confidence);
+      return byConfidence != 0 ? byConfidence : a.$1.compareTo(b.$1);
+    });
+  return [for (final (_, h) in indexed) h];
+}
 
 enum DiagnosisKind { inert, answer, busy, launch }
 

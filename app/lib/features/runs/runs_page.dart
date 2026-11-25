@@ -6,6 +6,7 @@ import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
 import 'cycle_tasks.dart';
@@ -128,7 +129,7 @@ class _RunsViewState extends State<_RunsView> {
               task: blocked,
               run: run,
               project: widget.project,
-              onExpand: () => context.go('/p/$project/runs/${run.id}/${blocked.id}'),
+              onExpand: () => context.go(taskLocation(project, run.id, blocked.id, fromRuns: true)),
             ),
           )
           ..add(const SizedBox(height: 16));
@@ -311,7 +312,9 @@ class _TaskRow extends StatelessWidget {
     final c = context.colors;
     return InkWell(
       hoverColor: c.hover,
-      onTap: task.attempts.isEmpty || runId == null ? null : () => context.go('/p/$project/runs/$runId/${task.id}'),
+      onTap: task.attempts.isEmpty || runId == null
+          ? null
+          : () => context.go(taskLocation(project, runId!, task.id, fromRuns: true)),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
