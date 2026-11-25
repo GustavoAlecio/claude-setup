@@ -10,7 +10,7 @@
       "evidence": [
         "alpha_bloc.dart sem eventos proprios"
       ],
-      "recommended_action": "Mover a leitura para o repositorio."
+      "recommended_action": "replan"
     },
     {
       "lens": "escopo",
@@ -20,7 +20,7 @@
         "dois arquivos de feature no escopo",
         "finding repetido em 3 tentativas"
       ],
-      "recommended_action": "Dividir T2 em duas tasks."
+      "recommended_action": "split_task"
     },
     {
       "lens": "contrato",
@@ -29,7 +29,7 @@
       "evidence": [
         "rule citada sem exemplo"
       ],
-      "recommended_action": "Esclarecer a rule antes de retomar."
+      "recommended_action": "fix_spec"
     }
   ],
   "history": [

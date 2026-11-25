@@ -98,6 +98,7 @@ GoRouter buildRouter(EffectivePaths paths) {
                 projectName: state.pathParameters['project']!,
                 runId: state.pathParameters['run']!,
                 taskId: state.pathParameters['task']!,
+                fromRuns: state.uri.queryParameters['from'] == 'runs',
               ),
             ),
           ),

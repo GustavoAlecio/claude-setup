@@ -55,7 +55,7 @@ Future<void> _go(WidgetTester tester, String location) async {
   await tester.pumpAndSettle();
 }
 
-/// Timeline (`cycle-steps-toggle`) and cycle details (`cycle-details-toggle`) start collapsed.
+/// Timeline (`cycle-steps-toggle`), cycle details (`cycle-details-toggle`) and the task description start collapsed.
 Future<void> _reveal(WidgetTester tester, String toggle) async {
   final link = find.byKey(ValueKey(toggle));
   await tester.ensureVisible(link);
@@ -109,22 +109,23 @@ void main() {
     expect(find.descendant(of: t2Row, matching: _tierChip(Tier.sonnet)), findsOneWidget);
 
     await _go(tester, '/p/alpha/runs/impl-20260310T101500Z/T2');
-    expect(find.text('Tentativas'), findsOneWidget);
-    for (final label in ['#1', '#2', '#3', '#4']) {
-      expect(find.text(label), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.byKey(const ValueKey('task-headline'))).data,
+      'Task 2 de 3 · travou após 4 tentativas · escalou de haiku para sonnet',
+    );
+    for (final n in [1, 2, 3, 4]) {
+      expect(find.byKey(ValueKey('task-attempt-$n')), findsOneWidget);
     }
-    expect(find.text('repetido ×3'), findsNWidgets(3));
-    expect(find.text('igual à #1'), findsNWidgets(2));
-    expect(find.text('lib/features/alpha/alpha_page.dart:12'), findsOneWidget);
-    expect(find.text('unused_import'), findsNWidgets(3));
-    expect(find.text('lib/features/alpha/alpha_repo.dart'), findsWidgets);
-    expect(find.text('G1-ARCH-DI'), findsOneWidget);
-    expect(find.text('→ sonnet'), findsOneWidget);
+    expect(find.text('haiku · reprovada em G0'), findsOneWidget);
+    expect(find.text('haiku · mesma falha da tentativa 1'), findsOneWidget);
+    expect(find.text('sonnet · mesma falha da tentativa 1'), findsOneWidget);
+    expect(find.text('sonnet · reprovada em G1'), findsOneWidget);
+    expect(find.text('lib/features/alpha/alpha_page.dart:12'), findsWidgets);
+    expect(find.text('unused_import'), findsWidgets);
+    expect(find.textContaining('haiku → sonnet'), findsOneWidget);
 
-    final xs = [
-      for (final lens in ['escopo', 'arquitetura', 'contrato']) tester.getTopLeft(find.text('ângulo: $lens')).dx,
-    ];
-    expect(xs[0] < xs[1] && xs[1] < xs[2], isTrue, reason: 'hypotheses ranked by confidence: $xs');
+    expect(tester.widget(find.byKey(const ValueKey('diagnosis-action-split_task'))), isA<FilledButton>());
+    expect(find.byKey(const ValueKey('diagnosis-action-replan')), findsNothing, reason: 'only the top hypothesis');
     expect(tester.takeException(), isNull);
   });
 
@@ -137,13 +138,11 @@ void main() {
     expect(find.text('—'), findsWidgets);
 
     await _go(tester, '/p/beta/runs/impl-20260311T140000Z/T1');
-    expect(find.text('#1'), findsOneWidget);
-    expect(find.text('#2'), findsOneWidget);
-    final first = find.ancestor(of: find.text('#1'), matching: find.byType(Column)).first;
-    expect(find.descendant(of: first, matching: find.text('G0')), findsOneWidget);
-    expect(find.descendant(of: first, matching: find.text('reprovou')), findsWidgets);
-    expect(find.text('→ sonnet'), findsOneWidget);
-    expect(find.text('—'), findsNWidgets(2));
+    final first = find.byKey(const ValueKey('task-attempt-1'));
+    expect(find.descendant(of: first, matching: find.text('haiku · reprovada em G0')), findsOneWidget);
+    expect(find.descendant(of: first, matching: find.textContaining('haiku → sonnet')), findsOneWidget);
+    expect(find.byKey(const ValueKey('task-attempt-2')), findsOneWidget);
+    expect(find.textContaining('tokens out'), findsNothing, reason: 'unknown tokens stay out of the footer');
     expect(tester.takeException(), isNull);
   });
 
@@ -162,8 +161,10 @@ void main() {
     await tester.pumpAndSettle();
     await _go(tester, '/p/beta/runs/impl-20260311T140000Z/T1');
 
-    expect(find.text('Descrição'), findsOneWidget);
-    expect(find.text('Implementar o servico beta; criterio: testes do servico passam.'), findsOneWidget);
+    const description = 'Implementar o servico beta; criterio: testes do servico passam.';
+    expect(find.text(description), findsNothing, reason: 'collapsed until asked for');
+    await _reveal(tester, 'task-description-toggle');
+    expect(find.text(description), findsOneWidget);
     expect(find.text('implementando'), findsOneWidget);
     expect(find.textContaining('há '), findsOneWidget);
     expect(find.text('Arquivos tocados até agora'), findsOneWidget);
@@ -203,9 +204,13 @@ void main() {
     }
 
     await _go(tester, '/p/gamma/runs/verify-20260310T113000Z/V1');
-    expect(find.text('r1 #1'), findsOneWidget);
-    expect(find.text('r1 #2'), findsOneWidget);
-    expect(find.text('#1'), findsNothing);
+    for (final n in [1, 2]) {
+      expect(
+        find.descendant(of: find.byKey(ValueKey('task-attempt-$n')), matching: find.textContaining('rodada 1 · ')),
+        findsOneWidget,
+      );
+    }
+    expect(find.textContaining('Task '), findsNothing, reason: 'V1 is not in the cycle table');
     expect(tester.takeException(), isNull);
   });
 

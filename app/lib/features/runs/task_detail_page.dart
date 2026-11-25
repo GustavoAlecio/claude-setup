@@ -7,20 +7,28 @@ import 'package:go_router/go_router.dart';
 import '../../app/projects_cubit.dart';
 import '../../core/bloc/stream_cubit.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_theme.dart';
 import '../../core/widgets/inline_markdown.dart';
-import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
+import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
 import '../../data/models.dart';
 import 'diagnosis_panel.dart';
 
 class TaskDetailPage extends StatelessWidget {
-  const TaskDetailPage({super.key, required this.projectName, required this.runId, required this.taskId});
+  const TaskDetailPage({
+    super.key,
+    required this.projectName,
+    required this.runId,
+    required this.taskId,
+    this.fromRuns = false,
+  });
 
   final String projectName;
   final String runId;
   final String taskId;
+
+  /// Opened from a row of the Execuções: "Voltar" returns there instead of the cycle.
+  final bool fromRuns;
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +43,14 @@ class TaskDetailPage extends StatelessWidget {
           final run = snapshot.data;
           final task = run?.tasks.where((t) => t.id == taskId).firstOrNull;
           if (run == null || task == null) return const Center(child: Muted('Task não encontrada.'));
-          return _TaskView(projectName: projectName, run: run, task: task);
+          return _TaskView(
+            // The page is also reused across tasks of one run: open sections must not leak into the next task.
+            key: ValueKey('$runId/$taskId'),
+            projectName: projectName,
+            run: run,
+            task: task,
+            fromRuns: fromRuns,
+          );
         },
       ),
     );
@@ -43,95 +58,251 @@ class TaskDetailPage extends StatelessWidget {
 }
 
 class _TaskView extends StatelessWidget {
-  const _TaskView({required this.projectName, required this.run, required this.task});
+  const _TaskView({
+    super.key,
+    required this.projectName,
+    required this.run,
+    required this.task,
+    required this.fromRuns,
+  });
 
   final String projectName;
   final Run run;
   final TaskRun task;
+  final bool fromRuns;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final repeated = <String, int>{};
-    final firstSeen = <String, Attempt>{};
-    for (final a in task.attempts) {
-      for (final f in a.blocking.map((f) => f.fingerprint).toSet()) {
-        repeated[f] = (repeated[f] ?? 0) + 1;
-        firstSeen.putIfAbsent(f, () => a);
-      }
-    }
+    final project = context.select<ProjectsCubit, Project?>(
+      (cubit) => cubit.state.data?.where((p) => p.name == projectName).firstOrNull,
+    );
+    final cycle = project?.cycle;
+    final table = cycle == null ? const <TaskRow>[] : taskTable(cycle);
+    final index = table.indexWhere((row) => row.id == task.id);
+    final description = task.description ?? cycle?.plan.where((t) => t.id == task.id).firstOrNull?.description;
+    final lines = taskAttemptLines(task, root: project?.path);
+    final tokens = task.tokensOut;
+    final runs = '/p/$projectName/runs';
 
-    return ListView(
+    // Not a ListView: it would drop the state of a section scrolled off screen, the diagnosis mid-creation included.
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
-      children: [
-        Row(
-          children: [
-            IconButton(
-              onPressed: () => context.go('/p/$projectName/runs'),
-              icon: Icon(Icons.arrow_back, size: 18, color: c.textSecondary),
-            ),
-            Mono(task.id, color: c.textMuted, size: 14),
-            const SizedBox(width: 10),
-            Expanded(child: Text(task.title, style: Theme.of(context).textTheme.titleLarge)),
-            ComplexityTag(task.complexity, risk: task.risk),
-            const SizedBox(width: 12),
-            VerdictBadge(task.status),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Padding(
-          padding: const EdgeInsets.only(left: 48),
-          child: Row(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (final f in task.files) Mono(f, size: 11),
-              const Spacer(),
-              Ladder(task: task, laneHeight: 9),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        if (task.description != null) ...[
-          Panel(
-            title: 'Descrição',
-            child: SelectionArea(
-              child: InlineMarkdown(
-                task.description!,
-                style: TextStyle(fontSize: 12.5, height: 1.5, color: c.textSecondary),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const ValueKey('task-back'),
+                  onPressed: () => context.go(fromRuns ? runs : '/p/$projectName/flow'),
+                  style: TextButton.styleFrom(foregroundColor: c.textSecondary),
+                  icon: const Icon(Icons.arrow_back, size: 16),
+                  label: Text(fromRuns ? 'Execuções' : 'Ciclo', style: const TextStyle(fontSize: 12.5)),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
-        if (task.status == Verdict.running) ...[
-          _LiveSection(projectName: projectName, task: task),
-          const SizedBox(height: 20),
-        ],
-        if (task.status == Verdict.blocked) ...[
-          DiagnosisPanel(
-            task: task,
-            run: run,
-            project: context.select<ProjectsCubit, Project?>(
-              (c) => c.state.data?.where((p) => p.name == projectName).firstOrNull,
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
-        Text('Tentativas', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 10),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final a in task.attempts) ...[
-                _AttemptCard(attempt: a, repeated: repeated, firstSeen: firstSeen),
-                if (a.escalatedTo != null) _EscalationArrow(to: a.escalatedTo!),
-                if (a.escalatedTo == null && a != task.attempts.last) const _RetryArrow(),
+              const SizedBox(height: 12),
+              Mono(task.id, color: c.textMuted, size: 13),
+              const SizedBox(height: 4),
+              Text(
+                task.title,
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: c.textPrimary),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                taskHeadline(task, position: index < 0 ? null : index + 1, total: index < 0 ? null : table.length),
+                key: const ValueKey('task-headline'),
+                style: TextStyle(fontSize: 13, color: c.textSecondary),
+              ),
+              const SizedBox(height: 20),
+              if (task.status == Verdict.running) ...[
+                _LiveSection(key: const ValueKey('task-live'), projectName: projectName, task: task),
+                const SizedBox(height: 20),
               ],
+              if (task.status == Verdict.blocked) ...[
+                DiagnosisPanel(key: const ValueKey('task-diagnosis'), task: task, run: run, project: project),
+                const SizedBox(height: 20),
+              ],
+              Column(
+                key: const ValueKey('task-attempts'),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('O que aconteceu', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 10),
+                  if (lines.isEmpty) const Muted('Ainda não houve tentativa.', size: 13),
+                  for (final line in lines) _AttemptLine(key: ValueKey('task-attempt-${line.ordinal}'), line: line),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (description != null && description.trim().isNotEmpty)
+                _Collapsed(
+                  key: const ValueKey('task-description'),
+                  toggleKey: const ValueKey('task-description-toggle'),
+                  label: 'Descrição da task',
+                  child: SelectionArea(
+                    child: InlineMarkdown(
+                      description,
+                      style: TextStyle(fontSize: 12.5, height: 1.5, color: c.textSecondary),
+                    ),
+                  ),
+                ),
+              if (task.files.isNotEmpty)
+                _Collapsed(
+                  key: const ValueKey('task-files'),
+                  toggleKey: const ValueKey('task-files-toggle'),
+                  label: 'Arquivos tocados (${task.files.length})',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final f in task.files)
+                        Padding(padding: const EdgeInsets.only(bottom: 4), child: Mono(f, size: 11.5)),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: 16),
+              Wrap(
+                key: const ValueKey('task-footer'),
+                spacing: 12,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (tokens != null) Muted('${formatTokens(tokens)} tokens out'),
+                  TextButton(
+                    key: const ValueKey('task-open-run'),
+                    onPressed: () => context.go(runs),
+                    child: Text('ver nas Execuções', style: TextStyle(fontSize: 12, color: c.textSecondary)),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
-      ],
+      ),
+    );
+  }
+}
+
+class _AttemptLine extends StatefulWidget {
+  const _AttemptLine({super.key, required this.line});
+
+  final TaskAttemptLine line;
+
+  @override
+  State<_AttemptLine> createState() => _AttemptLineState();
+}
+
+class _AttemptLineState extends State<_AttemptLine> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final line = widget.line;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: c.border)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            line.title,
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: c.textPrimary),
+          ),
+          const SizedBox(height: 2),
+          Text(line.subtitle, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+          if (line.message.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              line.message,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, height: 1.45, color: c.textPrimary),
+            ),
+          ],
+          if (line.location.isNotEmpty) ...[const SizedBox(height: 6), Mono(line.location, size: 11)],
+          if (line.rule.isNotEmpty) ...[const SizedBox(height: 2), Mono(line.rule, size: 11, color: c.accent)],
+          if (line.others.isNotEmpty)
+            DisclosureToggle(
+              key: ValueKey('task-attempt-${line.ordinal}-more'),
+              open: _open,
+              onTap: () => setState(() => _open = !_open),
+              children: [
+                Flexible(
+                  child: Text('e mais ${line.others.length}', style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+                ),
+              ],
+            ),
+          if (_open)
+            for (final other in line.others)
+              Padding(
+                padding: const EdgeInsets.only(left: 22, bottom: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(other.message, style: TextStyle(fontSize: 13, height: 1.45, color: c.textPrimary)),
+                    if (other.location.isNotEmpty) ...[const SizedBox(height: 4), Mono(other.location, size: 11)],
+                    if (other.rule.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Mono(other.rule, size: 11, color: c.accent),
+                    ],
+                  ],
+                ),
+              ),
+          if (line.note.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(line.note, style: TextStyle(fontSize: 12.5, height: 1.45, color: c.textSecondary)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// A section that starts closed; the content is only built while open.
+class _Collapsed extends StatefulWidget {
+  const _Collapsed({super.key, required this.toggleKey, required this.label, required this.child});
+
+  final Key toggleKey;
+  final String label;
+  final Widget child;
+
+  @override
+  State<_Collapsed> createState() => _CollapsedState();
+}
+
+class _CollapsedState extends State<_Collapsed> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: c.border)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          DisclosureToggle(
+            key: widget.toggleKey,
+            open: _open,
+            onTap: () => setState(() => _open = !_open),
+            children: [
+              Flexible(
+                child: Text(
+                  widget.label,
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c.textPrimary),
+                ),
+              ),
+            ],
+          ),
+          if (_open) Padding(padding: const EdgeInsets.only(left: 22, bottom: 12), child: widget.child),
+        ],
+      ),
     );
   }
 }
@@ -146,7 +317,7 @@ String formatElapsed(Duration d) {
 }
 
 class _LiveSection extends StatefulWidget {
-  const _LiveSection({required this.projectName, required this.task});
+  const _LiveSection({super.key, required this.projectName, required this.task});
 
   final String projectName;
   final TaskRun task;
@@ -242,218 +413,6 @@ class _LiveSectionState extends State<_LiveSection> {
                 ),
               ),
         ],
-      ),
-    );
-  }
-}
-
-class _AttemptCard extends StatelessWidget {
-  const _AttemptCard({required this.attempt, required this.repeated, required this.firstSeen});
-
-  final Attempt attempt;
-  final Map<String, int> repeated;
-  final Map<String, Attempt> firstSeen;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      width: 316,
-      decoration: BoxDecoration(
-        color: c.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: c.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: c.border)),
-            ),
-            child: Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    attempt.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontFamily: monoFamily, fontSize: 13, color: c.textPrimary),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                TierChip(attempt.tier),
-                const Spacer(),
-                Mono(formatTokens(attempt.tokensOut), size: 11),
-                const SizedBox(width: 10),
-                VerdictBadge(attempt.verdict),
-              ],
-            ),
-          ),
-          if (attempt.summary != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Text(
-                attempt.summary!,
-                style: TextStyle(fontSize: 12, color: c.textSecondary, fontStyle: FontStyle.italic),
-              ),
-            ),
-          for (final g in attempt.gates)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Mono(g.gate.toUpperCase(), color: c.textPrimary),
-                      const SizedBox(width: 8),
-                      VerdictBadge(g.verdict),
-                    ],
-                  ),
-                  for (final f in g.findings)
-                    if ((firstSeen[f.fingerprint]?.ordinal ?? attempt.ordinal) < attempt.ordinal)
-                      _RepeatedFindingLine(
-                        finding: f,
-                        firstLabel: firstSeen[f.fingerprint]!.label,
-                        count: repeated[f.fingerprint]!,
-                      )
-                    else
-                      _FindingTile(finding: f, repeatCount: repeated[f.fingerprint] ?? 0),
-                ],
-              ),
-            ),
-          const SizedBox(height: 12),
-        ],
-      ),
-    );
-  }
-}
-
-class _FindingTile extends StatelessWidget {
-  const _FindingTile({required this.finding, required this.repeatCount});
-
-  final Finding finding;
-  final int repeatCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final hot = repeatCount > 1;
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: hot ? c.fail.withValues(alpha: 0.07) : c.elevated,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: hot ? c.fail.withValues(alpha: 0.45) : c.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Pill(label: finding.severity, color: finding.severity == 'critical' ? c.fail : c.warn, dot: false),
-              const SizedBox(width: 6),
-              if (hot) Pill(label: 'repetido ×$repeatCount', color: c.fail, dot: false),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(finding.message, style: TextStyle(fontSize: 12, height: 1.4, color: c.textPrimary)),
-          const SizedBox(height: 6),
-          Mono('${finding.file}${finding.line == null ? '' : ':${finding.line}'}', size: 10.5),
-          Mono(finding.ruleRef, size: 10.5, color: c.accent),
-        ],
-      ),
-    );
-  }
-}
-
-class _EscalationArrow extends StatelessWidget {
-  const _EscalationArrow({required this.to});
-
-  final Tier to;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return SizedBox(
-      width: 96,
-      child: Padding(
-        padding: const EdgeInsets.only(top: 40),
-        child: Column(
-          children: [
-            Icon(Icons.trending_up, color: c.tier(to), size: 20),
-            const SizedBox(height: 4),
-            Mono('desfez e escalou', size: 10, color: c.textMuted),
-            Mono('→ ${to.name}', size: 11, color: c.tier(to)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RetryArrow extends StatelessWidget {
-  const _RetryArrow();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return SizedBox(
-      width: 72,
-      child: Padding(
-        padding: const EdgeInsets.only(top: 40),
-        child: Column(
-          children: [
-            Icon(Icons.redo, color: c.textMuted, size: 18),
-            const SizedBox(height: 4),
-            Mono('mesmo modelo', size: 10, color: c.textMuted),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RepeatedFindingLine extends StatelessWidget {
-  const _RepeatedFindingLine({required this.finding, required this.firstLabel, required this.count});
-
-  final Finding finding;
-  final String firstLabel;
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Tooltip(
-      message: finding.message,
-      child: Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: c.fail.withValues(alpha: 0.45)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.repeat, size: 14, color: c.fail),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text('igual à $firstLabel', style: TextStyle(fontSize: 12, color: c.textPrimary)),
-                ),
-                const SizedBox(width: 8),
-                Pill(label: 'repetido ×$count', color: c.fail, dot: false),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Mono(finding.ruleRef, size: 10.5, color: c.accent),
-          ],
-        ),
       ),
     );
   }

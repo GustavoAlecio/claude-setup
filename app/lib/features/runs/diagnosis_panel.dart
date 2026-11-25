@@ -31,14 +31,7 @@ const _notes = {
   DiagnosisKind.busy: 'Já há uma conversa do pipeline rodando neste projeto.',
 };
 
-const _reasons = {
-  'same_failure_across_tiers':
-      'A mesma falha sobreviveu a dois modelos diferentes — não é capacidade, é spec ou plano.',
-  'ladder_exhausted': 'A escada chegou ao topo (fable) sem passar nos gates.',
-  'max_attempts': 'Limite de 5 tentativas atingido.',
-  'agent_failed':
-      'Um agente caiu (parado, limite de uso ou erro de API). Não diz nada sobre a task: rode /implement de novo.',
-};
+const _noHypotheses = 'O diagnóstico não trouxe hipóteses. Use a paleta para seguir.';
 
 /// The decision buttons do what [diagnosisMode] says for [task] in [run].
 class DiagnosisPanel extends StatefulWidget {
@@ -60,6 +53,7 @@ class DiagnosisPanel extends StatefulWidget {
 class _DiagnosisPanelState extends State<DiagnosisPanel> with SessionLauncher<DiagnosisPanel> {
   String? _pathError;
   String? _lastKey;
+  bool _showOthers = false;
 
   @override
   String get logName => 'DiagnosisPanel';
@@ -101,26 +95,56 @@ class _DiagnosisPanelState extends State<DiagnosisPanel> with SessionLauncher<Di
     };
   }
 
-  Widget _button(DiagnosisMode mode, Hypothesis h, {required bool primary}) => _ActionButton(
+  Widget _button(DiagnosisMode mode, String action, {required bool primary, bool filled = false}) => _ActionButton(
     buttonKey: ValueKey(
-      widget.onExpand == null ? 'diagnosis-action-${h.action}' : 'diagnosis-action-${widget.run.id}-${h.action}',
+      widget.onExpand == null ? 'diagnosis-action-$action' : 'diagnosis-action-${widget.run.id}-$action',
     ),
-    action: h.action,
+    action: action,
     primary: primary,
-    onPressed: _onPressed(mode, h.action),
+    filled: filled,
+    onPressed: _onPressed(mode, action),
   );
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final task = widget.task;
-    final onExpand = widget.onExpand;
     final sessions = context.watch<SessionsCubit>().state.data ?? const <SessionSummary>[];
-    final mode = diagnosisMode(widget.project, task, widget.run, sessions);
+    final mode = diagnosisMode(widget.project, widget.task, widget.run, sessions);
     final note = _notes[mode.kind];
     final lastKey = _lastKey;
     final error = _pathError ?? (lastKey == null ? null : createError(lastKey));
-    final ranked = [...task.diagnosis]..sort((a, b) => b.confidence.compareTo(a.confidence));
+    final ranked = rankedHypotheses(widget.task);
+    final feedback = [
+      if (note != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Muted(note, key: const ValueKey('diagnosis-note'), size: 12),
+        ),
+      if (error != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Text(
+            error,
+            key: const ValueKey('diagnosis-error'),
+            style: TextStyle(fontSize: 12, color: c.fail),
+          ),
+        ),
+    ];
+    final onExpand = widget.onExpand;
+    return onExpand == null
+        ? _decide(context, mode, ranked, feedback)
+        : _compact(context, mode, ranked, feedback, onExpand);
+  }
+
+  Widget _compact(
+    BuildContext context,
+    DiagnosisMode mode,
+    List<Hypothesis> ranked,
+    List<Widget> feedback,
+    VoidCallback onExpand,
+  ) {
+    final c = context.colors;
+    final task = widget.task;
     return Container(
       decoration: BoxDecoration(
         color: c.surface,
@@ -141,111 +165,141 @@ class _DiagnosisPanelState extends State<DiagnosisPanel> with SessionLauncher<Di
             ],
           ),
           const SizedBox(height: 6),
-          Muted(_reasons[task.blockedReason] ?? '', size: 12),
+          Muted(blockedReasonText(task.blockedReason), size: 12),
           const SizedBox(height: 14),
-          if (onExpand != null && ranked.isNotEmpty)
+          if (ranked.isNotEmpty)
             _CompactTop(
               h: ranked.first,
               others: ranked.length - 1,
               onExpand: onExpand,
-              button: _button(mode, ranked.first, primary: true),
-            )
-          else
-            IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (final (i, h) in ranked.indexed) ...[
-                    if (i > 0) const SizedBox(width: 12),
-                    Expanded(
-                      child: _HypothesisCard(
-                        h: h,
-                        top: i == 0,
-                        button: _button(mode, h, primary: i == 0),
-                      ),
+              button: _button(mode, ranked.first.action, primary: true),
+            ),
+          ...feedback,
+        ],
+      ),
+    );
+  }
+
+  Widget _decide(BuildContext context, DiagnosisMode mode, List<Hypothesis> ranked, List<Widget> feedback) {
+    final c = context.colors;
+    final reason = blockedReasonText(widget.task.blockedReason);
+    // One button per action, in ranking order: the key `diagnosis-action-<action>` must stay unique on the screen.
+    final offered = <String>{};
+    final exits = [
+      for (final (i, h) in ranked.indexed)
+        if (!_actions.containsKey(h.action))
+          Muted('ação desconhecida: ${h.action}')
+        else if (!offered.add(h.action))
+          const Muted('mesma saída da hipótese acima')
+        else
+          _button(mode, h.action, primary: i == 0, filled: i == 0),
+    ];
+    return Container(
+      key: const ValueKey('task-decide'),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.warn.withValues(alpha: 0.5)),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            kNeedsYou,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c.warn),
+          ),
+          if (reason.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(reason, style: TextStyle(fontSize: 13, height: 1.45, color: c.textSecondary)),
+          ],
+          const SizedBox(height: 14),
+          if (ranked.isEmpty)
+            widget.task.blockedReason == 'agent_failed'
+                ? _button(mode, 'fix_environment', primary: true, filled: true)
+                : Text(_noHypotheses, style: TextStyle(fontSize: 13, color: c.textSecondary))
+          else ...[
+            Text(
+              ranked.first.hypothesis,
+              maxLines: 6,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 15, height: 1.45, color: c.textPrimary),
+            ),
+            if (ranked.first.evidence.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _Evidence(ranked.first.evidence, key: const ValueKey('task-decide-evidence')),
+            ],
+            const SizedBox(height: 14),
+            exits.first,
+            const SizedBox(height: 6),
+            Row(
+              key: const ValueKey('task-decide-rank'),
+              children: [
+                Flexible(
+                  child: Muted(ranked.length == 1 ? 'única hipótese' : 'hipótese mais provável de ${ranked.length}'),
+                ),
+                if (ranked.length > 1)
+                  TextButton(
+                    key: const ValueKey('task-other-options'),
+                    onPressed: () => setState(() => _showOthers = !_showOthers),
+                    child: Text(
+                      _showOthers ? 'ocultar as outras' : 'ver as outras',
+                      style: TextStyle(fontSize: 12, color: c.textSecondary),
                     ),
-                  ],
-                ],
-              ),
+                  ),
+              ],
             ),
-          if (note != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Muted(note, key: const ValueKey('diagnosis-note'), size: 12),
-            ),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                error,
-                key: const ValueKey('diagnosis-error'),
-                style: TextStyle(fontSize: 12, color: c.fail),
-              ),
-            ),
+            if (_showOthers)
+              for (final (i, h) in ranked.indexed.skip(1))
+                Container(
+                  key: ValueKey('task-hypothesis-$i'),
+                  margin: const EdgeInsets.only(top: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: c.elevated,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: c.border),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(h.hypothesis, style: TextStyle(fontSize: 13, height: 1.45, color: c.textPrimary)),
+                      if (h.evidence.isNotEmpty) ...[const SizedBox(height: 8), _Evidence(h.evidence)],
+                      const SizedBox(height: 12),
+                      exits[i],
+                    ],
+                  ),
+                ),
+          ],
+          ...feedback,
         ],
       ),
     );
   }
 }
 
-class _HypothesisCard extends StatelessWidget {
-  const _HypothesisCard({required this.h, required this.top, required this.button});
+class _Evidence extends StatelessWidget {
+  const _Evidence(this.lines, {super.key});
 
-  final Hypothesis h;
-  final bool top;
-  final Widget button;
+  final List<String> lines;
 
   @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: c.elevated,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: top ? c.accent.withValues(alpha: 0.6) : c.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (final line in lines)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 3),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Pill(label: 'ângulo: ${h.lens}', color: top ? c.accent : c.idle, dot: false),
-              const Spacer(),
-              Mono('${(h.confidence * 100).round()}%', color: c.textPrimary),
+              const Muted('↳ ', size: 11),
+              Expanded(child: Mono(line, size: 11)),
             ],
           ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              value: h.confidence,
-              minHeight: 3,
-              backgroundColor: c.border,
-              color: top ? c.accent : c.idle,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(h.hypothesis, style: TextStyle(fontSize: 12.5, height: 1.45, color: c.textPrimary)),
-          const SizedBox(height: 10),
-          for (final e in h.evidence)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 3),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Muted('↳ ', size: 11),
-                  Expanded(child: Mono(e, size: 11)),
-                ],
-              ),
-            ),
-          const Spacer(),
-          const SizedBox(height: 12),
-          SizedBox(width: double.infinity, child: button),
-        ],
-      ),
-    );
-  }
+        ),
+    ],
+  );
 }
 
 class _CompactTop extends StatelessWidget {
@@ -299,27 +353,50 @@ class _CompactTop extends StatelessWidget {
 }
 
 class _ActionButton extends StatelessWidget {
-  const _ActionButton({required this.buttonKey, required this.action, required this.primary, required this.onPressed});
+  const _ActionButton({
+    required this.buttonKey,
+    required this.action,
+    required this.primary,
+    required this.filled,
+    required this.onPressed,
+  });
 
   final Key buttonKey;
   final String action;
   final bool primary;
+  final bool filled;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final (label, command) = _actions[action] ?? (action, null);
+    final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(6));
+    const padding = EdgeInsets.symmetric(vertical: 12);
+    final child = Text(command == null ? label : '$label  $command', style: const TextStyle(fontSize: 12));
+    if (filled) {
+      return FilledButton(
+        key: buttonKey,
+        style: FilledButton.styleFrom(
+          backgroundColor: c.accent,
+          foregroundColor: Colors.white,
+          shape: shape,
+          padding: padding,
+        ),
+        onPressed: onPressed,
+        child: child,
+      );
+    }
     return OutlinedButton(
       key: buttonKey,
       style: OutlinedButton.styleFrom(
         foregroundColor: primary ? c.accent : c.textSecondary,
         side: BorderSide(color: onPressed == null ? c.border : (primary ? c.accent : c.borderStrong)),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: shape,
+        padding: padding,
       ),
       onPressed: onPressed,
-      child: Text(command == null ? label : '$label  $command', style: const TextStyle(fontSize: 12)),
+      child: child,
     );
   }
 }

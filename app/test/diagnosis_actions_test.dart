@@ -88,7 +88,12 @@ SessionSummary _session(String id, String command, {int pending = 0}) => Session
 Hypothesis _hypothesis(String action, double confidence) =>
     Hypothesis(lens: 'x', hypothesis: 'hipótese $action', confidence: confidence, evidence: const [], action: action);
 
-TaskRun _task(String id, Verdict status, {List<Hypothesis> diagnosis = const []}) => TaskRun(
+TaskRun _task(
+  String id,
+  Verdict status, {
+  List<Hypothesis> diagnosis = const [],
+  String blockedReason = 'max_attempts',
+}) => TaskRun(
   id: id,
   title: 'Titulo $id',
   complexity: Complexity.m,
@@ -98,7 +103,7 @@ TaskRun _task(String id, Verdict status, {List<Hypothesis> diagnosis = const []}
   attempts: [
     if (status != Verdict.pending) Attempt(number: 1, ordinal: 1, tier: Tier.haiku, gates: [GateResult('g0', status)]),
   ],
-  blockedReason: status == Verdict.blocked ? 'max_attempts' : null,
+  blockedReason: status == Verdict.blocked ? blockedReason : null,
   diagnosis: diagnosis,
 );
 
@@ -114,7 +119,7 @@ final _all = [
 ];
 
 /// `Cycle.runs` is newest first: T3 of the newer run holds the decision, T2 of the older one is history.
-List<Project> _data({String? path = _path}) => [
+List<Project> _data({String? path = _path, List<Hypothesis>? newest, String blockedReason = 'max_attempts'}) => [
   Project(
     name: 'trava',
     path: path,
@@ -122,7 +127,7 @@ List<Project> _data({String? path = _path}) => [
       stage: Stage.implement,
       stageMinutes: const {},
       runs: [
-        _run(_newRun, [_task('T3', Verdict.blocked, diagnosis: _all)]),
+        _run(_newRun, [_task('T3', Verdict.blocked, diagnosis: newest ?? _all, blockedReason: blockedReason)]),
         _run(_oldRun, [_task('T1', Verdict.pass), _task('T2', Verdict.blocked, diagnosis: _all)]),
       ],
       plan: [
@@ -146,6 +151,25 @@ bool _enabled(WidgetTester tester, Finder button) => tester.widget<ButtonStyleBu
 final _note = find.descendant(of: find.byKey(const ValueKey('diagnosis-note')), matching: find.byType(Text));
 final _error = find.byKey(const ValueKey('diagnosis-error'));
 final _palette = find.textContaining('Nova conversa');
+final _decide = find.byKey(const ValueKey('task-decide'));
+final _others = find.byKey(const ValueKey('task-other-options'));
+final _anyAction = find.byWidgetPredicate(
+  (w) => switch (w.key) {
+    ValueKey<String>(:final value) => value.startsWith('diagnosis-action-'),
+    _ => false,
+  },
+);
+
+Finder _other(int i) => find.byKey(ValueKey('task-hypothesis-$i'));
+
+Finder _within(Finder of, Finder matching) => find.descendant(of: of, matching: matching);
+
+Future<void> _tap(WidgetTester tester, Finder target) async {
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+  await tester.tap(target);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   setUp(() {
@@ -189,8 +213,8 @@ void main() {
       testWidgets('launch: $action creates a $command session and opens it', (tester) async {
         final sessions = await pump(tester, blocked);
 
-        await tester.tap(_action(action));
-        await tester.pumpAndSettle();
+        if (action != 'replan') await _tap(tester, _others);
+        await _tap(tester, _action(action));
 
         expect(sessions.createCalls, [('trava', command, _path, 'acct-a', PermissionMode.auto)]);
         expect(_location(tester), '/p/trava/sessions/mock-1');
@@ -203,8 +227,8 @@ void main() {
       expect(find.byKey(const ValueKey('diagnosis-note')), findsNothing);
       expect(_palette, findsNothing);
 
-      await tester.tap(_action('human_takeover'));
-      await tester.pumpAndSettle();
+      await _tap(tester, _others);
+      await _tap(tester, _action('human_takeover'));
 
       expect(_palette, findsWidgets);
       expect(sessions.createCalls, isEmpty);
@@ -230,12 +254,12 @@ void main() {
       );
 
       expect(tester.widget<Text>(_note).data, 'A conversa da etapa já está perguntando isto: responda lá.');
+      await _tap(tester, _others);
       for (final action in [..._commands.keys, 'human_takeover']) {
         expect(_enabled(tester, _action(action)), isTrue, reason: action);
       }
 
-      await tester.tap(_action('replan'));
-      await tester.pumpAndSettle();
+      await _tap(tester, _action('replan'));
 
       expect(sessions.createCalls, isEmpty);
       expect(_location(tester), '/p/trava/sessions/s-plan');
@@ -245,12 +269,12 @@ void main() {
       final sessions = await pump(tester, blocked, sessions: _FixedSessions([_session('s-impl', '/implement')]));
 
       expect(tester.widget<Text>(_note).data, 'Já há uma conversa do pipeline rodando neste projeto.');
+      await _tap(tester, _others);
       for (final action in _commands.keys) {
         expect(_enabled(tester, _action(action)), isFalse, reason: action);
       }
 
-      await tester.tap(_action('human_takeover'));
-      await tester.pumpAndSettle();
+      await _tap(tester, _action('human_takeover'));
       expect(_palette, findsWidgets);
       expect(sessions.createCalls, isEmpty);
     });
@@ -258,6 +282,8 @@ void main() {
     testWidgets('inert: the blocked task of an old run has every button off', (tester) async {
       await pump(tester, '/p/trava/runs/$_oldRun/T2');
 
+      expect(_decide, findsOneWidget);
+      await _tap(tester, _others);
       for (final action in [..._commands.keys, 'human_takeover']) {
         expect(_enabled(tester, _action(action)), isFalse, reason: action);
       }
@@ -268,6 +294,9 @@ void main() {
       final sessions = _SlowSessions();
       await pump(tester, blocked, sessions: sessions);
 
+      await _tap(tester, _others);
+      await tester.ensureVisible(_action('replan'));
+      await tester.pumpAndSettle();
       await tester.tap(_action('replan'));
       await tester.pump();
       for (final action in [..._commands.keys, 'human_takeover']) {
@@ -285,14 +314,141 @@ void main() {
       await pump(tester, blocked, sessions: _FailingSessions());
       expect(_error, findsNothing);
 
-      await tester.tap(_action('split_task'));
-      await tester.pumpAndSettle();
+      await _tap(tester, _others);
+      await _tap(tester, _action('split_task'));
 
       expect(tester.widget<Text>(_error).data, contains(_engineError));
       for (final action in [..._commands.keys, 'human_takeover']) {
         expect(_enabled(tester, _action(action)), isTrue, reason: action);
       }
       expect(_location(tester), blocked);
+    });
+
+    testWidgets('the card shows the top hypothesis and keeps the others closed until asked', (tester) async {
+      final three = [
+        const Hypothesis(
+          lens: 'x',
+          hypothesis: 'hipótese fix_spec',
+          confidence: 0.5,
+          evidence: ['spec.md critério 3'],
+          action: 'fix_spec',
+        ),
+        const Hypothesis(
+          lens: 'x',
+          hypothesis: 'hipótese replan',
+          confidence: 0.9,
+          evidence: ['plan.md passo 4', 'docs/adr/0004.md'],
+          action: 'replan',
+        ),
+        _hypothesis('split_task', 0.2),
+      ];
+      await pump(tester, blocked, data: _data(newest: three));
+
+      expect(_within(_decide, find.text('Precisa de você')), findsOneWidget);
+      expect(_within(_decide, find.text('Limite de 5 tentativas atingido.')), findsOneWidget);
+      expect(_within(_decide, find.text('hipótese replan')), findsOneWidget);
+      final evidence = find.byKey(const ValueKey('task-decide-evidence'));
+      expect(_within(evidence, find.text('plan.md passo 4')), findsOneWidget);
+      expect(_within(evidence, find.text('docs/adr/0004.md')), findsOneWidget);
+      expect(tester.widget(_action('replan')), isA<FilledButton>());
+      expect(_within(_decide, _action('replan')), findsOneWidget);
+      final rank = find.byKey(const ValueKey('task-decide-rank'));
+      expect(_within(rank, find.text('hipótese mais provável de 3')), findsOneWidget);
+      expect(_within(_others, find.text('ver as outras')), findsOneWidget);
+      expect(_anyAction, findsOneWidget);
+      expect(find.text('hipótese fix_spec'), findsNothing);
+      expect(find.text('hipótese split_task'), findsNothing);
+      expect(_other(1), findsNothing);
+      expect(find.textContaining('ângulo'), findsNothing);
+      expect(find.textContaining('%'), findsNothing);
+
+      await _tap(tester, _others);
+
+      expect(_within(_others, find.text('ocultar as outras')), findsOneWidget);
+      expect(_within(_other(1), find.text('hipótese fix_spec')), findsOneWidget);
+      expect(_within(_other(1), find.text('spec.md critério 3')), findsOneWidget);
+      expect(_within(_other(2), find.text('hipótese split_task')), findsOneWidget);
+      expect(tester.widget(_within(_other(1), _action('fix_spec'))), isA<OutlinedButton>());
+      expect(tester.widget(_within(_other(2), _action('split_task'))), isA<OutlinedButton>());
+      expect(_other(3), findsNothing);
+      expect(
+        tester.getTopLeft(_other(1)).dy,
+        lessThan(tester.getTopLeft(_other(2)).dy),
+        reason: 'the other hypotheses stack vertically, in ranking order',
+      );
+      expect(tester.takeException(), isNull);
+
+      await _tap(tester, _others);
+      expect(_other(1), findsNothing);
+      expect(_anyAction, findsOneWidget);
+    });
+
+    testWidgets('an action repeated down the ranking keeps a single button', (tester) async {
+      final sessions = await pump(
+        tester,
+        blocked,
+        data: _data(newest: [_hypothesis('replan', 0.9), _hypothesis('fix_spec', 0.6), _hypothesis('replan', 0.3)]),
+      );
+
+      expect(_action('replan'), findsOneWidget);
+      await _tap(tester, _others);
+      expect(_action('replan'), findsOneWidget);
+      expect(_within(_decide, _action('replan')), findsOneWidget);
+      expect(_within(_other(1), _action('fix_spec')), findsOneWidget);
+      expect(_within(_other(2), find.text('mesma saída da hipótese acima')), findsOneWidget);
+      expect(_within(_other(2), find.byType(ButtonStyleButton)), findsNothing);
+      expect(_within(_other(1), find.text('mesma saída da hipótese acima')), findsNothing);
+
+      await _tap(tester, _action('replan'));
+      expect(sessions.createCalls.single.$2, '/plan');
+    });
+
+    testWidgets('an action outside the known set shows a note and no button', (tester) async {
+      await pump(tester, blocked, data: _data(newest: [_hypothesis('rewrite_all', 0.9), _hypothesis('replan', 0.4)]));
+
+      expect(_within(_decide, find.text('ação desconhecida: rewrite_all')), findsOneWidget);
+      expect(_anyAction, findsNothing);
+
+      await _tap(tester, _others);
+      expect(_within(_other(1), _action('replan')), findsOneWidget);
+      expect(_anyAction, findsOneWidget);
+    });
+
+    testWidgets('agent_failed without hypotheses offers /implement again', (tester) async {
+      final sessions = await pump(
+        tester,
+        blocked,
+        data: _data(newest: const [], blockedReason: 'agent_failed'),
+      );
+
+      expect(tester.widget(_action('fix_environment')), isA<FilledButton>());
+      expect(_anyAction, findsOneWidget);
+      expect(find.byKey(const ValueKey('task-decide-rank')), findsNothing);
+      expect(find.textContaining('não trouxe hipóteses'), findsNothing);
+
+      await _tap(tester, _action('fix_environment'));
+      expect(sessions.createCalls, [('trava', '/implement', _path, 'acct-a', PermissionMode.auto)]);
+      expect(_location(tester), '/p/trava/sessions/mock-1');
+    });
+
+    testWidgets('another reason without hypotheses points to the palette, with no button', (tester) async {
+      await pump(tester, blocked, data: _data(newest: const []));
+
+      expect(
+        _within(_decide, find.text('O diagnóstico não trouxe hipóteses. Use a paleta para seguir.')),
+        findsOneWidget,
+      );
+      expect(_anyAction, findsNothing);
+      expect(_others, findsNothing);
+    });
+
+    testWidgets('a single hypothesis has no other options to open', (tester) async {
+      await pump(tester, blocked, data: _data(newest: [_hypothesis('split_task', 0.4)]));
+
+      final rank = find.byKey(const ValueKey('task-decide-rank'));
+      expect(_within(rank, find.text('única hipótese')), findsOneWidget);
+      expect(_others, findsNothing);
+      expect(tester.widget(_action('split_task')), isA<FilledButton>());
     });
   });
 

@@ -107,7 +107,7 @@ class _GateDiffFullState extends State<GateDiffFull> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _Toggle(
+          DisclosureToggle(
             key: const ValueKey('gate-diff-full-toggle'),
             open: _open,
             onTap: () => setState(() => _open = !_open),
@@ -127,7 +127,7 @@ class _GateDiffFullState extends State<GateDiffFull> {
           ),
           if (_open)
             for (final (i, file) in files.indexed) ...[
-              _Toggle(
+              DisclosureToggle(
                 key: ValueKey('gate-diff-file-$i'),
                 open: _openFiles.contains(file.path),
                 onTap: () => setState(
@@ -154,30 +154,6 @@ class _GateDiffFullState extends State<GateDiffFull> {
       ),
     );
   }
-}
-
-class _Toggle extends StatelessWidget {
-  const _Toggle({super.key, required this.open, required this.onTap, required this.children});
-
-  final bool open;
-  final VoidCallback onTap;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-    borderRadius: BorderRadius.circular(6),
-    onTap: onTap,
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 44),
-      child: Row(
-        children: [
-          Icon(open ? Icons.expand_more : Icons.chevron_right, size: 16, color: context.colors.textMuted),
-          const SizedBox(width: 6),
-          ...children,
-        ],
-      ),
-    ),
-  );
 }
 
 class _FileLines extends StatelessWidget {
