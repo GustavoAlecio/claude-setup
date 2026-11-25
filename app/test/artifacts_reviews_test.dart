@@ -266,6 +266,7 @@ void main() {
     testWidgets('no reviews shows the empty state', (tester) async {
       await _open(tester, '/p/demo-app/reviews', docs: MockDocsRepository.empty());
       expect(find.text('nenhum review; rode /review em um PR'), findsOneWidget);
+      expect(find.byKey(const ValueKey('reviews-back')), findsOneWidget);
     });
 
     testWidgets('a review comment with --- is rendered whole', (tester) async {
@@ -424,9 +425,9 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('group-prs')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('subtab-reviews')));
+    await tester.tap(find.byKey(const ValueKey('review-row-157')));
     await tester.pumpAndSettle();
-    expect(router.routerDelegate.currentConfiguration.uri.path, '/p/demo-app/reviews');
+    expect(_at(router), '/p/demo-app/reviews?pr=157');
 
     router.go('/o/demo/sessions');
     await tester.pumpAndSettle();

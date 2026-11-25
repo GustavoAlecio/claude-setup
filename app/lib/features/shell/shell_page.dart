@@ -1237,7 +1237,7 @@ class _UnknownProjectBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '$name não é um projeto das suas orgs. As revisões dele aparecem em Reviews; para rodar o Fluxo, '
+              '$name não é um projeto das suas orgs. As revisões dele aparecem em PRs; para rodar o Fluxo, '
               'Kickoff ou conversas aqui, adicione a pasta em Configurações.',
               style: TextStyle(fontSize: 12, color: c.textPrimary),
             ),

@@ -67,7 +67,7 @@ ProjectGroup groupOf(AppTab tab) => switch (tab) {
 List<AppTab> groupTabs(ProjectGroup group) => switch (group) {
   ProjectGroup.cycle => const [AppTab.flow, AppTab.runs],
   ProjectGroup.talks => const [AppTab.sessions],
-  ProjectGroup.prs => const [AppTab.prs, AppTab.reviews],
+  ProjectGroup.prs => const [AppTab.prs],
   ProjectGroup.reference => const [AppTab.artifacts, AppTab.adrs, AppTab.metrics],
 };
 

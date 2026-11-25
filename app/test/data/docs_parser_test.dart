@@ -494,4 +494,51 @@ void main() {
       expect(buildDiffRows(const [], const [], {}), isEmpty);
     });
   });
+
+  group('reviewLine', () {
+    String doc(String status, {String extra = '', String body = ''}) => '---\nstatus: $status\n$extra---\n$body';
+    String achados(String counts) => '# R\n\n- **Achados:** $counts\n';
+
+    test('draft summarises findings', () {
+      expect(
+        reviewLine(doc('draft', body: achados('1 critical, 1 major, 2 minor, 0 nit'))).text,
+        'rascunho pronto: 2 problemas sérios, 2 menores',
+      );
+      expect(reviewLine(doc('draft', body: achados('0 critical, 1 major'))).text, 'rascunho pronto: 1 problema sério');
+      expect(reviewLine(doc('draft', body: achados('1 minor'))).text, 'rascunho pronto: 1 menor');
+      expect(
+        reviewLine(doc('draft', body: achados('0 critical, 0 major, 0 minor, 0 nit'))).text,
+        'rascunho pronto, sem problemas',
+      );
+      expect(reviewLine(doc('draft', body: achados('nenhum'))).text, 'rascunho pronto');
+      expect(reviewLine(doc('draft')).text, 'rascunho pronto');
+      expect(reviewLine(doc('draft')).status, ReviewStatus.draft);
+    });
+
+    test('approved and published', () {
+      final a = reviewLine(doc('approved'));
+      expect(a.status, ReviewStatus.approved);
+      expect(a.text, 'aprovada, falta publicar');
+      final p = reviewLine(doc('published', extra: 'published_at: 2026-09-28T15:00:00Z\n'));
+      expect(p.status, ReviewStatus.published);
+      expect(p.text, 'publicada em 28 set');
+      expect(reviewLine(doc('published')).text, 'publicada');
+      expect(reviewLine(doc('published', extra: 'published_at: ontem\n')).text, 'publicada');
+    });
+
+    test('unknown without front-matter or with an unknown status', () {
+      for (final raw in ['', '# só corpo', doc('mystery'), '---\nstatus: draft\nsem fechamento']) {
+        final r = reviewLine(raw);
+        expect(r.status, ReviewStatus.unknown);
+        expect(r.text, 'revisão');
+      }
+    });
+
+    test('title keeps text after the first colon and drops quotes', () {
+      expect(reviewLine(doc('draft', extra: 'title: feat: cache\n')).title, 'feat: cache');
+      expect(reviewLine(doc('draft', extra: 'title: "x"\n')).title, 'x');
+      expect(reviewLine(doc('draft', extra: "title: 'y'\n")).title, 'y');
+      expect(reviewLine(doc('draft')).title, isNull);
+    });
+  });
 }

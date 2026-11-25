@@ -29,7 +29,7 @@ void main() {
   test('groupTabs follows the table', () {
     expect(groupTabs(ProjectGroup.cycle), [AppTab.flow, AppTab.runs]);
     expect(groupTabs(ProjectGroup.talks), [AppTab.sessions]);
-    expect(groupTabs(ProjectGroup.prs), [AppTab.prs, AppTab.reviews]);
+    expect(groupTabs(ProjectGroup.prs), [AppTab.prs]);
     expect(groupTabs(ProjectGroup.reference), [AppTab.artifacts, AppTab.adrs, AppTab.metrics]);
   });
 
@@ -42,10 +42,12 @@ void main() {
   });
 
   test('every project tab is in exactly one group', () {
-    for (final t in AppTab.values.where((t) => t != AppTab.queue && t != AppTab.inbox)) {
+    const outside = {AppTab.queue, AppTab.inbox, AppTab.reviews};
+    for (final t in AppTab.values.where((t) => !outside.contains(t))) {
       final count = ProjectGroup.values.where((g) => groupTabs(g).contains(t)).length;
       expect(count, 1, reason: t.name);
     }
+    expect(groupOf(AppTab.reviews), ProjectGroup.prs);
   });
 
   test('subTabLabel uses the sub-tab names and falls back to label', () {

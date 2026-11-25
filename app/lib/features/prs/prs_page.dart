@@ -3,6 +3,7 @@ import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../app/config_cubit.dart';
 import '../../app/engine_cubit.dart';
@@ -11,7 +12,9 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/markdown_view.dart';
 import '../../core/widgets/primitives.dart';
+import '../../core/widgets/refresh_loop.dart';
 import '../../core/widgets/session_launcher.dart';
+import '../../data/docs_parser.dart';
 import '../../data/docs_repository.dart';
 import '../../data/github_models.dart';
 import '../../data/github_parser.dart';
@@ -55,7 +58,25 @@ class _PrsView extends StatefulWidget {
   State<_PrsView> createState() => _PrsViewState();
 }
 
-class _PrsViewState extends State<_PrsView> with SessionLauncher {
+class _ReviewRow {
+  const _ReviewRow({required this.number, required this.title, required this.status, required this.text});
+
+  final int number;
+  final String title;
+  final ReviewStatus status;
+  final String text;
+}
+
+/// A row is only rebuilt when the report or the meta stamp changes.
+class _ReviewMemo {
+  const _ReviewMemo(this.report, this.meta, this.row);
+
+  final DocEntry report;
+  final DocEntry? meta;
+  final _ReviewRow row;
+}
+
+class _PrsViewState extends State<_PrsView> with SessionLauncher<_PrsView>, RefreshLoop<_PrsView> {
   List<PullRequest>? _prs;
   String? _error;
   bool _inFlight = false;
@@ -63,6 +84,8 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
   bool _started = false;
   late final Timer _timer;
   final _expanded = <String>{};
+  List<_ReviewRow>? _reviews;
+  final _memo = <int, _ReviewMemo>{};
 
   /// Push identity of each checkout, by cwd; a cwd is asked once per view.
   final _identities = <String, SshIdentity>{};
@@ -76,7 +99,7 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(_refreshInterval, (_) => unawaited(_load()));
+    _timer = Timer.periodic(_refreshInterval, (_) => _reload());
   }
 
   @override
@@ -84,6 +107,7 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
+    refresh();
     _onEngine(context.read<EngineCubit>().state);
   }
 
@@ -98,6 +122,54 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
     if (next == _endpoint) return;
     _endpoint = next;
     if (next != null) unawaited(_load());
+  }
+
+  @override
+  Future<void> sync() async {
+    final repository = DocsScope.of(context);
+    final project = widget.projectName;
+    final listing = await repository.list(project);
+    final next = <int, _ReviewMemo>{};
+    for (final entry in listing.reviews) {
+      final memo = _memo[entry.number];
+      if (memo != null && memo.report == entry.report && memo.meta == entry.meta) {
+        next[entry.number] = memo;
+        continue;
+      }
+      next[entry.number] = _ReviewMemo(entry.report, entry.meta, await _readRow(repository, project, entry));
+    }
+    if (!mounted) return;
+    setState(() {
+      _memo
+        ..clear()
+        ..addAll(next);
+      _reviews = [for (final e in listing.reviews) next[e.number]!.row];
+    });
+  }
+
+  static String? _nonEmpty(String? s) => s == null || s.trim().isEmpty ? null : s;
+
+  static Future<_ReviewRow> _readRow(DocsRepository repository, String project, ReviewEntry entry) async {
+    final report = await repository.read(project, entry.report.rel);
+    final line = reviewLine(report.text ?? '');
+    var title = _nonEmpty(line.title);
+    final metaEntry = entry.meta;
+    if (title == null && metaEntry != null) {
+      if (await repository.read(project, metaEntry.rel) case DocText(:final String text)) {
+        title = _nonEmpty(parseReviewMeta(text)?.title);
+      }
+    }
+    return _ReviewRow(
+      number: entry.number,
+      title: title ?? 'Review PR-${entry.number}',
+      status: line.status,
+      text: line.text,
+    );
+  }
+
+  void _reload() {
+    unawaited(_load());
+    refresh();
   }
 
   Future<void> _load() async {
@@ -159,6 +231,9 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
 
   static String _keyOf(PullRequest pr) => pr.url ?? '#${pr.number}';
 
+  /// Siblings need distinct keys even when the engine hands over PRs without `url` (same or missing number).
+  static ValueKey<String> _rowKey(PullRequest pr, int index) => ValueKey(pr.url ?? '#${pr.number}@$index');
+
   void _toggle(String key) => setState(() {
     if (!_expanded.remove(key)) _expanded.add(key);
   });
@@ -182,115 +257,263 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher {
     final c = context.colors;
     final prs = _prs ?? const <PullRequest>[];
     final offline = prs.any((p) => !p.live);
-    final waiting = prs.where(canResolve).length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: _columnWidth),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    if (offline)
-                      Pill(key: const ValueKey('prs-offline'), label: 'não consegui consultar o GitHub', color: c.warn),
-                    if (waiting > 0)
-                      Pill(
-                        key: const ValueKey('prs-waiting'),
-                        label: '${countLabel(waiting, 'PR')} com comentários esperando você',
-                        color: c.accent,
-                      ),
-                  ],
+              Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: offline
+                          ? Pill(
+                              key: const ValueKey('prs-offline'),
+                              label: 'não consegui consultar o GitHub',
+                              color: c.warn,
+                            )
+                          : null,
+                    ),
+                  ),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(foregroundColor: c.textSecondary),
+                    onPressed: _reload,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Recarregar', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
+              ),
+              for (final (key, alert) in _pushAlerts(prs, projects))
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    alert,
+                    key: ValueKey(key),
+                    style: TextStyle(fontSize: 12, color: c.warn),
+                  ),
                 ),
-              ),
-              TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: c.textSecondary),
-                onPressed: _hasEndpoint ? () => unawaited(_load()) : null,
-                icon: const Icon(Icons.refresh, size: 16),
-                label: const Text('Recarregar', style: TextStyle(fontSize: 12)),
-              ),
+              if (_error case final error?)
+                ErrorRetryRow(error, onRetry: _hasEndpoint ? () => unawaited(_load()) : null),
             ],
           ),
-          for (final (key, alert) in _pushAlerts(prs, projects))
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                alert,
-                key: ValueKey(key),
-                style: TextStyle(fontSize: 12, color: c.warn),
-              ),
-            ),
-          if (_error case final error?) ErrorRetryRow(error, onRetry: _hasEndpoint ? () => unawaited(_load()) : null),
-        ],
+        ),
       ),
     );
   }
 
   Widget _body(BuildContext context, List<Project> projects) {
-    final prs = _prs;
-    if (prs == null) {
-      if (!_hasEndpoint) return const Center(child: Muted('engine iniciando', size: 13));
-      return const SizedBox.shrink();
-    }
-    if (prs.isEmpty) return const Center(child: Muted('nenhum PR registrado; abra com /pr-open', size: 13));
-    final now = DateTime.now();
-    return ListView(
+    final sections = [?_needsYouSection(context, projects), ?_mineSection(context), ?_reviewsSection(context)];
+    return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-      children: [
-        const TableHeaderRow([
-          ('#PR', _wNumber),
-          ('Título', null),
-          ('Repo', _wRepo),
-          ('Destino', _wTarget),
-          ('Situação', _wStage),
-          ('CI', _wCi),
-          ('Atualizado', _wUpdated),
-          ('', _wAction),
-        ]),
-        for (final pr in prs)
-          _PrRow(
-            pr: pr,
-            repoLabel: repoLabel(pr.repo, pr.nameWithOwner, [for (final o in prs) (o.repo, o.nameWithOwner)]),
-            cwd: prCwd(pr, projects),
-            now: now,
-            expanded: _expanded.contains(_keyOf(pr)),
-            creating: isCreating(_keyOf(pr)),
-            createError: createError(_keyOf(pr)),
-            onToggle: () => _toggle(_keyOf(pr)),
-            onResolve: (cwd) => unawaited(
-              launchSession(
-                _keyOf(pr),
-                widget.projectName,
-                '/pr-status',
-                cwd: cwd,
-                githubAccount: widget.account,
-                permissionMode: launchOrg(cwd, projects, context.read<ConfigCubit>().state.data).mode,
-              ),
-            ),
-            onLink: openLink,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: _columnWidth),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (i, section) in sections.indexed) ...[if (i > 0) const SizedBox(height: 28), section],
+            ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Each section is its own [Column]: a PR with comments shows in two of them under the same [_keyOf].
+  Widget? _needsYouSection(BuildContext context, List<Project> projects) {
+    final prs = (_prs ?? const <PullRequest>[]).where(canResolve).toList();
+    if (prs.isEmpty) return null;
+    return Column(
+      key: const ValueKey('prs-needs-you'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionTitle('Precisa de você', color: context.colors.warn),
+        for (final (i, pr) in prs.indexed)
+          Padding(
+            key: _rowKey(pr, i),
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _NeedsYou(
+              pr: pr,
+              cwd: prCwd(pr, projects),
+              expanded: _expanded.contains(_keyOf(pr)),
+              creating: isCreating(_keyOf(pr)),
+              createError: createError(_keyOf(pr)),
+              onToggle: () => _toggle(_keyOf(pr)),
+              onResolve: (cwd) => unawaited(
+                launchSession(
+                  _keyOf(pr),
+                  widget.projectName,
+                  '/pr-status',
+                  cwd: cwd,
+                  githubAccount: widget.account,
+                  permissionMode: launchOrg(cwd, projects, context.read<ConfigCubit>().state.data).mode,
+                ),
+              ),
+              onLink: openLink,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget? _mineSection(BuildContext context) {
+    final prs = _prs;
+    if (prs == null && _hasEndpoint) return null;
+    final placeholder = switch (prs) {
+      null => 'engine iniciando',
+      [] => 'nenhum PR registrado; abra com /pr-open',
+      _ => null,
+    };
+    final all = [for (final o in prs ?? const <PullRequest>[]) (o.repo, o.nameWithOwner)];
+    final manyRepos = {for (final (_, nwo) in all) ?nwo?.toLowerCase()}.length > 1;
+    final now = DateTime.now();
+    return Column(
+      key: const ValueKey('prs-mine'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (placeholder != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: Muted(placeholder, size: 13)),
+          )
+        else ...[
+          const _SectionTitle('Seus PRs'),
+          for (final (i, pr) in prs!.indexed)
+            _PrRow(
+              key: _rowKey(pr, i),
+              pr: pr,
+              repoPrefix: manyRepos ? repoLabel(pr.repo, pr.nameWithOwner, all) : null,
+              now: now,
+              onLink: openLink,
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget? _reviewsSection(BuildContext context) {
+    final reviews = _reviews ?? const <_ReviewRow>[];
+    if (reviews.isEmpty && !refreshFailed) return null;
+    final c = context.colors;
+    return Column(
+      key: const ValueKey('prs-reviews'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('Revisões que você fez', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+        const Padding(
+          padding: EdgeInsets.only(bottom: 4),
+          child: Muted('PRs de outras pessoas neste projeto', size: 12),
+        ),
+        if (refreshFailed)
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 4),
+            child: Text(
+              'não consegui ler as revisões',
+              key: const ValueKey('prs-reviews-error'),
+              style: TextStyle(fontSize: 12, color: c.warn),
+            ),
+          ),
+        for (final r in reviews)
+          _ReviewTile(row: r, onOpen: () => context.go(reviewLocation(widget.projectName, r.number))),
       ],
     );
   }
 }
 
-const _wNumber = 64.0;
-const _wRepo = 170.0;
-const _wTarget = 110.0;
-const _wStage = 200.0;
-const _wCi = 104.0;
-const _wUpdated = 100.0;
-const _wAction = 110.0;
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle(this.title, {this.color});
 
-class _PrRow extends StatelessWidget {
-  const _PrRow({
+  final String title;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text(
+      title,
+      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color),
+    ),
+  );
+}
+
+class _ReviewTile extends StatelessWidget {
+  const _ReviewTile({required this.row, required this.onOpen});
+
+  final _ReviewRow row;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final label = switch (row.status) {
+      ReviewStatus.draft => 'Ler e publicar',
+      ReviewStatus.approved => 'Publicar',
+      _ => null,
+    };
+    return InkWell(
+      key: ValueKey('review-row-${row.number}'),
+      onTap: onOpen,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: c.border)),
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: _wNumber,
+              child: Text(
+                '#${row.number}',
+                style: TextStyle(
+                  fontFamily: monoFamily,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: c.textSecondary,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(row.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+                  Text(row.text, style: TextStyle(fontSize: 12, color: c.textSecondary)),
+                ],
+              ),
+            ),
+            if (label != null)
+              OutlinedButton(
+                key: ValueKey('review-open-${row.number}'),
+                onPressed: onOpen,
+                child: Text(label, style: const TextStyle(fontSize: 12)),
+              )
+            else
+              Icon(Icons.chevron_right, size: 18, color: c.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+const _columnWidth = 720.0;
+const _wNumber = 64.0;
+
+Uri? _externalUri(PullRequest pr) {
+  final uri = pr.url == null ? null : Uri.tryParse(pr.url!);
+  return uri != null && opensExternally(uri) ? uri : null;
+}
+
+class _NeedsYou extends StatelessWidget {
+  const _NeedsYou({
     required this.pr,
-    required this.repoLabel,
     required this.cwd,
-    required this.now,
     required this.expanded,
     required this.creating,
     required this.createError,
@@ -300,9 +523,7 @@ class _PrRow extends StatelessWidget {
   });
 
   final PullRequest pr;
-  final String repoLabel;
   final String? cwd;
-  final DateTime now;
   final bool expanded;
   final bool creating;
   final String? createError;
@@ -314,85 +535,64 @@ class _PrRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final threads = pr.unresolved.length;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: c.border)),
+    return Material(
+      color: c.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: c.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              SizedBox(width: _wNumber, child: _number(c)),
-              Expanded(
-                child: Row(
-                  children: [
-                    if (pr.card case final card?) ...[
-                      Pill(label: card.label, color: c.accent, mono: true, dot: false),
-                      const SizedBox(width: 8),
-                    ],
-                    Flexible(
-                      child: Text(
-                        pr.title.isEmpty ? '—' : pr.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(prNeedsYouTitle(pr), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(prNeedsYouDetail(pr), style: TextStyle(fontSize: 13, color: c.textSecondary)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _resolve(),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DisclosureToggle(
+                    key: ValueKey('pr-comments-${pr.number}'),
+                    open: expanded,
+                    onTap: onToggle,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          threads == 1 ? 'ver 1 comentário' : 'ver os $threads comentários',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: c.textSecondary),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              SizedBox(width: _wRepo, child: Mono(repoLabel)),
-              SizedBox(width: _wTarget, child: Mono(pr.target ?? '—')),
-              SizedBox(width: _wStage, child: _stage(c)),
-              SizedBox(
-                width: _wCi,
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: Align(alignment: Alignment.centerLeft, child: _checks(c)),
-                ),
-              ),
-              SizedBox(width: _wUpdated, child: Muted(relativeAge(pr.mergedAt ?? pr.updatedAt ?? pr.openedAt, now))),
-              SizedBox(width: _wAction, child: _action(c)),
-            ],
-          ),
-          if (threads > 0)
-            Padding(
-              padding: const EdgeInsets.only(left: _wNumber, top: 4),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: InkWell(
-                  onTap: onToggle,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Text(
-                      '${expanded ? '▾' : '▸'} ${countLabel(threads, 'comentário')}',
-                      style: TextStyle(fontSize: 12, color: c.textSecondary),
-                    ),
+                    ],
                   ),
                 ),
-              ),
+              ],
             ),
-          if (expanded)
-            for (final t in pr.unresolved)
-              Padding(
-                padding: const EdgeInsets.only(left: _wNumber + 12, top: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Mono(_threadHeader(t), size: 11.5),
-                    const SizedBox(height: 4),
-                    MarkdownView(t.body, onLink: onLink),
-                  ],
+            if (expanded)
+              for (final t in pr.unresolved)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Mono(_threadHeader(t), size: 11.5),
+                      const SizedBox(height: 4),
+                      MarkdownView(t.body, onLink: onLink),
+                    ],
+                  ),
                 ),
+            if (createError case final error?)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
               ),
-          if (createError case final error?)
-            Padding(
-              padding: const EdgeInsets.only(left: _wNumber, top: 6),
-              child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -406,11 +606,73 @@ class _PrRow extends StatelessWidget {
     return '$where@${t.author}';
   }
 
-  Widget _number(AppColors c) {
+  Widget _resolve() {
+    final cwd = this.cwd;
+    final button = OutlinedButton(
+      key: ValueKey('pr-resolve-${pr.number}'),
+      onPressed: cwd == null || creating ? null : () => onResolve(cwd),
+      child: const Text('Resolver', style: TextStyle(fontSize: 12)),
+    );
+    if (cwd != null) return button;
+    return Tooltip(message: 'sem checkout local de ${pr.repo ?? pr.nameWithOwner ?? '?'}', child: button);
+  }
+}
+
+class _PrRow extends StatelessWidget {
+  const _PrRow({super.key, required this.pr, required this.repoPrefix, required this.now, required this.onLink});
+
+  final PullRequest pr;
+
+  /// `repoLabel` of the PR when the list spans more than one repo; `—` means no usable name.
+  final String? repoPrefix;
+  final DateTime now;
+  final void Function(Uri) onLink;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final uri = _externalUri(pr);
+    return InkWell(
+      key: ValueKey('pr-row-${pr.number}'),
+      onTap: uri == null ? null : () => onLink(uri),
+      hoverColor: c.hover,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: c.border)),
+        ),
+        child: Row(
+          children: [
+            SizedBox(width: _wNumber, child: _number(c, uri)),
+            if (pr.card case final card?) ...[
+              Pill(label: card.label, color: c.accent, mono: true, dot: false),
+              const SizedBox(width: 8),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    pr.title.isEmpty ? '—' : pr.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  _state(c),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 18, color: c.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _number(AppColors c, Uri? uri) {
     final label = pr.number == null ? '—' : '#${pr.number}';
-    final uri = pr.url == null ? null : Uri.tryParse(pr.url!);
     const style = TextStyle(fontFamily: monoFamily, fontSize: 12.5, fontWeight: FontWeight.w600);
-    if (uri == null || !opensExternally(uri)) return Text(label, style: style.copyWith(color: c.textSecondary));
+    if (uri == null) return Text(label, style: style.copyWith(color: c.textSecondary));
     return Align(
       alignment: Alignment.centerLeft,
       child: InkWell(
@@ -421,48 +683,23 @@ class _PrRow extends StatelessWidget {
     );
   }
 
-  Widget _stage(AppColors c) {
-    final color = switch (stageColorRole(pr.stage)) {
-      StageColorRole.accent => c.accent,
-      StageColorRole.warn => c.warn,
-      StageColorRole.pass => c.pass,
-      StageColorRole.idle => c.idle,
-    };
-    return Row(
-      children: [
-        Flexible(
-          child: Pill(label: stageLabel(pr.stage), color: color),
-        ),
-        if (!pr.live) ...[
-          const SizedBox(width: 6),
-          Tooltip(
-            message: pr.liveError ?? 'sem dados do GitHub',
-            child: Pill(label: 'cache', color: c.idle, dot: false),
-          ),
-        ],
-      ],
+  Widget _state(AppColors c) {
+    final line = prStateLine(pr, now);
+    final prefix = repoPrefix;
+    final text = Text(
+      prefix == null || prefix == '—' ? line.text : '$prefix · ${line.text}',
+      key: ValueKey('pr-state-${pr.number}'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 12,
+        color: switch (line.tone) {
+          PrTone.attention => c.warn,
+          PrTone.normal => c.textSecondary,
+          PrTone.done => c.textMuted,
+        },
+      ),
     );
-  }
-
-  Widget _checks(AppColors c) => switch (pr.checks) {
-    PrChecks.failing => Pill(label: 'falhando', color: c.fail),
-    PrChecks.pending => Pill(label: 'pendente', color: c.running),
-    PrChecks.passing => Pill(label: 'ok', color: c.pass),
-    null => const Muted('—'),
-  };
-
-  Widget _action(AppColors c) {
-    if (!canResolve(pr)) return const SizedBox.shrink();
-    final cwd = this.cwd;
-    final button = OutlinedButton(
-      key: ValueKey('pr-resolve-${pr.number}'),
-      onPressed: cwd == null || creating ? null : () => onResolve(cwd),
-      child: const Text('Resolver', style: TextStyle(fontSize: 12)),
-    );
-    if (cwd != null) return Align(alignment: Alignment.centerLeft, child: button);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Tooltip(message: 'sem checkout local de ${pr.repo ?? pr.nameWithOwner ?? '?'}', child: button),
-    );
+    return pr.live ? text : Tooltip(message: pr.liveError ?? 'sem dados do GitHub', child: text);
   }
 }

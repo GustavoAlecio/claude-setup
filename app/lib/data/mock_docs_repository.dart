@@ -73,7 +73,9 @@ const syntheticDocs = {
   'tasks.md': '# Tasks\n\n- [x] T1\n- [ ] T2\n',
   'details/2026-03-10-cache.md': '# Detalhamento: cache\n\nTexto do detalhamento.\n',
   'details/2026-03-12-login.md': '# Detalhamento: login\n\n```mermaid\ngraph TD; A-->B\n```\n',
-  'reviews/PR-157.md': '# Review PR-157\n\nDois achados no `lib/a.dart`.\n',
+  'reviews/PR-157.md':
+      '---\ntitle: feat: cache de partidas\nstatus: draft\n---\n# Review PR-157\n\n'
+      '- **Achados:** 1 critical, 1 major, 0 minor, 1 nit\n\nDois achados no `lib/a.dart`.\n',
   'reviews/PR-157.diff':
       'diff --git a/lib/a.dart b/lib/a.dart\nindex 1111111..2222222 100644\n--- a/lib/a.dart\n+++ b/lib/a.dart\n'
       '@@ -1,3 +1,4 @@\n import \'b.dart\';\n-int a = 1;\n+int a = 2;\n+int c = 3;\n void f() {}\n'
@@ -88,7 +90,8 @@ const syntheticDocs = {
       ' "baseRefName": "main", "headRefName": "feat/cache", "files": ['
       '{"path": "lib/a.dart", "additions": 2, "deletions": 1, "changeType": "MODIFIED"},'
       '{"path": "lib/new.dart", "additions": 2, "deletions": 0, "changeType": "ADDED"}]}',
-  'reviews/PR-9.md': '# Review PR-9\n\nSem diff salvo.\n',
+  'reviews/PR-9.md':
+      '---\nstatus: published\npublished_at: 2026-09-28T15:00:00Z\n---\n# Review PR-9\n\nSem diff salvo.\n',
   'reviews/PR-9.meta.json':
       '{"number": 9, "title": "fix: login", "body": "", "author": {"login": "dev-b"},'
       ' "baseRefName": "main", "headRefName": "fix/login", "files": []}',

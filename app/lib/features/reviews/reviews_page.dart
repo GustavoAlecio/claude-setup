@@ -129,8 +129,7 @@ class _ReviewsPageState extends State<ReviewsPage> with RefreshLoop<ReviewsPage>
     if (old.pr != widget.pr) refresh();
   }
 
-  String _location(int pr) =>
-      Uri(pathSegments: ['', 'p', widget.projectName, 'reviews'], queryParameters: {'pr': '$pr'}).toString();
+  String _location(int pr) => reviewLocation(widget.projectName, pr);
 
   @override
   Future<void> sync() async {
@@ -238,7 +237,23 @@ class _ReviewsPageState extends State<ReviewsPage> with RefreshLoop<ReviewsPage>
     return BlocListener<ProjectsCubit, AsyncSnapshot<List<Project>>>(
       listenWhen: (_, s) => s.hasData,
       listener: (_, _) => refresh(),
-      child: _body(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+              child: TextButton(
+                key: const ValueKey('reviews-back'),
+                onPressed: () => context.go(Uri(pathSegments: ['', 'p', widget.projectName, 'prs']).toString()),
+                child: const Text('← PRs'),
+              ),
+            ),
+          ),
+          Expanded(child: _body(context)),
+        ],
+      ),
     );
   }
 
