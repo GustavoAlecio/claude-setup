@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../data/docs_repository.dart';
+import '../../data/orgs.dart';
 import '../../data/sessions_repository.dart';
 import '../../engine/engine_config.dart';
 
@@ -17,6 +18,8 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
   String get logName;
 
   bool isCreating(String key) => _creating.contains(key);
+
+  bool get isCreatingAny => _creating.isNotEmpty;
 
   String? createError(String key) => _createErrors[key];
 
@@ -32,6 +35,8 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
     if (_creating.contains(key)) return;
     final sessions = SessionsScope.of(context);
     final router = GoRouter.of(context);
+    String currentPath() => router.routerDelegate.currentConfiguration.uri.path;
+    final originPath = currentPath();
     setState(() {
       _creating.add(key);
       _createErrors.remove(key);
@@ -44,8 +49,9 @@ mixin SessionLauncher<T extends StatefulWidget> on State<T> {
         githubAccount: githubAccount,
         permissionMode: permissionMode,
       );
-      if (!mounted) return;
-      router.go('/p/${s.project}/sessions/${s.id}');
+      // The engine lists the session before `create` answers, and that update can unmount the widget that asked
+      // while the route stays; a route the user went to meanwhile must not be taken over (it skips the unsaved-edit confirmation).
+      if (mounted || currentPath() == originPath) router.go(sessionLocation(s));
     } on Exception catch (e, st) {
       log('cannot create $command session', name: logName, error: e, stackTrace: st);
       if (mounted) setState(() => _createErrors[key] = '$e');

@@ -341,7 +341,7 @@ void main() {
     final running = find.byKey(const ValueKey('flow-kickoff-running'));
     expect(find.descendant(of: running, matching: find.text('Kickoff em andamento')), findsOneWidget);
     expect(find.descendant(of: running, matching: find.text('sessão s-kick')), findsOneWidget);
-    expect(find.text('Novo kickoff'), findsNothing);
+    expect(find.byKey(const ValueKey('cycle-start')), findsNothing);
     expect(find.byType(LastCycleLine), findsNothing);
   });
 
@@ -351,7 +351,7 @@ void main() {
     ], const {});
 
     expect(find.byKey(const ValueKey('flow-kickoff-running')), findsNothing);
-    expect(find.widgetWithText(FilledButton, 'Novo kickoff'), findsOneWidget);
+    expect(find.byKey(const ValueKey('cycle-start')), findsOneWidget);
   });
 
   testWidgets('sem ciclo, o painel aparecer não remonta o empty state nem recarrega o histórico', (tester) async {
@@ -387,10 +387,39 @@ void main() {
     expect(metrics.loads, loads);
   });
 
+  testWidgets('o rascunho da caixa de começar sobrevive à troca entre split e gaveta e zera ao trocar de projeto', (
+    tester,
+  ) async {
+    await _open(
+      tester,
+      const Project(name: _project, path: '/synthetic/$_project'),
+      const [],
+      const {},
+      size: const Size(1440, 1400),
+      others: const [Project(name: 'outro', path: '/synthetic/outro')],
+    );
+    final input = find.byKey(const ValueKey('cycle-start-input'));
+    await tester.enterText(input, 'meu rascunho');
+    await tester.pumpAndSettle();
+
+    tester.view.physicalSize = const Size(1300, 1400);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('cycle-start')), findsOneWidget);
+    expect(tester.widget<TextField>(input).controller!.text, 'meu rascunho');
+
+    tester.view.physicalSize = const Size(1440, 1400);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, 'meu rascunho');
+
+    _router(tester).go('/p/outro/flow');
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+  });
+
   testWidgets('sem ciclo e sem sessão: um único empty state, sem painel da direita', (tester) async {
     await _open(tester, const Project(name: _project, path: '/synthetic/$_project'), const [], const {});
 
-    expect(find.widgetWithText(FilledButton, 'Novo kickoff'), findsOneWidget);
+    expect(find.byKey(const ValueKey('cycle-start')), findsOneWidget);
     expect(find.descendant(of: find.byType(FlowPage), matching: find.byType(FilledButton)), findsOneWidget);
     expect(_side, findsNothing);
     expect(find.byType(SessionPanel), findsNothing);

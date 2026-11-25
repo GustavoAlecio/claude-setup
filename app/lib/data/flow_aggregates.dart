@@ -196,7 +196,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       route: decisionLocation(project.name, decision),
     );
   }
-  if (openGates(report).firstOrNull?.gate case final gate?) {
+  if (cardGate(project)?.gate case final gate?) {
     final summary = gate.summary.trim();
     return (
       kind: CycleNowKind.gate,
@@ -233,7 +233,12 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       route: null,
     );
   }
-  final live = runningStageSession(sessions, project);
+  final live =
+      runningStageSession([
+        for (final s in sessions)
+          if (s.status == SessionStatus.running) s,
+      ], project) ??
+      runningStageSession(sessions, project);
   if (live != null && live.status == SessionStatus.running) {
     return (
       kind: CycleNowKind.running,
@@ -413,17 +418,52 @@ String decisionLocation(String project, ({Run run, TaskRun task}) decision) =>
 
 String taskLocation(String project, String runId, String taskId) => '/p/$project/runs/$runId/$taskId';
 
-/// [pending] (sessions per project) plus one for each project whose cycle waits on a [blockedDecision]: both are
-/// "aguardando você".
-Map<String, int> withDecisions(Map<String, int> pending, List<Project> projects) => {
+enum DiagnosisKind { inert, answer, busy, launch }
+
+/// What the decision buttons of a blocked task's diagnosis do. [route] is the conversation to answer, only in `answer`.
+typedef DiagnosisMode = ({DiagnosisKind kind, String? route});
+
+/// `inert` when [project] is unknown or [task] is not the one [blockedDecision] holds (matched by id, with its run);
+/// `answer` when a live pipeline session of the project holds a pending request; `busy` when one is live without a
+/// request; `launch` otherwise. A conversation outside the pipeline changes nothing.
+DiagnosisMode diagnosisMode(Project? project, TaskRun task, Run run, List<SessionSummary> sessions) {
+  final decision = project == null ? null : blockedDecision(project);
+  if (project == null || decision == null || decision.run.id != run.id || decision.task.id != task.id) {
+    return (kind: DiagnosisKind.inert, route: null);
+  }
+  final pending = pendingProjectSessions(sessions, project.name).where(isPipelineSession).firstOrNull;
+  if (pending != null) {
+    return (kind: DiagnosisKind.answer, route: sessionLocation(pending));
+  }
+  final live = sessions.any(
+    (s) => !s.isOrgSession && s.project == project.name && isPipelineSession(s) && isLive(s.status),
+  );
+  return (kind: live ? DiagnosisKind.busy : DiagnosisKind.launch, route: null);
+}
+
+/// What waits in each of [projects] besides its sessions' requests: one per gate without a conversation
+/// ([orphanGates]) and one for a [blockedDecision].
+Map<String, int> _decisions(List<Project> projects, List<SessionSummary> sessions) {
+  final out = <String, int>{};
+  for (final (:project, stage: _) in orphanGates(sessions, projects)) {
+    out[project.name] = (out[project.name] ?? 0) + 1;
+  }
+  for (final p in projects) {
+    if (!p.hidden && blockedDecision(p) != null) out[p.name] = (out[p.name] ?? 0) + 1;
+  }
+  return out;
+}
+
+/// [pending] (sessions per project) plus one for each gate without a conversation ([orphanGates]) and one for each
+/// project whose cycle waits on a [blockedDecision]: all are "aguardando você".
+Map<String, int> withDecisions(Map<String, int> pending, List<Project> projects, List<SessionSummary> sessions) => {
   ...pending,
-  for (final p in projects)
-    if (!p.hidden && blockedDecision(p) != null) p.name: (pending[p.name] ?? 0) + 1,
+  for (final MapEntry(:key, :value) in _decisions(projects, sessions).entries) key: (pending[key] ?? 0) + value,
 };
 
-/// Blocked-cycle decisions waiting in [org]'s projects.
-int decisionsInOrg(List<Project> projects, String org) =>
-    projectsInOrg(projects, org).where((p) => !p.hidden && blockedDecision(p) != null).length;
+/// Gates without a conversation and blocked-cycle decisions waiting in [org]'s projects.
+int decisionsInOrg(List<Project> projects, String org, List<SessionSummary> sessions) =>
+    _decisions(projectsInOrg(projects, org), sessions).values.fold(0, (sum, n) => sum + n);
 
 /// Stage that carries each gate (`GATE_OWNER` in `bin/wf-report.py`).
 const kGateOwner = {'spec': Stage.challenge, 'plan': Stage.plan, 'tasks': Stage.tasks, 'pr': Stage.complete};
@@ -455,6 +495,17 @@ StageReport? cardGate(Project? project) {
   if (project == null || cycle == null || blockedDecision(project) != null) return null;
   return openGates(gateReport(cycle)).firstOrNull;
 }
+
+/// Open gates nobody can answer in the app: the owner stage has no session, or its session is missing from [sessions]
+/// or no longer alive. A live owner without a pending request is working, so its gate stays out. Hidden projects and
+/// paused cycles ask for nothing.
+List<({Project project, StageReport stage})> orphanGates(List<SessionSummary> sessions, List<Project> projects) => [
+  for (final p in projects)
+    if (!p.hidden && !(p.cycle?.paused ?? false))
+      for (final s in openGates(gateReport(p.cycle)))
+        if (!sessions.any((x) => x.id == s.sessionId && (isLive(x.status) || x.status == SessionStatus.starting)))
+          (project: p, stage: s),
+];
 
 /// Open gate of session [sessionId]: one session runs several stages, so the first in pipeline order wins.
 ReportGate? sessionGate(ReportDoc? report, String sessionId) =>

@@ -53,4 +53,16 @@ String kickoffCommand({String? id, String description = '', KickoffType type = K
   return '/kickoff --manual$flag\n\n$description';
 }
 
+/// The command that starts a cycle from what the user typed: a lone card ID of [tracker] goes by the tracker form,
+/// anything else is the manual description. `null` for blank text.
+String? startCommand(String text, OrgTracker? tracker) {
+  final trimmed = text.trim();
+  if (trimmed.isEmpty) return null;
+  if (tracker != null && !trimmed.contains(RegExp(r'\s'))) {
+    final id = normalizeCardId(trimmed, tracker);
+    if (id != null) return kickoffCommand(id: id);
+  }
+  return kickoffCommand(description: trimmed);
+}
+
 String missingProjectPathError(Project project) => 'sem pasta para ${project.name}: adicione a pasta em Configurações';

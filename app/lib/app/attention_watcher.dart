@@ -15,7 +15,7 @@ import 'sessions_cubit.dart';
 /// Keeps the Dock badge on the total waiting for the user and, with the app in the background, posts one macOS
 /// notification per new item (pending request, stopped cycle, finished turn). With `alertSound` on, a new request or
 /// stopped cycle also plays the alert sound, in the foreground too, and its notification goes out silent. What
-/// already waited at launch is not announced again.
+/// already waited at launch is not announced again. An open gate without a conversation only counts on the badge.
 class AttentionWatcher extends StatefulWidget {
   const AttentionWatcher({
     super.key,
@@ -67,7 +67,7 @@ class _AttentionWatcherState extends State<AttentionWatcher> {
     final seen = _seen;
     _seen = {for (final i in pending) i.key};
     if (seen == null) return;
-    final fresh = pending.where((i) => !seen.contains(i.key)).toList();
+    final fresh = pending.where((i) => !i.isOrphanGate && !seen.contains(i.key)).toList();
     if ((fresh.isEmpty && finished.isEmpty) || await widget.channel.isActive()) return;
     final silent = alert ? true : null;
     for (final item in fresh) {

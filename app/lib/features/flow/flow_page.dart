@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
@@ -11,9 +12,11 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/ladder.dart';
 import '../../core/widgets/primitives.dart';
+import '../../core/widgets/session_launcher.dart';
 import '../../data/budget.dart';
 import '../../data/flow_aggregates.dart';
 import '../../data/flow_repository.dart';
+import '../../data/kickoff.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_reducer.dart';
@@ -67,6 +70,15 @@ class _FlowView extends StatefulWidget {
 class _FlowViewState extends State<_FlowView> {
   late bool _timelineOpen = widget.stage != null;
   bool _detailsOpen = false;
+  // Kept here so the draft survives `_FlowMain` being remounted when the width crosses [kFlowSplitWidth].
+  final _startText = TextEditingController();
+  String? _startPathError;
+
+  @override
+  void dispose() {
+    _startText.dispose();
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(_FlowView old) {
@@ -124,6 +136,9 @@ class _FlowViewState extends State<_FlowView> {
           detailsOpen: _detailsOpen,
           onToggleTimeline: () => setState(() => _timelineOpen = !_timelineOpen),
           onToggleDetails: () => setState(() => _detailsOpen = !_detailsOpen),
+          startText: _startText,
+          startPathError: _startPathError,
+          onStartPathError: (error) => setState(() => _startPathError = error),
         );
         return split
             ? _split(c, main, side)
@@ -189,7 +204,7 @@ class _FlowViewState extends State<_FlowView> {
   );
 }
 
-/// Left side of the Fluxo: the cycle column, or the empty state without a cycle.
+/// Left side of the Fluxo: the cycle column, or the box that starts one.
 class _FlowMain extends StatelessWidget {
   const _FlowMain({
     required this.projectName,
@@ -202,6 +217,9 @@ class _FlowMain extends StatelessWidget {
     required this.detailsOpen,
     required this.onToggleTimeline,
     required this.onToggleDetails,
+    required this.startText,
+    required this.startPathError,
+    required this.onStartPathError,
   });
 
   final String projectName;
@@ -216,6 +234,9 @@ class _FlowMain extends StatelessWidget {
   final bool detailsOpen;
   final VoidCallback onToggleTimeline;
   final VoidCallback onToggleDetails;
+  final TextEditingController startText;
+  final String? startPathError;
+  final ValueChanged<String?> onStartPathError;
 
   void _act(BuildContext context, Project project, CycleNow now) {
     if (now.route case final route?) {
@@ -242,25 +263,12 @@ class _FlowMain extends StatelessWidget {
             child: Center(
               child: stageSession != null && isKickoffSession(stageSession)
                   ? _KickoffRunning(session: stageSession)
-                  : Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Muted('Nenhum ciclo ativo. Comece com /kickoff ou /specify.', size: 13),
-                        const SizedBox(height: 14),
-                        FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: context.colors.accent,
-                            foregroundColor: Colors.white,
-                          ),
-                          onPressed: project == null ? null : () => showKickoffForm(context, project),
-                          icon: const Icon(Icons.rocket_launch_outlined, size: 15),
-                          label: const Text('Novo kickoff'),
-                        ),
-                        if (project != null) ...[
-                          const SizedBox(height: 20),
-                          LastCycleLine(key: ValueKey('last-cycle-${project.name}'), project: project),
-                        ],
-                      ],
+                  : _CycleStart(
+                      projectName: projectName,
+                      project: project,
+                      text: startText,
+                      pathError: startPathError,
+                      onPathError: onStartPathError,
                     ),
             ),
           ),
@@ -384,6 +392,168 @@ class _KickoffRunning extends StatelessWidget {
       Muted(session.title, size: 12.5),
     ],
   );
+}
+
+/// Without a cycle and without a kickoff running: what the user types here starts the cycle ([startCommand]).
+class _CycleStart extends StatefulWidget {
+  const _CycleStart({
+    required this.projectName,
+    required this.project,
+    required this.text,
+    required this.pathError,
+    required this.onPathError,
+  });
+
+  /// Of the route; the title falls back to it while the project is unknown.
+  final String projectName;
+  final Project? project;
+  final TextEditingController text;
+  final String? pathError;
+  final ValueChanged<String?> onPathError;
+
+  @override
+  State<_CycleStart> createState() => _CycleStartState();
+}
+
+class _CycleStartState extends State<_CycleStart> with SessionLauncher<_CycleStart> {
+  static const _key = 'cycle-start';
+  static const _counterFrom = 18000;
+
+  TextEditingController get _text => widget.text;
+
+  @override
+  String get logName => 'CycleStart';
+
+  void _submit(Project project, String command) {
+    final config = context.read<ConfigCubit>().state.data;
+    final cwd = project.path;
+    if (cwd == null) {
+      widget.onPathError(missingProjectPathError(project));
+      return;
+    }
+    unawaited(
+      launchSession(
+        _key,
+        project.name,
+        command,
+        cwd: cwd,
+        githubAccount: githubFor(project.org, config).account,
+        permissionMode: effectivePermissionMode(null, project.org, config),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final project = widget.project;
+    final config = context.watch<ConfigCubit>().state.data;
+    final tracker = project == null ? null : orgConfigOf(config, project.org)?.tracker;
+    final creating = isCreating(_key);
+    final length = _text.text.length;
+    final tooLong = length > kKickoffMaxChars;
+    final command = startCommand(_text.text, tracker);
+    final submit = project == null || command == null || tooLong || creating ? null : () => _submit(project, command);
+    final error = widget.pathError ?? createError(_key);
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: ConstrainedBox(
+        key: const ValueKey('cycle-start'),
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'O que você quer fazer em ${project?.name ?? widget.projectName}?',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: c.textPrimary),
+            ),
+            const SizedBox(height: 6),
+            Muted(
+              tracker == null
+                  ? 'Descreva com suas palavras. Não precisa estar completo: o que faltar vira pergunta.'
+                  : 'Descreva com suas palavras ou cole o número de um card. Não precisa estar completo: o que '
+                        'faltar vira pergunta.',
+              size: 13,
+            ),
+            const SizedBox(height: 14),
+            CallbackShortcuts(
+              bindings: {
+                if (submit != null) ...{
+                  const SingleActivator(LogicalKeyboardKey.enter, meta: true): submit,
+                  const SingleActivator(LogicalKeyboardKey.numpadEnter, meta: true): submit,
+                },
+              },
+              child: TextField(
+                key: const ValueKey('cycle-start-input'),
+                controller: _text,
+                autofocus: true,
+                readOnly: creating,
+                minLines: 4,
+                maxLines: 8,
+                keyboardType: TextInputType.multiline,
+                onChanged: (_) {
+                  if (widget.pathError != null) widget.onPathError(null);
+                  setState(() {});
+                },
+                style: const TextStyle(fontSize: 13),
+                decoration: InputDecoration(
+                  counterText: length > _counterFrom ? '$length/$kKickoffMaxChars' : null,
+                  errorText: tooLong ? 'descrição acima de $kKickoffMaxChars caracteres' : null,
+                ),
+              ),
+            ),
+            if (error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  error,
+                  key: const ValueKey('cycle-start-error'),
+                  style: TextStyle(fontSize: 12, color: c.fail),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                FilledButton(
+                  key: const ValueKey('cycle-start-submit'),
+                  style: FilledButton.styleFrom(backgroundColor: c.accent, foregroundColor: Colors.white),
+                  onPressed: submit,
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Começar'),
+                      SizedBox(width: 8),
+                      Opacity(opacity: 0.7, child: Text('⌘↵', style: TextStyle(fontSize: 12))),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  key: const ValueKey('cycle-start-more'),
+                  style: TextButton.styleFrom(foregroundColor: c.accent),
+                  onPressed: project == null || creating ? null : () => showKickoffForm(context, project),
+                  child: const Text('mais opções', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Muted(
+              'Você é chamado para confirmar o que vai ser entregue, ver como vai ser construído e revisar antes do '
+              'PR. Fora isso, só se algo travar ou surgir uma decisão sua.',
+            ),
+            if (project != null) ...[
+              const SizedBox(height: 20),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: LastCycleLine(key: ValueKey('last-cycle-${project.name}'), project: project),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _CycleCard extends StatelessWidget {

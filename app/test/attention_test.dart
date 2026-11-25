@@ -378,6 +378,49 @@ void main() {
       expect(named('sound'), hasLength(2));
     });
 
+    testWidgets('gate sem conversa não toca nem notifica', (tester) async {
+      final data = [...MockFlowRepository().data];
+      final repo = MockFlowRepository(data: data);
+      await start(tester, repo);
+      int badge() => (named('badge').last.arguments as Map)['count'] as int;
+      final before = badge();
+
+      data.add(
+        const Project(
+          name: 'orfao',
+          cycle: Cycle(
+            stage: Stage.plan,
+            runs: [],
+            stageMinutes: {},
+            reportIsCurrent: true,
+            report: ReportDoc(
+              feature: 'f',
+              startedAt: null,
+              stages: [
+                StageReport(
+                  stage: Stage.plan,
+                  status: ReportStatus.running,
+                  gate: ReportGate(name: 'plan', status: GateStatus.open),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      // Any config write re-emits the projects, as the file watcher would.
+      await repo.updateConfig(setAlertSound(true));
+      await tester.pumpAndSettle();
+
+      expect(badge(), before + 1);
+      expect(named('sound'), isEmpty);
+      expect(named('notify'), isEmpty);
+
+      await add(tester, 'x', 1);
+      expect(named('sound'), hasLength(1));
+      expect(named('notify').map((c) => (c.arguments as Map)['id']), ['pending:x:1']);
+      expect(badge(), before + 2);
+    });
+
     testWidgets('turned off, nothing plays and the notification keeps its sound', (tester) async {
       final repo = MockFlowRepository();
       await repo.updateConfig(setAlertSound(false));

@@ -203,8 +203,8 @@ class _ChooseOrg extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(child: Text(org, style: const TextStyle(fontSize: 13))),
-                    if (pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org) case final n
-                        when n > 0) ...[
+                    if (pendingInOrg(sessions, projects, config, org) + decisionsInOrg(projects, org, sessions)
+                        case final n when n > 0) ...[
                       Tooltip(
                         message: '$n aguardando você',
                         child: Pill(label: '$n', color: c.warn),
