@@ -292,12 +292,16 @@ class QuestionRequest extends PendingRequest {
     required super.requestId,
     required super.seq,
     required this.questions,
+    this.toolUseId,
     this.answers,
     super.decision,
     super.expired,
   });
 
   final List<Question> questions;
+
+  /// Id of the `AskUserQuestion` call this request answers; absent in older recorded sessions.
+  final String? toolUseId;
 
   /// `{question: label}`; only known when the answer was sent from this client.
   final Map<String, String>? answers;
@@ -307,6 +311,7 @@ class QuestionRequest extends PendingRequest {
     requestId: requestId,
     seq: seq,
     questions: questions,
+    toolUseId: toolUseId,
     answers: answers ?? this.answers,
     decision: decision ?? this.decision,
     expired: expired ?? this.expired,

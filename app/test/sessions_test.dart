@@ -82,6 +82,26 @@ class _LongCommandSessions extends MockSessionsRepository {
   );
 }
 
+/// The other-project session of the mock list with an unreadable creation date, so its status line is empty.
+class _UnreadableDateSessions extends MockSessionsRepository {
+  @override
+  Stream<List<SessionSummary>> watchSessions() => super.watchSessions().map(
+    (list) => [
+      for (final s in list)
+        s.id == 's-review'
+            ? SessionSummary(
+                id: s.id,
+                project: s.project,
+                command: s.command,
+                title: s.title,
+                status: s.status,
+                createdAt: 'ilegível',
+              )
+            : s,
+    ],
+  );
+}
+
 /// A pending org session in `demo`: counts for the org, never for a project.
 class _OrgActivitySessions extends MockSessionsRepository {
   @override
@@ -150,6 +170,25 @@ class _DetachedBypassSessions extends MockSessionsRepository {
         command: '/status',
         title: 'Sessão antiga em bypass',
         status: SessionStatus.detached,
+        createdAt: '2026-03-10T14:41:00Z',
+        permissionMode: PermissionMode.bypassPermissions,
+      ),
+      ...list,
+    ],
+  );
+}
+
+/// A running session in bypass, next to the mock sessions.
+class _ListLineSessions extends MockSessionsRepository {
+  @override
+  Stream<List<SessionSummary>> watchSessions() => super.watchSessions().map(
+    (list) => [
+      const SessionSummary(
+        id: 'list-working',
+        project: 'demo-app',
+        command: '/status em bypass',
+        title: 'Trabalhando em bypass',
+        status: SessionStatus.running,
         createdAt: '2026-03-10T14:41:00Z',
         permissionMode: PermissionMode.bypassPermissions,
       ),
@@ -320,6 +359,19 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('the list ticks every minute and stops when the page goes away', (tester) async {
+    await openSessions(tester);
+    expect(find.text('aguardando permissão'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 61));
+    expect(find.text('aguardando permissão'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 120));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('pending badge opens the session waiting for permission and allowing resolves it', (tester) async {
     await openSessions(tester);
 
@@ -419,7 +471,9 @@ void main() {
     expect(sessions.sendCalls.single.$2, 'sem skill');
   });
 
-  testWidgets('a terminal session of the project opens in the app with its history and leaves the list', (tester) async {
+  testWidgets('a terminal session of the project opens in the app with its history and leaves the list', (
+    tester,
+  ) async {
     final sessions = MockSessionsRepository();
     sessions.terminal['~/development/demo-app'] = [
       TerminalSession(
@@ -438,7 +492,9 @@ void main() {
     GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/demo-app/sessions');
     await tester.pumpAndSettle();
 
-    expect(find.text('No terminal'), findsOneWidget);
+    expect(find.text('1 sessão aberta no terminal'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('terminal-sessions-toggle')));
+    await tester.pumpAndSettle();
     expect(find.textContaining('packages/core · aberta no terminal'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('terminal-session-aaa')));
     await tester.pumpAndSettle();
@@ -448,7 +504,94 @@ void main() {
     expect(sessions.importCalls.single.$3, 'demo-app');
     expect(find.text('trazida do terminal'), findsOneWidget);
     expect(find.textContaining('Sessão trazida do terminal. Retomar continua'), findsOneWidget);
-    expect(find.text('No terminal'), findsNothing);
+    expect(find.byKey(const ValueKey('terminal-sessions-toggle')), findsNothing);
+  });
+
+  testWidgets('session list line: waiting shows a dot, working none, no bypass or mono, project prefix, search', (
+    tester,
+  ) async {
+    final sessions = _ListLineSessions();
+    await openSessions(tester, sessions: sessions);
+
+    expect(find.text('esperando você'), findsWidgets);
+    expect(find.byKey(const ValueKey('session-waiting-s-challenge')), findsOneWidget);
+    expect(find.byKey(const ValueKey('session-waiting-list-working')), findsNothing);
+    expect(find.text('trabalhando agora'), findsOneWidget);
+    expect(find.byKey(const ValueKey('session-bypass-list-working')), findsNothing);
+    expect(find.text('/status em bypass'), findsNothing);
+    expect(find.textContaining('notifications-api · encerrada'), findsOneWidget);
+    expect(find.textContaining('demo-app · '), findsNothing);
+
+    await tester.enterText(find.byKey(const ValueKey('sessions-search')), '/status em bypass');
+    await tester.pumpAndSettle();
+    expect(find.text('Trabalhando em bypass'), findsOneWidget);
+    expect(find.text('Status do fluxo'), findsNothing);
+  });
+
+  group('terminal sessions toggle', () {
+    TerminalSession t(String id, {String? live}) => TerminalSession(
+      sdkSessionId: id,
+      cwd: '~/development/demo-app',
+      title: 'Terminal $id',
+      updatedAt: DateTime.now().subtract(const Duration(minutes: 5)),
+      live: live,
+    );
+
+    Future<MockSessionsRepository> open(WidgetTester tester, List<TerminalSession> items) async {
+      final sessions = MockSessionsRepository();
+      sessions.terminal['~/development/demo-app'] = items;
+      await tester.pumpWidget(
+        ClaudeFlowApp(repository: MockFlowRepository(), sessions: sessions, engine: const MockEngineController()),
+      );
+      await tester.pumpAndSettle();
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/demo-app/sessions');
+      await tester.pumpAndSettle();
+      return sessions;
+    }
+
+    final toggle = find.byKey(const ValueKey('terminal-sessions-toggle'));
+
+    testWidgets('all open: collapsed summary, expands and collapses, tap imports', (tester) async {
+      final sessions = await open(tester, [t('a', live: 'busy'), t('b', live: 'idle')]);
+
+      expect(find.text('2 sessões abertas no terminal'), findsOneWidget);
+      expect(find.byKey(const ValueKey('terminal-session-a')), findsNothing);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('terminal-session-a')), findsOneWidget);
+      expect(find.byKey(const ValueKey('terminal-session-b')), findsOneWidget);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('terminal-session-a')), findsNothing);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminal-session-a')));
+      await tester.pumpAndSettle();
+      expect(sessions.importCalls.single.$1, 'a');
+    });
+
+    testWidgets('none open: singular and plural without "aberta"', (tester) async {
+      await open(tester, [t('a')]);
+      expect(find.text('1 sessão no terminal'), findsOneWidget);
+    });
+
+    testWidgets('mixed: open count and total', (tester) async {
+      await open(tester, [t('a', live: 'busy'), t('b')]);
+      expect(find.text('1 aberta · 2 no terminal'), findsOneWidget);
+    });
+
+    testWidgets('mixed with two open of three', (tester) async {
+      await open(tester, [t('a', live: 'busy'), t('b', live: 'idle'), t('c')]);
+      expect(find.text('2 abertas · 3 no terminal'), findsOneWidget);
+    });
+
+    testWidgets('absent without terminal sessions', (tester) async {
+      await open(tester, const []);
+      expect(toggle, findsNothing);
+    });
   });
 
   testWidgets('the terminal /app imports the session into its project and opens it; outside projects it explains', (
@@ -482,7 +625,9 @@ void main() {
     expect(find.textContaining('/tmp/solto não está em nenhum projeto do app'), findsOneWidget);
   });
 
-  testWidgets('asking aside opens a read-only fork marked in the list, with the way back to the original', (tester) async {
+  testWidgets('asking aside opens a read-only fork marked in the list, with the way back to the original', (
+    tester,
+  ) async {
     final sessions = MockSessionsRepository();
     await openSessions(tester, sessions: sessions);
     await tester.tap(find.text('Status do fluxo'));
@@ -499,7 +644,7 @@ void main() {
     expect(find.byKey(const ValueKey('aside-banner')), findsOneWidget);
     expect(find.textContaining('Pergunta à parte de “Status do fluxo”'), findsOneWidget);
     expect(find.byKey(const ValueKey('session-aside')), findsNothing, reason: 'no aside of an aside');
-    expect(find.textContaining('· à parte · '), findsOneWidget);
+    expect(find.textContaining('pergunta à parte · '), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('aside-back')));
     await tester.pumpAndSettle();
@@ -598,6 +743,325 @@ void main() {
     });
   });
 
+  group('open conversation', () {
+    Finder work(int i) => find.byKey(ValueKey('session-work-$i'));
+
+    Finder inWork(int i, String text) => find.descendant(of: work(i), matching: find.text(text));
+
+    List<Map<String, Object?>> tool(String id, String command) => [
+      {
+        'kind': 'tool_use',
+        'id': id,
+        'name': 'Bash',
+        'input': {'command': command},
+      },
+      {'kind': 'tool_result', 'id': id, 'isError': false, 'text': 'ok'},
+    ];
+
+    SessionSummary summary(String id, {String title = 'Conversa de teste', String? model, double cost = 0}) =>
+        SessionSummary(
+          id: id,
+          project: 'demo-app',
+          command: 'faça',
+          title: title,
+          status: SessionStatus.idle,
+          createdAt: '2026-10-06T11:00:00Z',
+          model: model,
+          cost: cost,
+          resumable: true,
+        );
+
+    /// Never settles: a running session animates without end.
+    Future<void> open(WidgetTester tester, MockSessionsRepository sessions, String id, {bool settle = true}) async {
+      await tester.pumpWidget(
+        ClaudeFlowApp(repository: MockFlowRepository(), sessions: sessions, engine: const MockEngineController()),
+      );
+      await tester.pumpAndSettle();
+      _router(tester).go('/p/demo-app/sessions/$id');
+      if (settle) {
+        await tester.pumpAndSettle();
+      } else {
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+      }
+    }
+
+    testWidgets('session header title and meta', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-paid', title: 'Conversa paga', model: 'claude-opus-5-5', cost: 2.41), [
+          {'kind': 'user_text', 'text': 'faça'},
+        ], status: 'waiting_permission')
+        ..addSession(summary('s-free', title: 'Conversa sem custo', model: 'claude-opus-5-5'), [
+          {'kind': 'user_text', 'text': 'faça'},
+        ]);
+      await open(tester, sessions, 's-paid');
+
+      final title = find.byKey(const ValueKey('session-title'));
+      final meta = find.byKey(const ValueKey('session-meta'));
+      expect(tester.widget<Text>(title).data, 'Conversa paga');
+      expect(tester.widget<Text>(meta).data, 'opus · padrão · \$2.41');
+      expect(find.text('\$2.41'), findsNothing, reason: 'the cost left the controls row');
+      expect(find.byKey(const ValueKey('session-model-s-paid')), findsOneWidget);
+      expect(_headerMode, findsOneWidget);
+      expect(find.byKey(const ValueKey('session-aside')), findsOneWidget);
+      expect(find.text('Interromper'), findsOneWidget);
+      expect(tester.getTopLeft(title).dy, lessThan(tester.getTopLeft(_headerMode).dy));
+      expect(tester.getTopLeft(meta).dy, lessThan(tester.getTopLeft(_headerMode).dy));
+
+      _router(tester).go('/p/demo-app/sessions/s-free');
+      await tester.pumpAndSettle();
+      expect(tester.widget<Text>(title).data, 'Conversa sem custo');
+      expect(tester.widget<Text>(meta).data, 'opus · padrão');
+      expect(find.textContaining('\$'), findsNothing);
+    });
+
+    testWidgets('work blocks: an idle session starts collapsed and a tap toggles', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-idle'), [
+          {'kind': 'user_text', 'text': 'faça'},
+          ...tool('t1', 'echo um'),
+          ...tool('t2', 'echo dois'),
+          ...tool('t3', 'echo três'),
+          {'kind': 'assistant_text', 'text': 'pronto'},
+        ]);
+      await open(tester, sessions, 's-idle');
+
+      expect(inWork(1, 'Trabalhou em 3 passos'), findsOneWidget);
+      expect(find.text('echo um'), findsNothing);
+
+      await tester.tap(work(1));
+      await tester.pumpAndSettle();
+      for (final command in ['echo um', 'echo dois', 'echo três']) {
+        expect(find.text(command), findsOneWidget);
+      }
+
+      await tester.tap(work(1));
+      await tester.pumpAndSettle();
+      expect(find.text('echo um'), findsNothing);
+    });
+
+    testWidgets('work blocks: a failed step paints the line in the failure colour', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-fail'), [
+          ...tool('t1', 'echo um'),
+          {
+            'kind': 'tool_use',
+            'id': 't2',
+            'name': 'Bash',
+            'input': {'command': 'false'},
+          },
+          {'kind': 'tool_result', 'id': 't2', 'isError': true, 'text': 'exit 1'},
+        ]);
+      await open(tester, sessions, 's-fail');
+
+      final line = tester.widget<Text>(inWork(0, 'Trabalhou em 2 passos · 1 com erro'));
+      final plain = tester.widget<Text>(find.byKey(const ValueKey('session-meta')));
+      expect(line.style!.color, isNot(plain.style!.color));
+    });
+
+    testWidgets('work blocks: running opens the current one and idle closes what was not touched', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-run'), [
+          {'kind': 'user_text', 'text': 'faça'},
+          ...tool('t1', 'echo antigo'),
+          {'kind': 'user_text', 'text': 'mais'},
+          ...tool('t2', 'echo atual'),
+          {'kind': 'assistant_text', 'text': 'seguindo'},
+        ], status: 'running');
+      await open(tester, sessions, 's-run', settle: false);
+
+      expect(find.text('echo atual'), findsOneWidget, reason: 'only assistant text follows the block');
+      expect(find.text('echo antigo'), findsNothing, reason: 'a user message follows the block');
+
+      await tester.tap(work(1));
+      await tester.pump();
+      expect(find.text('echo antigo'), findsOneWidget);
+
+      await sessions.interrupt('s-run');
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('echo atual'), findsNothing, reason: 'the default goes back to closed');
+      expect(find.text('echo antigo'), findsOneWidget, reason: 'the tap wins over the default');
+    });
+
+    testWidgets('work blocks: an open block stays open after scrolling 30 blocks away and back', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-long'), [
+          for (var i = 0; i < 15; i++) ...[
+            ...tool('t$i', 'echo passo $i'),
+            {'kind': 'user_text', 'text': 'mensagem $i\n\n\n\n\n\n'},
+          ],
+        ]);
+      await open(tester, sessions, 's-long');
+
+      final p = _feedPosition(tester);
+      expect(p.maxScrollExtent, greaterThan(0));
+      p.jumpTo(0);
+      await tester.pumpAndSettle();
+      await tester.tap(work(0));
+      await tester.pumpAndSettle();
+      expect(find.text('echo passo 0'), findsOneWidget);
+
+      p.jumpTo(p.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(work(0), findsNothing, reason: 'scrolled out, so its element is gone');
+      p.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(find.text('echo passo 0'), findsOneWidget);
+    });
+
+    testWidgets('work blocks: 40 tool calls without an id in an open block survive a new event and a drag', (
+      tester,
+    ) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-noid'), [
+          for (var i = 0; i < 40; i++)
+            {
+              'kind': 'tool_use',
+              'id': '',
+              'name': 'Bash',
+              'input': {'command': 'echo passo $i'},
+            },
+        ]);
+      await open(tester, sessions, 's-noid');
+
+      await tester.tap(work(0));
+      await tester.pumpAndSettle();
+      expect(find.text('echo passo 0'), findsOneWidget);
+
+      await sessions.send('s-noid', 'mais uma');
+      await tester.pumpAndSettle();
+      await tester.drag(find.byKey(const ValueKey('session-feed')), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('work blocks: an open block of 300 steps mounts only part of its rows', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-300'), [
+          for (var i = 0; i < 300; i++) ...tool('t$i', 'echo passo $i'),
+          {'kind': 'assistant_text', 'text': 'pronto'},
+        ]);
+      await open(tester, sessions, 's-300');
+
+      await tester.tap(work(0));
+      await tester.pumpAndSettle();
+
+      final mounted = find.textContaining('echo passo ', skipOffstage: false).evaluate().length;
+      expect(mounted, greaterThan(0));
+      expect(mounted, lessThan(300));
+    });
+
+    testWidgets('work blocks: opening one near the end neither scrolls nor lights new messages', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-end'), [
+          for (var i = 0; i < 40; i++) {'kind': 'user_text', 'text': 'mensagem $i'},
+          ...tool('t1', 'echo um'),
+          ...tool('t2', 'echo dois'),
+          {'kind': 'assistant_text', 'text': 'pronto'},
+        ]);
+      await open(tester, sessions, 's-end');
+
+      final p = _feedPosition(tester);
+      expect(p.maxScrollExtent, greaterThan(0));
+      final before = p.pixels;
+      expect(before, p.maxScrollExtent);
+
+      await tester.tap(work(40));
+      await tester.pumpAndSettle();
+
+      expect(find.text('echo um'), findsOneWidget);
+      expect(p.pixels, before);
+      expect(p.maxScrollExtent, greaterThan(before));
+      expect(_newMessages, findsNothing);
+    });
+
+    testWidgets('opening a work block keeps the draft of the pending question below it', (tester) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-draft'), [
+          {'kind': 'user_text', 'text': 'faça'},
+          ...tool('t1', 'echo um'),
+          ...tool('t2', 'echo dois'),
+          {
+            'kind': 'permission',
+            'requestId': 'rq-d',
+            'toolName': 'AskUserQuestion',
+            'input': {
+              'questions': [
+                {
+                  'header': 'Aplicar',
+                  'question': 'Qual caminho?',
+                  'multiSelect': false,
+                  'options': [
+                    {'label': 'Aprovar', 'description': 'a'},
+                    {'label': 'Recusar', 'description': 'b'},
+                  ],
+                },
+              ],
+            },
+          },
+        ], status: 'waiting_permission');
+      await open(tester, sessions, 's-draft');
+
+      await tester.tap(find.text('Recusar'));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+
+      await tester.tap(work(1));
+      await tester.pumpAndSettle();
+
+      expect(find.text('echo um'), findsOneWidget);
+      expect(find.byIcon(Icons.radio_button_checked), findsOneWidget);
+    });
+
+    testWidgets('1100x700 long conversation renders without exception', (tester) async {
+      final view = tester.binding.platformDispatcher.views.first;
+      view.physicalSize = const Size(1100, 700);
+      view.devicePixelRatio = 1;
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-wide', title: 'T' * 120, model: 'claude-opus-5-5', cost: 2.41), [
+          for (var i = 0; i < 15; i++) ...[
+            {'kind': 'user_text', 'text': 'mensagem $i'},
+            ...tool('t$i', 'echo passo $i'),
+          ],
+          {
+            'kind': 'permission',
+            'requestId': 'rq-1',
+            'toolName': 'AskUserQuestion',
+            'input': {
+              'questions': [
+                {
+                  'header': 'Aplicar',
+                  'question': 'Qual caminho?',
+                  'multiSelect': false,
+                  'options': [
+                    {'label': 'Aprovar (Recomendado)', 'description': 'a' * 200},
+                    {'label': 'Recusar', 'description': 'b' * 200},
+                  ],
+                },
+              ],
+            },
+          },
+        ], status: 'waiting_permission');
+      await open(tester, sessions, 's-wide');
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('question-needs-you')), findsOneWidget);
+      await tester.scrollUntilVisible(
+        work(29),
+        -100,
+        scrollable: find
+            .descendant(of: find.byKey(const ValueKey('session-feed')), matching: find.byType(Scrollable))
+            .first,
+      );
+      await tester.tap(work(29));
+      await tester.pumpAndSettle();
+      expect(find.text('echo passo 14'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
   testWidgets('interrupting a session waiting for permission leaves it awaiting a reply', (tester) async {
     await openSessions(tester);
     expect(find.text('aguardando permissão'), findsOneWidget);
@@ -626,18 +1090,24 @@ void main() {
     expect(find.text('aguardando permissão'), findsNothing);
   });
 
-  testWidgets('a long command stays on one ellipsized line with the full text in a tooltip', (tester) async {
+  testWidgets('a long title stays within two ellipsized lines and the command is not listed', (tester) async {
     await openSessions(tester, sessions: _LongCommandSessions());
 
     expect(tester.takeException(), isNull);
-    final command = find.text(_longCommand).first;
-    final text = tester.widget<Text>(command);
-    expect(text.maxLines, 1);
+    expect(find.text(_longCommand), findsNothing);
+    final title = find.text('Uma sessão com um título bem longo que também precisa caber em uma linha só');
+    final text = tester.widget<Text>(title);
+    expect(text.maxLines, 2);
     expect(text.overflow, TextOverflow.ellipsis);
-    expect(find.byTooltip(_longCommand), findsOneWidget);
-    final list = find.ancestor(of: command, matching: find.byType(ListView)).first;
-    expect(tester.getRect(command).right, lessThanOrEqualTo(tester.getRect(list).right));
-    expect(tester.getSize(command).height, lessThan(20));
+    final list = find.ancestor(of: title, matching: find.byType(ListView)).first;
+    expect(tester.getRect(title).right, lessThanOrEqualTo(tester.getRect(list).right));
+  });
+
+  testWidgets('other projects tile has no dangling separator when the date is unreadable', (tester) async {
+    await openSessions(tester, sessions: _UnreadableDateSessions());
+
+    expect(find.text('notifications-api'), findsOneWidget);
+    expect(find.text('notifications-api · '), findsNothing);
   });
 
   testWidgets('a failed turn shows a card with the reset and "Tentar de novo" sends a continue', (tester) async {
@@ -690,7 +1160,7 @@ void main() {
 
       expect(sessions.createCalls.single.$5, PermissionMode.bypassPermissions);
       expect(_headerModeText('bypass'), findsOneWidget);
-      expect(find.byKey(const ValueKey('session-bypass-mock-1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('session-bypass-mock-1')), findsNothing);
 
       await _chooseHeaderMode(tester, 'padrão');
 
@@ -713,9 +1183,9 @@ void main() {
       expect(find.text('bypass_disabled'), findsOneWidget);
     });
 
-    testWidgets('a detached session in bypass keeps the badge in the header and the tile', (tester) async {
+    testWidgets('a detached session in bypass keeps the badge in the header only', (tester) async {
       await openSessions(tester, sessions: _DetachedBypassSessions());
-      expect(find.byKey(const ValueKey('session-bypass-detached-bypass')), findsOneWidget);
+      expect(find.byKey(const ValueKey('session-bypass-detached-bypass')), findsNothing);
       expect(find.byKey(const ValueKey('session-bypass-s-fix-sync')), findsNothing);
 
       await tester.tap(find.text('Sessão antiga em bypass'));
@@ -1075,6 +1545,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/p/demo-app/sessions/s-cmd');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('session-work-0')));
       await tester.pumpAndSettle();
 
       expect(find.text('python3 -c "  (+3 linhas)'), findsOneWidget);

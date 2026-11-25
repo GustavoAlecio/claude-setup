@@ -573,19 +573,10 @@ class _QuestionCardState extends State<QuestionCard> {
     final answers = e.answers ?? _sent;
     final pending = e.pending;
     final complete = _draft.length == e.questions.length;
-    return LayoutBuilder(
-      builder: (context, box) => _card(c, e, answers, pending, complete, narrow: box.maxWidth < 440),
-    );
+    return _card(c, e, answers, pending, complete);
   }
 
-  Widget _card(
-    AppColors c,
-    QuestionRequest e,
-    Map<String, String>? answers,
-    bool pending,
-    bool complete, {
-    required bool narrow,
-  }) {
+  Widget _card(AppColors c, QuestionRequest e, Map<String, String>? answers, bool pending, bool complete) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -596,6 +587,14 @@ class _QuestionCardState extends State<QuestionCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (pending) ...[
+            Text(
+              'Precisa de você',
+              key: const ValueKey('question-needs-you'),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c.warn),
+            ),
+            const SizedBox(height: 8),
+          ],
           // A long card scrolls its bottom button out of a short panel; the progress bar keeps one in reach.
           if (pending && e.questions.fold(0, (n, q) => n + q.options.length) > 3) ...[
             Row(
@@ -628,7 +627,7 @@ class _QuestionCardState extends State<QuestionCard> {
               ],
             ),
             const SizedBox(height: 10),
-            if (pending) ..._options(c, q, narrow: narrow),
+            if (pending) ..._options(c, q),
           ],
           if (!pending)
             Row(
@@ -645,7 +644,7 @@ class _QuestionCardState extends State<QuestionCard> {
                         ? 'expirada'
                         : answers == null || answers.isEmpty
                         ? 'respondido'
-                        : 'respondido: ${answers.values.join(' · ')}',
+                        : 'respondido: ${answers.values.map(answerDisplay).join(' · ')}',
                     style: TextStyle(fontSize: 12.5, color: c.textSecondary),
                   ),
                 ),
@@ -668,59 +667,10 @@ class _QuestionCardState extends State<QuestionCard> {
     child: const Text('Responder', style: TextStyle(fontSize: 12)),
   );
 
-  List<Widget> _options(AppColors c, Question q, {required bool narrow}) {
+  List<Widget> _options(AppColors c, Question q) {
     final picked = _picked[q.question] ?? const <String>{};
     return [
-      for (final o in q.options)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => _toggle(q, o.label),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: picked.contains(o.label) ? c.accent.withValues(alpha: 0.10) : c.elevated,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: picked.contains(o.label) ? c.accent : c.border),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    q.multiSelect
-                        ? (picked.contains(o.label) ? Icons.check_box : Icons.check_box_outline_blank)
-                        : (picked.contains(o.label) ? Icons.radio_button_checked : Icons.radio_button_off),
-                    size: 16,
-                    color: picked.contains(o.label) ? c.accent : c.textMuted,
-                  ),
-                  const SizedBox(width: 10),
-                  if (narrow)
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Mono(o.label, color: c.textPrimary, size: 12.5),
-                          if (o.description.isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Text(o.description, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
-                          ],
-                        ],
-                      ),
-                    )
-                  else ...[
-                    Flexible(child: Mono(o.label, color: c.textPrimary, size: 12.5)),
-                    if (o.description.isNotEmpty) ...[
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(o.description, style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
-                      ),
-                    ],
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
+      for (final o in q.options) ..._option(c, q, o, picked),
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 10),
         child: TextField(
@@ -733,6 +683,58 @@ class _QuestionCardState extends State<QuestionCard> {
             hintStyle: TextStyle(color: c.textMuted, fontSize: 12.5),
             enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: c.border)),
             focusedBorder: OutlineInputBorder(borderSide: BorderSide(color: c.accent)),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _option(AppColors c, Question q, QuestionOption o, Set<String> picked) {
+    final view = optionView(o.label);
+    return [
+      Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => _toggle(q, o.label),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: picked.contains(o.label) ? c.accent.withValues(alpha: 0.10) : c.elevated,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: picked.contains(o.label) ? c.accent : c.border),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  q.multiSelect
+                      ? (picked.contains(o.label) ? Icons.check_box : Icons.check_box_outline_blank)
+                      : (picked.contains(o.label) ? Icons.radio_button_checked : Icons.radio_button_off),
+                  size: 16,
+                  color: picked.contains(o.label) ? c.accent : c.textMuted,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 2,
+                    children: [
+                      Mono(view.label, color: c.textPrimary, size: 12.5),
+                      if (view.recommended)
+                        Pill(
+                          key: const ValueKey('option-recommended'),
+                          label: 'recomendado',
+                          color: c.pass,
+                          dot: false,
+                        ),
+                      if (o.description.isNotEmpty)
+                        Text('— ${o.description}', style: TextStyle(fontSize: 12.5, color: c.textSecondary)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -782,7 +784,9 @@ class _NoteLine extends StatelessWidget {
     final (icon, text) = switch (e.kind) {
       SessionNoteKind.imported => (
         Icons.terminal,
-        e.dropped > 0 ? 'trazida do terminal · ${e.dropped} eventos mais antigos ficaram de fora' : 'trazida do terminal',
+        e.dropped > 0
+            ? 'trazida do terminal · ${e.dropped} eventos mais antigos ficaram de fora'
+            : 'trazida do terminal',
       ),
       SessionNoteKind.forked => (
         Icons.call_split,

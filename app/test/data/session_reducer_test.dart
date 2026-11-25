@@ -141,6 +141,7 @@ void main() {
           'kind': 'permission',
           'requestId': 'r1',
           'toolName': 'AskUserQuestion',
+          'toolUseID': 'tu1',
           'input': {
             'questions': [
               {
@@ -167,6 +168,7 @@ void main() {
       ]);
       final q = d.events.single as QuestionRequest;
       expect(q.requestId, 'r1');
+      expect(q.toolUseId, 'tu1');
       expect(q.questions.map((e) => e.header), ['H1', 'H2']);
       expect(q.questions[1].multiSelect, isTrue);
       expect(q.questions[0].options.map((o) => o.label), ['A', 'B']);
@@ -525,7 +527,9 @@ void main() {
   });
 
   test('a user_text with a /skill updates the summary skill; plain text keeps it', () {
-    var d = _reduce([_event(1, {'kind': 'user_text', 'text': 'me explica'})]);
+    var d = _reduce([
+      _event(1, {'kind': 'user_text', 'text': 'me explica'}),
+    ]);
     expect(d.summary.skill, isNull);
     d = applyFrame(d, _event(2, {'kind': 'user_text', 'text': '  /kickoff --manual idioma'}));
     expect(d.summary.skill, '/kickoff');
@@ -537,10 +541,10 @@ void main() {
   });
 
   test('parseHandoff reads only well-formed open-terminal frames', () {
-    expect(
-      parseHandoff(SseFrame('open-terminal', jsonEncode({'sdkSessionId': 'a', 'cwd': '/x'}))),
-      (sdkSessionId: 'a', cwd: '/x'),
-    );
+    expect(parseHandoff(SseFrame('open-terminal', jsonEncode({'sdkSessionId': 'a', 'cwd': '/x'}))), (
+      sdkSessionId: 'a',
+      cwd: '/x',
+    ));
     expect(parseHandoff(SseFrame('open-terminal', jsonEncode({'sdkSessionId': 'a'}))), isNull);
     expect(parseHandoff(SseFrame('summary', jsonEncode({'sdkSessionId': 'a', 'cwd': '/x'}))), isNull);
   });
@@ -598,5 +602,303 @@ void main() {
     );
     expect(AgentQuota(remaining: 0, resetsAt: DateTime.utc(2026, 10, 6, 16)).label(now), 'esgotado · renovando');
     expect(const AgentQuota(remaining: 0.5).label(now), '50%');
+  });
+
+  group('sessionLine', () {
+    final now = DateTime.utc(2026, 3, 10, 15);
+    SessionSummary s({
+      SessionStatus status = SessionStatus.idle,
+      int pending = 0,
+      String? aside,
+      String createdAt = '2026-03-10T14:41:00Z',
+    }) => SessionSummary(
+      id: 's',
+      project: 'demo',
+      command: '/fix',
+      title: 't',
+      status: status,
+      createdAt: createdAt,
+      pendingPermissions: pending,
+      asideOf: aside,
+    );
+
+    test('pending beats running', () {
+      expect(sessionLine(s(status: SessionStatus.running, pending: 1), now), 'esperando você');
+    });
+
+    test('pending of an ended session does not count', () {
+      expect(sessionLine(s(status: SessionStatus.done, pending: 2), now), 'encerrada há 19 min');
+    });
+
+    test('running and starting', () {
+      expect(sessionLine(s(status: SessionStatus.running), now), 'trabalhando agora');
+      expect(sessionLine(s(status: SessionStatus.starting), now), 'trabalhando agora');
+    });
+
+    test('aside shows the local HH:mm and beats ended', () {
+      final local = DateTime.parse('2026-03-10T14:41:00Z').toLocal();
+      String two(int n) => n.toString().padLeft(2, '0');
+      expect(
+        sessionLine(s(aside: 'p', status: SessionStatus.done), now),
+        'pergunta à parte · ${two(local.hour)}:${two(local.minute)}',
+      );
+      expect(sessionLine(s(aside: 'p', createdAt: 'x'), now), 'pergunta à parte');
+    });
+
+    test('ended statuses', () {
+      for (final st in [SessionStatus.done, SessionStatus.stopped, SessionStatus.error]) {
+        expect(sessionLine(s(status: st), now), 'encerrada há 19 min');
+        expect(sessionLine(s(status: st, createdAt: ''), now), 'encerrada');
+      }
+    });
+
+    test('otherwise the age, empty when unreadable', () {
+      expect(sessionLine(s(), now), 'há 19 min');
+      expect(sessionLine(s(createdAt: 'x'), now), '');
+    });
+  });
+
+  group('feedBlocks', () {
+    String at(int min) => '2026-03-10T10:${min.toString().padLeft(2, '0')}:00Z';
+    ToolCall tool(int m, {String name = 'Bash', bool error = false}) =>
+        ToolCall(at(m), id: 't$m', name: name, summary: 'x', result: '', isError: error);
+    AssistantText text(int m) => AssistantText(at(m), 'a$m');
+    Thinking think(int m) => Thinking(at(m), 'h');
+    UserText user(int m) => UserText(at(m), 'u');
+
+    List<(bool, int)> shape(List<FeedBlock> b) => [for (final x in b) (x.work, x.steps)];
+
+    test('text, tools and thinking, user, one tool', () {
+      final b = feedBlocks([text(0), tool(1), tool(2), think(3), tool(4), user(5), tool(6)]);
+      expect(shape(b), [(false, 0), (true, 3), (false, 0), (true, 1)]);
+      expect(b[1].events.length, 4);
+    });
+
+    test('intermediate text stays inside the block, final text outside', () {
+      final b = feedBlocks([
+        text(0),
+        tool(1),
+        text(2),
+        tool(3),
+        tool(4),
+        text(5),
+        SessionResult(at(6), isError: false, cost: 0, seconds: 1, turns: 1),
+      ]);
+      expect(shape(b), [(false, 0), (true, 3), (false, 0), (false, 0)]);
+      expect(b[1].events[1], isA<AssistantText>());
+      expect(b[3].events.single, isA<SessionResult>());
+    });
+
+    test('a permission request splits two work blocks', () {
+      final req = PermissionRequest(
+        at(2),
+        requestId: 'r',
+        seq: 1,
+        toolName: 'Bash',
+        target: 'x',
+        diff: const [],
+        command: 'x',
+      );
+      final b = feedBlocks([tool(1), req, tool(3)]);
+      expect(shape(b), [(true, 1), (false, 0), (true, 1)]);
+    });
+
+    test('seconds run to the first event after the block', () {
+      expect(feedBlocks([tool(0), text(20)]).first.seconds, 1200);
+    });
+
+    test('seconds stop at the last block event when a user turn follows', () {
+      final b = feedBlocks([
+        const UserText('2026-03-10T10:00:00Z', 'u'),
+        tool(1),
+        tool(2),
+        const UserText('2026-03-10T20:00:00Z', 'u'),
+      ]);
+      expect(b.firstWhere((x) => x.work).seconds, 60);
+    });
+
+    test('seconds stop at the last block event when an imported note follows', () {
+      final b = feedBlocks([tool(1), tool(3), SessionNote(at(50), SessionNoteKind.imported)]);
+      expect(b.first.seconds, 120);
+    });
+
+    test('seconds without an event after use the last event of the block', () {
+      expect(feedBlocks([tool(0), tool(2)]).single.seconds, 120);
+    });
+
+    test('unreadable at gives 0 seconds', () {
+      final b = feedBlocks([const ToolCall('', id: 'a', name: 'Bash', summary: 'x'), text(5)]);
+      expect(b.first.seconds, 0);
+    });
+
+    test('AskUserQuestion with a QuestionRequest is in no block and does not count', () {
+      final card = QuestionRequest(at(3), requestId: 'q', seq: 1, questions: const []);
+      final b = feedBlocks([tool(1), tool(2, name: 'AskUserQuestion'), card, tool(4)]);
+      expect(shape(b), [(true, 1), (false, 0), (true, 1)]);
+      expect(b.expand((x) => x.events).whereType<ToolCall>().any((c) => c.name == 'AskUserQuestion'), isFalse);
+    });
+
+    test('a QuestionRequest hides the call with its toolUseId, not the neighbours', () {
+      QuestionRequest card(int m, String id) =>
+          QuestionRequest(at(m), requestId: 'q$m', seq: m, questions: const [], toolUseId: id);
+      final b = feedBlocks([tool(1, name: 'AskUserQuestion'), tool(2, name: 'AskUserQuestion'), card(3, 't2')]);
+      final calls = b.expand((x) => x.events).whereType<ToolCall>().toList();
+      expect(calls.map((c) => c.id), ['t1']);
+    });
+
+    test('two questions in one message hide both calls once both requests are in', () {
+      QuestionRequest card(int m, String id) =>
+          QuestionRequest(at(m), requestId: 'q$m', seq: m, questions: const [], toolUseId: id);
+      final b = feedBlocks([
+        tool(1, name: 'AskUserQuestion'),
+        tool(2, name: 'AskUserQuestion'),
+        card(3, 't1'),
+        card(4, 't2'),
+      ]);
+      expect(b.expand((x) => x.events).whereType<ToolCall>(), isEmpty);
+      expect(b.length, 2);
+    });
+
+    test('a call whose request has not arrived stays visible while another request has', () {
+      final card = QuestionRequest(at(3), requestId: 'q', seq: 1, questions: const [], toolUseId: 't1');
+      final b = feedBlocks([tool(1, name: 'AskUserQuestion'), tool(2, name: 'AskUserQuestion'), card]);
+      expect(b.expand((x) => x.events).whereType<ToolCall>().map((c) => c.id), ['t2']);
+    });
+
+    test('AskUserQuestion without a QuestionRequest stays as a step', () {
+      final b = feedBlocks([tool(1), tool(2, name: 'AskUserQuestion'), tool(3)]);
+      expect(shape(b), [(true, 3)]);
+      expect(b.single.events.whereType<ToolCall>().any((c) => c.name == 'AskUserQuestion'), isTrue);
+    });
+
+    test('errors are counted', () {
+      expect(feedBlocks([tool(1, error: true), tool(2), tool(3, error: true)]).single.errors, 2);
+    });
+
+    test('feedBlocks keeps work-block positions across every prefix', () {
+      final all = <SessionEvent>[
+        user(0),
+        text(1),
+        tool(2),
+        text(3),
+        tool(4),
+        think(5),
+        text(6),
+        user(7),
+        tool(8),
+        tool(9),
+        text(10),
+        SessionResult(at(11), isError: false, cost: 0, seconds: 1, turns: 1),
+        text(12),
+        tool(13),
+      ];
+      List<int> workPositions(List<FeedBlock> b) => [
+        for (var i = 0; i < b.length; i++)
+          if (b[i].work) i,
+      ];
+      for (var n = 1; n <= all.length; n++) {
+        final prefix = workPositions(feedBlocks(all.sublist(0, n)));
+        final next = workPositions(feedBlocks(all.sublist(0, n + 1 > all.length ? n : n + 1)));
+        expect(next.take(prefix.length).toList(), prefix, reason: 'prefix $n');
+      }
+    });
+
+    test('feedBlocks keeps work positions across prefixes with AskUserQuestion', () {
+      QuestionRequest card(int m, {String? id}) =>
+          QuestionRequest(at(m), requestId: 'q$m', seq: m, questions: const [], toolUseId: id);
+      bool onlyAsk(FeedBlock b) => b.events.every((e) => e is ToolCall && e.name == 'AskUserQuestion');
+
+      final scenarios = <String, List<SessionEvent>>{
+        'without a request': [user(0), tool(1), tool(2, name: 'AskUserQuestion'), tool(3), text(4)],
+        'with a request by toolUseId': [user(0), tool(1), tool(2, name: 'AskUserQuestion'), card(3, id: 't2'), tool(4)],
+        'with a request without toolUseId': [user(0), tool(1), tool(2, name: 'AskUserQuestion'), card(3), tool(4)],
+        'alone in its block': [user(0), text(1), tool(2, name: 'AskUserQuestion'), card(3, id: 't2'), tool(4)],
+        'two questions in one message': [
+          user(0),
+          tool(1, name: 'AskUserQuestion'),
+          tool(2, name: 'AskUserQuestion'),
+          card(3, id: 't1'),
+          card(4, id: 't2'),
+          tool(5),
+        ],
+      };
+
+      scenarios.forEach((name, all) {
+        for (var n = 1; n < all.length; n++) {
+          final prefix = feedBlocks(all.sublist(0, n));
+          final next = feedBlocks(all.sublist(0, n + 1));
+          for (var i = 0; i < prefix.length; i++) {
+            if (!prefix[i].work) continue;
+            final reason = '$name, prefix $n, block $i';
+            if (i < next.length && next[i].work) continue;
+            expect(onlyAsk(prefix[i]), isTrue, reason: reason);
+            expect(prefix.skip(i + 1).any((b) => b.work), isFalse, reason: reason);
+          }
+        }
+      });
+    });
+
+    test('a block made only of an AskUserQuestion call vanishes when its card arrives', () {
+      final before = feedBlocks([user(0), tool(1, name: 'AskUserQuestion')]);
+      final after = feedBlocks([
+        user(0),
+        tool(1, name: 'AskUserQuestion'),
+        QuestionRequest(at(2), requestId: 'q', seq: 1, questions: const [], toolUseId: 't1'),
+      ]);
+      expect(shape(before), [(false, 0), (true, 1)]);
+      expect(shape(after), [(false, 0), (false, 0)]);
+    });
+  });
+
+  group('workOpenByDefault', () {
+    FeedBlock work() => (events: <SessionEvent>[], work: true, steps: 1, errors: 0, seconds: 0);
+    FeedBlock single(SessionEvent e) => (events: [e], work: false, steps: 0, errors: 0, seconds: 0);
+
+    test('open only when text follows and the session is live', () {
+      final blocks = [work(), single(const AssistantText('', 'a'))];
+      expect(workOpenByDefault(blocks, 0, SessionStatus.running), isTrue);
+      expect(workOpenByDefault(blocks, 0, SessionStatus.starting), isTrue);
+      expect(workOpenByDefault(blocks, 0, SessionStatus.waitingPermission), isTrue);
+      expect(workOpenByDefault(blocks, 0, SessionStatus.idle), isFalse);
+      expect(workOpenByDefault(blocks, 0, SessionStatus.done), isFalse);
+    });
+
+    test('closed when a user message or another work block follows', () {
+      expect(workOpenByDefault([work(), single(const UserText('', 'u'))], 0, SessionStatus.running), isFalse);
+      expect(workOpenByDefault([work(), work()], 0, SessionStatus.running), isFalse);
+      expect(workOpenByDefault([work(), work()], 1, SessionStatus.running), isTrue);
+    });
+  });
+
+  test('workLine', () {
+    expect(workLine(1, 0), 'Trabalhou em 1 passo');
+    expect(workLine(3, 0), 'Trabalhou em 3 passos');
+    expect(workLine(3, 59), 'Trabalhou em 3 passos');
+    expect(workLine(3, 125), 'Trabalhou em 3 passos · 2min');
+    expect(workLine(3, 3700), 'Trabalhou em 3 passos · 1h 01min');
+    expect(workLine(0, 125), 'Pensou');
+    expect(workLine(3, 0, errors: 1), 'Trabalhou em 3 passos · 1 com erro');
+    expect(workLine(3, 125, errors: 2), 'Trabalhou em 3 passos · 2min · 2 com erro');
+  });
+
+  test('optionView', () {
+    expect(optionView('Aprovar (Recomendado)'), (label: 'Aprovar', recommended: true));
+    expect(optionView('Aprovar (Recommended)'), (label: 'Aprovar', recommended: true));
+    expect(optionView('Aprovar'), (label: 'Aprovar', recommended: false));
+  });
+
+  test('answerDisplay tira o sufixo de cada parte', () {
+    expect(answerDisplay('A (Recomendado), B'), 'A, B');
+    expect(answerDisplay('A (Recomendado)'), 'A');
+    expect(answerDisplay('Sim, claro'), 'Sim, claro');
+  });
+
+  test('shortModel', () {
+    expect(shortModel('claude-opus-5-5'), 'opus');
+    expect(shortModel('claude-sonnet-5-5'), 'sonnet');
+    expect(shortModel('claude-haiku-4-5'), 'haiku');
+    expect(shortModel('fable-1'), 'fable');
+    expect(shortModel('gemini-3'), 'gemini-3');
+    expect(shortModel(null), isNull);
   });
 }

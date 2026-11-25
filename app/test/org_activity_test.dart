@@ -231,7 +231,7 @@ void main() {
       expect(find.text('Atividades em $kNoOrg'), findsOneWidget);
       expect(find.text('Nova atividade  ⌘K'), findsNothing);
       expect(find.text('Nova atividade'), findsNothing);
-      expect(find.text('Atividade o1'), findsOneWidget);
+      expect(find.text('Atividade o1'), findsNWidgets(2), reason: 'the tile and the open session header');
 
       await tester.tap(find.text('Atividade b1'));
       await tester.pumpAndSettle();
@@ -251,12 +251,14 @@ void main() {
       expect(find.text('2 aguardando você'), findsOneWidget);
       expect(find.text('Kickoff'), findsNothing);
       expect(find.text('Fluxo'), findsNothing, reason: 'only the Sessões tab');
-      expect(find.text('Atividade a1'), findsOneWidget);
+      expect(find.text('Atividade a1'), findsNWidgets(2), reason: 'the tile and the open session header');
       expect(find.text('Atividade a2'), findsOneWidget);
       expect(find.text('Atividade a3'), findsOneWidget);
       expect(find.text('Atividade b1'), findsNothing);
       expect(find.text('Sessão alpha'), findsNothing);
-      expect(find.textContaining('· A ·'), findsNWidgets(3));
+      expect(find.byKey(const ValueKey('session-waiting-a1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('session-waiting-a2')), findsNothing);
+      expect(find.byKey(const ValueKey('session-waiting-a3')), findsNothing);
       expect(repo.config.lastOrg, 'A');
     });
 
@@ -319,7 +321,7 @@ void main() {
 
       expect(_org(tester), 'B');
       expect(repo.config.lastOrg, 'B');
-      expect(find.text('Atividade b1'), findsOneWidget);
+      expect(find.text('Atividade b1'), findsNWidgets(2), reason: 'the tile and the open session header');
     });
 
     testWidgets('an org name with spaces and accents is encoded in the route', (tester) async {

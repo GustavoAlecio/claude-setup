@@ -384,7 +384,7 @@ void main() {
 
       _router(tester).go('/p/alpha/sessions');
       await tester.pumpAndSettle();
-      expect(find.text('Sessão alpha'), findsOneWidget);
+      expect(find.text('Sessão alpha'), findsNWidgets(2), reason: 'the tile and the open session header');
       expect(find.text('Outros projetos'), findsNothing);
       expect(find.text('Sessão beta'), findsNothing);
       expect(find.text('Sessão hid'), findsNothing);
