@@ -30,7 +30,7 @@ class ShellOrgScope extends ShellScope {
 enum AppTab {
   flow('Fluxo'),
   runs('Execuções'),
-  sessions('Sessões'),
+  sessions('Conversas'),
   artifacts('Artefatos'),
   reviews('Reviews'),
   prs('PRs'),

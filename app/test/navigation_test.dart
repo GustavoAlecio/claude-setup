@@ -471,9 +471,13 @@ void main() {
       GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/o/demo/fila');
       await tester.pumpAndSettle();
 
-      for (final label in ['Caixa de entrada', 'Para revisar', 'Sessões']) {
+      for (final label in ['Caixa de entrada', 'Para revisar', 'Conversas']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
+      expect(
+        find.descendant(of: find.byKey(const ValueKey('org-tab-sessions')), matching: find.text('Conversas')),
+        findsOneWidget,
+      );
       expect(find.byKey(const ValueKey('subtabs')), findsNothing);
       for (final g in ['group-cycle', 'group-talks', 'group-prs', 'group-reference']) {
         expect(find.byKey(ValueKey(g)), findsNothing, reason: g);

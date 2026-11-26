@@ -769,7 +769,7 @@ class _WaitReason extends StatelessWidget {
           icon: Icons.schedule,
           text: switch (reason) {
             GateWaitReason.otherRequest => 'a sessão espera outra resposta',
-            GateWaitReason.sessionEnded => 'sessão encerrada, retome em Sessões',
+            GateWaitReason.sessionEnded => 'sessão encerrada, retome em Conversas',
             GateWaitReason.terminal => 'a etapa rodou no terminal, sem sessão no app',
             GateWaitReason.notArrived => 'a pergunta ainda não chegou',
           },
@@ -787,8 +787,6 @@ class _WaitReason extends StatelessWidget {
     );
   }
 }
-
-bool _isAdjust(String label) => label.trim().toLowerCase().startsWith('ajustar');
 
 /// Number and text of a `pr` point, then its why, anchor and excerpt from the [block] question of the same text.
 class _PointHead extends StatelessWidget {
@@ -923,7 +921,7 @@ class _GateFormState extends State<_GateForm> {
       final label = _picked[q];
       final text = _free[q]!.text.trim();
       out.remove(q);
-      if (label != null && !_isAdjust(label)) {
+      if (label != null && !isAdjustLabel(label)) {
         out[q] = label;
       } else if (label != null && text.isNotEmpty) {
         out[q] = text;
@@ -934,8 +932,11 @@ class _GateFormState extends State<_GateForm> {
 
   Future<void> _submit(Map<String, String> answers) async {
     setState(() => _sending = true);
-    await widget.onSend(answers);
-    if (mounted) setState(() => _sending = false);
+    try {
+      await widget.onSend(answers);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 
   @override

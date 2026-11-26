@@ -103,7 +103,7 @@ class _NoSession extends StatelessWidget {
               key: const ValueKey('flow-orphan-resume'),
               style: OutlinedButton.styleFrom(foregroundColor: c.accent),
               // A kickoff takes a card or a description, which only its form asks for.
-              onPressed: () => orphan == Stage.kickoff
+              onPressed: () => resumesThroughKickoffForm(orphan)
                   ? showKickoffForm(context, project)
                   : showCommandPalette(context, ProjectTarget(project), skill: orphan.label),
               icon: const Icon(Icons.play_arrow_rounded, size: 16),

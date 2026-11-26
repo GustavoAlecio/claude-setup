@@ -946,12 +946,20 @@ class _OrgTopBar extends StatelessWidget {
 }
 
 class _TabItem extends StatelessWidget {
-  const _TabItem({super.key, required this.label, required this.active, required this.onTap, this.trailing});
+  const _TabItem({
+    super.key,
+    required this.label,
+    required this.active,
+    required this.onTap,
+    this.trailing,
+    this.compact = false,
+  });
 
   final String label;
   final bool active;
   final VoidCallback onTap;
   final Widget? trailing;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -963,7 +971,7 @@ class _TabItem extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: active ? c.accent : Colors.transparent, width: 2)),
+          border: compact ? null : Border(bottom: BorderSide(color: active ? c.accent : Colors.transparent, width: 2)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -971,7 +979,7 @@ class _TabItem extends StatelessWidget {
             Text(
               label,
               style: TextStyle(
-                fontSize: 12.5,
+                fontSize: compact ? 12 : 12.5,
                 fontWeight: active ? FontWeight.w600 : FontWeight.w400,
                 color: active ? c.textPrimary : c.textSecondary,
               ),
@@ -1034,22 +1042,12 @@ class _SubTabs extends StatelessWidget {
       child: Row(
         children: [
           for (final t in tabs)
-            InkWell(
+            _TabItem(
               key: ValueKey('subtab-${t.name}'),
+              label: subTabLabel(t),
+              active: t == active,
+              compact: true,
               onTap: () => context.go('/p/$project/${t.name}'),
-              hoverColor: Colors.transparent,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                alignment: Alignment.center,
-                child: Text(
-                  subTabLabel(t),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: t == active ? FontWeight.w600 : FontWeight.w400,
-                    color: t == active ? c.textPrimary : c.textSecondary,
-                  ),
-                ),
-              ),
             ),
         ],
       ),

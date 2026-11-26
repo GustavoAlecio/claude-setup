@@ -95,7 +95,7 @@ List<AttentionItem> pendingAttention(List<SessionSummary> sessions, List<Project
         AttentionItem(
           key: 'blocked:${p.name}:${decision.run.id}:${decision.task.id}',
           title: 'Ciclo parado · ${p.name}',
-          body: '${decision.task.id} · ${decision.task.title}: o diagnóstico espera a sua decisão',
+          body: '${decision.task.id} · ${blockedTaskText(decision.task).detail}',
           route: decisionLocation(p.name, decision),
           kind: AttentionKind.blocked,
           project: p.name,
@@ -213,10 +213,8 @@ OrgQueue orgQueue(String org, List<SessionSummary> sessions, List<Project> proje
 /// One line of the inbox "Precisa de você" section.
 typedef InboxRow = ({String context, String title, String detail, String action, String route});
 
-String _withFeature(String project, Project? p) {
-  final feature = p?.cycle?.feature;
-  return feature == null || feature.isEmpty ? project : '$project · $feature';
-}
+/// `<where> · <feature>`, or just [where] without a feature.
+String featureLabel(String where, String? feature) => feature == null || feature.isEmpty ? where : '$where · $feature';
 
 /// Lines of "Precisa de você": [waiting] in order, then the PRs with review comments. Every text comes from typed
 /// fields and [projects], never from an item's `key` or `title`.
@@ -238,18 +236,18 @@ List<InboxRow> inboxRows(
         final gate = block.firstOrNull;
         final summary = gate?.summary.trim() ?? '';
         rows.add((
-          context: _withFeature(item.project!, project),
+          context: featureLabel(item.project!, project?.cycle?.feature),
           title: gateTitle(item.gate!, gate?.questions.length ?? 0),
-          detail: summary.isEmpty ? item.body : summary,
+          detail: summary.isNotEmpty
+              ? summary
+              : (gate != null && item.sessionId != null ? kGateWaitsDetail : item.body),
           action: 'Decidir',
           route: item.route,
         ));
       case AttentionKind.request:
         final feature = project?.cycle?.feature;
         rows.add((
-          context: item.project == null
-              ? '$org · conversa'
-              : '${item.project} · ${feature == null || feature.isEmpty ? 'conversa' : feature}',
+          context: item.project == null ? '$org · conversa' : featureLabel(item.project!, feature ?? 'conversa'),
           title: pendingRequestsTitle(item.pending),
           detail: item.body,
           action: 'Responder',
@@ -258,11 +256,12 @@ List<InboxRow> inboxRows(
       case AttentionKind.blocked:
         final decision = project == null ? null : blockedDecision(project);
         if (decision == null) break;
+        final text = blockedTaskText(decision.task);
         rows.add((
-          context: _withFeature(item.project!, project),
-          title: 'A task ${decision.task.id} travou',
-          detail: '${decision.task.title}: o diagnóstico espera a sua decisão',
-          action: 'Decidir',
+          context: featureLabel(item.project!, project?.cycle?.feature),
+          title: text.title,
+          detail: text.detail,
+          action: text.action,
           route: item.route,
         ));
     }

@@ -16,7 +16,7 @@ const _steps = [
   ),
   (
     'Abra um projeto',
-    'Escolha o projeto na barra lateral. A aba Fluxo mostra o ciclo atual; Sessões, as conversas com o agente.',
+    'Escolha o projeto na barra lateral. A aba Fluxo mostra o ciclo atual; Conversas, as conversas com o agente.',
   ),
   (
     'Comece pelo Kickoff',

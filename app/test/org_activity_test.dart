@@ -251,7 +251,7 @@ void main() {
       expect(find.text('Nova atividade  ⌘K'), findsOneWidget);
       expect(find.text('2 aguardando você'), findsOneWidget);
       expect(find.text('Kickoff'), findsNothing);
-      expect(find.text('Fluxo'), findsNothing, reason: 'only the Sessões tab');
+      expect(find.text('Fluxo'), findsNothing, reason: 'only the Conversas tab');
       expect(find.text('Atividade a1'), findsNWidgets(2), reason: 'the tile and the open session header');
       expect(find.text('Atividade a2'), findsOneWidget);
       expect(find.text('Atividade a3'), findsOneWidget);

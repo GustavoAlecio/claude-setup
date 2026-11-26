@@ -15,7 +15,6 @@ import '../../core/widgets/model_menu.dart';
 import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/docs_repository.dart';
-import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_models.dart';
 import '../../data/session_reducer.dart';
@@ -53,7 +52,7 @@ const _interruptible = {SessionStatus.starting, SessionStatus.running, SessionSt
 typedef RequestOverride = Widget? Function(SessionDetail detail, QuestionRequest request);
 
 /// One session's detail: header (status, mode, Interromper), the feed with answerable cards, and the composer.
-/// Shared by Sessões and the Fluxo side panel; owns the session's stream.
+/// Shared by Conversas and the Fluxo side panel; owns the session's stream.
 class SessionPanel extends StatelessWidget {
   const SessionPanel({super.key, required this.session, this.requestOverride});
 
@@ -973,7 +972,7 @@ class _ComposerState extends State<_Composer> with ImageAttachments<_Composer> {
 }
 
 Color _modelColor(AppColors c, String model) {
-  final tier = Tier.values.where((t) => model.contains(t.name)).firstOrNull;
+  final tier = tierOfModel(model);
   return tier == null ? c.idle : c.tier(tier);
 }
 

@@ -79,7 +79,7 @@ Future<void> showCommandPalette(
     OrgTarget(:final org) => org,
   };
   final config = context.read<ConfigCubit>().state.data;
-  final githubAccount = githubFor(org, config).account;
+  final launch = launchDefaults(org, config);
   final jumps = _jumpIndex(context, project, org, config);
   // Read once, like ⌘J does: every org, and the route is relative to where the palette was opened.
   final pending = pendingAttention(
@@ -93,9 +93,9 @@ Future<void> showCommandPalette(
     builder: (_) => _CommandPalette(
       target: target,
       sessions: sessions,
-      githubAccount: githubAccount,
+      githubAccount: launch.githubAccount,
       agentOf: (command) => agentFor(org, config, command),
-      permissionMode: effectivePermissionMode(null, org, config),
+      permissionMode: launch.permissionMode,
       startOnPrompt: newConversation && (target is OrgTarget || project != null),
       initialSkill: skill,
       onCreated: (s) => router.go(switch (target) {
@@ -768,7 +768,7 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
                             child: Muted(
                               _mode == _Mode.list
                                   ? 'Digite para buscar conversas, documentos e decisões · esc fecha'
-                                  : '↵ iniciar · esc voltar · permissões aparecem na aba Sessões',
+                                  : '↵ iniciar · esc voltar · permissões na aba Conversas',
                               size: 11,
                             ),
                           ),

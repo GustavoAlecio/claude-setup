@@ -18,6 +18,7 @@ import '../../data/github_parser.dart';
 import '../../data/github_repository.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
+import '../../data/time_text.dart';
 
 const _logName = 'InboxPage';
 

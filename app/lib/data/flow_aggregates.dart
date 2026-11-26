@@ -197,12 +197,13 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
   final report = gateReport(cycle);
 
   if (blockedDecision(project) case final decision?) {
+    final text = blockedTaskText(decision.task);
     return (
       kind: CycleNowKind.blocked,
       eyebrow: kNeedsYou,
-      title: 'A task ${decision.task.id} travou',
-      detail: '${decision.task.title}: o diagnóstico espera a sua decisão',
-      action: 'Decidir',
+      title: text.title,
+      detail: text.detail,
+      action: text.action,
       route: decisionLocation(project.name, decision),
       skill: null,
     );
@@ -213,7 +214,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       kind: CycleNowKind.gate,
       eyebrow: kNeedsYou,
       title: gateTitle(gate.name, gate.questions.length),
-      detail: summary.isEmpty ? 'Nada roda antes da sua resposta.' : summary,
+      detail: summary.isEmpty ? kGateWaitsDetail : summary,
       action: 'Decidir',
       route: gateLocation(project.name, gate.name),
       skill: null,
@@ -306,7 +307,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: 'Nenhuma conversa está rodando esta etapa.',
       action: 'Retomar /$label',
       route: null,
-      skill: cycle.stage == Stage.kickoff ? null : label,
+      skill: resumesThroughKickoffForm(cycle.stage) ? null : label,
     );
   }
   return (
@@ -319,6 +320,16 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
     skill: null,
   );
 }
+
+/// Shown when a gate is open in the report but its summary is empty.
+const kGateWaitsDetail = 'Nada roda antes da sua resposta.';
+
+/// Title, detail and action of the card/inbox line for a task stopped on the user's decision.
+({String title, String detail, String action}) blockedTaskText(TaskRun task) =>
+    (title: 'A task ${task.id} travou', detail: '${task.title}: o diagnóstico espera a sua decisão', action: 'Decidir');
+
+/// A stalled [stage] that resumes through the kickoff form instead of a `/<stage>` skill.
+bool resumesThroughKickoffForm(Stage? stage) => stage == Stage.kickoff;
 
 String _runningTitle(Cycle cycle, SessionSummary session) {
   if (skillOf(session.skill ?? session.command) == '/fix') return 'Correção em andamento (/fix)';
@@ -353,7 +364,7 @@ class EndedStageSession {
   final SessionSummary session;
 }
 
-bool _ended(SessionStatus status) => status != SessionStatus.starting && !isLive(status);
+bool _ended(SessionStatus status) => !isLiveOrStarting(status);
 
 List<EndedStageSession> endedStageSessions(ReportDoc? report, List<SessionSummary> sessions) => [
   for (final s in report?.stages ?? const <StageReport>[])
@@ -403,8 +414,8 @@ List<EndedStageSession> awaitingEnded(List<EndedStageSession> ended, String? sho
     if (e.session.id != shownSessionId) e,
 ];
 
-/// Without a cycle, a session to show, a `?stage=` or pending permissions the Fluxo drops the side panel, so the empty
-/// state is the only Kickoff on screen.
+/// The Fluxo shows the side panel with a cycle, a session to show, a `?stage=` or pending permissions; without any of
+/// them it is dropped, so the empty state is the only Kickoff on screen.
 bool showsFlowSidePanel({
   required bool hasCycle,
   required bool hasShownSession,
@@ -412,8 +423,8 @@ bool showsFlowSidePanel({
   required int pending,
 }) => hasCycle || hasShownSession || stage != null || pending > 0;
 
-/// Without a cycle only a `/kickoff` session means a cycle is being born; `/complete` or `/fix` sessions stay alive
-/// after the archive and must not hide "Novo kickoff".
+/// True when the session's first word is `/kickoff`. Without a cycle only such a session means one is being born;
+/// `/complete` or `/fix` sessions stay alive after the archive and must not replace the `cycle-start` with `flow-kickoff-running`.
 bool isKickoffSession(SessionSummary session) => session.command.trimLeft().split(RegExp(r'\s+')).first == '/kickoff';
 
 /// `file:line` for a finding, relative to [root] when the agent reported an absolute path under it.
@@ -644,7 +655,11 @@ String gateLocation(String project, String gate) => Uri(pathSegments: ['', 'p', 
 
 String _normalized(String text) => text.trim().replaceAll(RegExp(r'\s+'), ' ');
 
-const _approvalPrefixes = ['aprovar', 'ajustar', 'rejeitar'];
+const _adjustPrefix = 'ajustar';
+const _approvalPrefixes = ['aprovar', _adjustPrefix, 'rejeitar'];
+
+/// Whether a gate option [label] is the "Ajustar" choice.
+bool isAdjustLabel(String label) => label.trim().toLowerCase().startsWith(_adjustPrefix);
 
 bool _isApprovalRequest(QuestionRequest r) =>
     r.questions.length == 1 &&

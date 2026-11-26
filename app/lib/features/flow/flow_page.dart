@@ -81,7 +81,7 @@ class _FlowViewState extends State<_FlowView> with SessionLauncher<_FlowView> {
   String get logName => 'CycleStart';
 
   void _start(Project project, String command) {
-    final config = context.read<ConfigCubit>().state.data;
+    final launch = launchDefaults(project.org, context.read<ConfigCubit>().state.data);
     final cwd = project.path;
     if (cwd == null) {
       setState(() => _startPathError = missingProjectPathError(project));
@@ -93,8 +93,8 @@ class _FlowViewState extends State<_FlowView> with SessionLauncher<_FlowView> {
         project.name,
         command,
         cwd: cwd,
-        githubAccount: githubFor(project.org, config).account,
-        permissionMode: effectivePermissionMode(null, project.org, config),
+        githubAccount: launch.githubAccount,
+        permissionMode: launch.permissionMode,
       ),
     );
   }
@@ -276,7 +276,7 @@ class _FlowMain extends StatelessWidget {
       context.go(route);
     } else if (now.kind == CycleNowKind.paused) {
       unawaited(resumeCycle(context, project));
-    } else if (now.kind == CycleNowKind.stalled && project.cycle?.stage == Stage.kickoff) {
+    } else if (now.kind == CycleNowKind.stalled && resumesThroughKickoffForm(project.cycle?.stage)) {
       unawaited(showKickoffForm(context, project));
     } else {
       unawaited(showCommandPalette(context, ProjectTarget(project), skill: now.skill));
@@ -685,7 +685,7 @@ class _RunSummary extends StatelessWidget {
                     ),
                   ),
                   TextButton(
-                    onPressed: () => context.go('/p/$project/runs/${run.id}/${blocked.id}'),
+                    onPressed: () => context.go(taskLocation(project, run.id, blocked.id)),
                     child: Text('ver diagnóstico', style: TextStyle(color: c.fail, fontSize: 12)),
                   ),
                 ],

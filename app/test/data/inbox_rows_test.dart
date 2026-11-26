@@ -81,6 +81,24 @@ AttentionItem _blocked(String project) => AttentionItem(
 );
 
 void main() {
+  group('featureLabel', () {
+    test('joins with a dot, or keeps only where for a null or empty feature', () {
+      expect(featureLabel('alpha', 'login'), 'alpha · login');
+      expect(featureLabel('alpha', null), 'alpha');
+      expect(featureLabel('alpha', ''), 'alpha');
+    });
+  });
+
+  group('blockedTaskText', () {
+    test('names the task, its title and the decision', () {
+      expect(blockedTaskText(_task()), (
+        title: 'A task T2 travou',
+        detail: 'Regra pura: o diagnóstico espera a sua decisão',
+        action: 'Decidir',
+      ));
+    });
+  });
+
   group('inboxRows', () {
     test('gate row: feature, gateTitle with the block questions and the trimmed summary', () {
       final projects = [
@@ -101,7 +119,7 @@ void main() {
       ]);
     });
 
-    test('gate row with no questions and an empty summary falls back to the item body', () {
+    test('gate row with an empty summary says nothing runs before the answer', () {
       final projects = [
         _project(
           'alpha',
@@ -113,11 +131,28 @@ void main() {
         (
           context: 'alpha · login',
           title: 'Aprovar o plano?',
-          detail: 'corpo',
+          detail: 'Nada roda antes da sua resposta.',
           action: 'Decidir',
           route: '/p/alpha/gate/plan',
         ),
       ]);
+    });
+
+    test('orphan gate (no session) keeps the item body even with an empty summary', () {
+      final projects = [_project('alpha', report: _report(summary: ''))];
+      const orphan = AttentionItem(
+        key: 'k-orphan',
+        title: 't',
+        body: 'A conversa deste gate não está aberta no app.',
+        route: '/p/alpha/gate/plan',
+        kind: AttentionKind.gate,
+        project: 'alpha',
+        gate: 'plan',
+      );
+      expect(
+        inboxRows('acme', [orphan], const [], projects).single.detail,
+        'A conversa deste gate não está aberta no app.',
+      );
     });
 
     test('gate row picks the block named by item.gate and drops the feature when there is none', () {

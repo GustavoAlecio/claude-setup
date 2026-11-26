@@ -35,7 +35,8 @@ class DocText {
 }
 
 abstract interface class DocsRepository {
-  /// [project] é o nome do diretório do projeto no workflow; diretório inexistente → [DocsListing.empty].
+  /// [project] é o nome do diretório do projeto no workflow. Pasta ausente dá [DocsListing.empty]; erro de IO ao listar
+  /// lança, e quem chama decide como mostrar a falha.
   Future<DocsListing> list(String project);
 
   /// Só `.md`, `.json` e `.diff` contidos no diretório do projeto; o resto vira [DocText.error].

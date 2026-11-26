@@ -540,7 +540,7 @@ List<Finding> _findings(String gate, Object? raw) {
 }
 
 List<Hypothesis> _diagnosis(Object? raw) {
-  final list = [
+  return [
     for (final h in _maps(raw))
       Hypothesis(
         lens: h['lens'] as String? ?? '',
@@ -553,8 +553,6 @@ List<Hypothesis> _diagnosis(Object? raw) {
         action: h['recommended_action'] as String? ?? '',
       ),
   ];
-  list.sort((a, b) => b.confidence.compareTo(a.confidence));
-  return list;
 }
 
 List<Object?> _list(Object? v) => v is List ? v : const [];

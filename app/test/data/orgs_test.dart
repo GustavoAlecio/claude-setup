@@ -1250,6 +1250,15 @@ void main() {
       expect(diffConfig(before, after), ConfigChange.reemit);
     });
 
+    test('launchDefaults bundles the org GitHub account and its effective permission mode', () {
+      final raw = withModes(r10: 'auto');
+      ((raw['orgs'] as List).first as Map)['github'] = {'account': 'acct-a'};
+      final config = DashboardConfig.fromMap(raw);
+      expect(launchDefaults('r10', config), (githubAccount: 'acct-a', permissionMode: PermissionMode.auto));
+      expect(launchDefaults('abm', config), (githubAccount: null, permissionMode: PermissionMode.acceptEdits));
+      expect(launchDefaults(null, null), (githubAccount: null, permissionMode: PermissionMode.acceptEdits));
+    });
+
     test('effectivePermissionMode: session choice > org > global', () {
       final config = DashboardConfig.fromMap(withModes(global: 'acceptEdits', r10: 'auto'));
       expect(effectivePermissionMode(PermissionMode.defaultMode, 'r10', config), PermissionMode.defaultMode);
