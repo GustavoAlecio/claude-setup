@@ -142,3 +142,97 @@ class OthersRow extends DiffRow {
 
   final int count;
 }
+
+final _reviewIdPattern = RegExp(r'^PR-(\d+)\.md$');
+
+class DocEntry {
+  const DocEntry({required this.rel, required this.size, required this.modified});
+
+  /// Relativo ao diretório do projeto no workflow, com `/`.
+  final String rel;
+  final int size;
+  final DateTime modified;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DocEntry && other.rel == rel && other.size == size && other.modified == modified;
+
+  @override
+  int get hashCode => Object.hash(rel, size, modified);
+}
+
+class ReviewEntry {
+  const ReviewEntry({required this.number, required this.report, this.diff, this.comments, this.meta});
+
+  final int number;
+  final DocEntry report;
+  final DocEntry? diff;
+  final DocEntry? comments;
+  final DocEntry? meta;
+
+  String get id => 'PR-$number';
+}
+
+class DocsListing {
+  const DocsListing({this.artifacts = const [], this.details = const [], this.reviews = const []});
+
+  /// Agrupa arquivos já filtrados pela contenção; quem lista só coleta a raiz, `details/` e `reviews/`.
+  factory DocsListing.fromEntries(Iterable<DocEntry> entries) {
+    final byRel = {for (final e in entries) e.rel: e};
+    final root = [
+      for (final rel in byRel.keys)
+        if (!rel.contains('/') && rel.endsWith('.md') && !rel.startsWith('.')) rel,
+    ]..sort();
+    final details = orderDetails([
+      for (final rel in byRel.keys)
+        if (rel.startsWith('details/') && !rel.substring(8).contains('/')) rel,
+    ]);
+    final reviewNames = [
+      for (final rel in byRel.keys)
+        if (rel.startsWith('reviews/') && !rel.substring(8).contains('/')) rel.substring(8),
+    ];
+    return DocsListing(
+      artifacts: [for (final rel in root) byRel[rel]!],
+      details: [for (final rel in details) byRel[rel]!],
+      reviews: [
+        for (final n in reviewIds(reviewNames))
+          ReviewEntry(
+            number: n,
+            report: byRel['reviews/PR-$n.md']!,
+            diff: byRel['reviews/PR-$n.diff'],
+            comments: byRel['reviews/PR-$n.comments.json'],
+            meta: byRel['reviews/PR-$n.meta.json'],
+          ),
+      ],
+    );
+  }
+
+  static const empty = DocsListing();
+
+  final List<DocEntry> artifacts;
+  final List<DocEntry> details;
+  final List<ReviewEntry> reviews;
+}
+
+/// Números de `PR-<n>.md`, do maior para o menor; só nomes exatos e canônicos (sem zeros à esquerda),
+/// porque os irmãos `.diff`/`.json` são procurados por `PR-<n>`.
+List<int> reviewIds(Iterable<String> fileNames) {
+  final ids = <int>{};
+  for (final name in fileNames) {
+    final digits = _reviewIdPattern.firstMatch(name)?.group(1);
+    final n = digits == null ? null : int.tryParse(digits);
+    if (n != null && n.toString() == digits) ids.add(n);
+  }
+  return ids.toList()..sort((a, b) => b.compareTo(a));
+}
+
+/// `.md` não ocultos, do nome mais novo para o mais antigo (os nomes começam pela data).
+List<String> orderDetails(Iterable<String> names) {
+  String base(String s) => s.split('/').last;
+  final kept = names.where((n) => base(n).endsWith('.md') && !base(n).startsWith('.')).toList();
+  kept.sort((a, b) {
+    final byBase = base(b).compareTo(base(a));
+    return byBase != 0 ? byBase : b.compareTo(a);
+  });
+  return kept;
+}

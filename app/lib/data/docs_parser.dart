@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'docs_models.dart';
+import 'flow_aggregates.dart';
 import 'front_matter.dart';
 import 'report_models.dart';
 
@@ -18,7 +19,6 @@ final _hunkPattern = RegExp(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@');
 
 final _gitHeaderPattern = RegExp(r'^diff --git a/(.+) b/(.+)$');
 final _binaryPattern = RegExp(r'^Binary files (?:a/)?(.+?) and (?:b/(.+)|/dev/null) differ$');
-final _reviewIdPattern = RegExp(r'^PR-(\d+)\.md$');
 
 /// Remove `---\n…\n---` do início; sem fechamento, devolve o texto intacto.
 String stripFrontMatter(String raw) {
@@ -286,29 +286,6 @@ ReviewMeta? parseReviewMeta(String raw) {
   return (comments: out, valid: true);
 }
 
-/// Números de `PR-<n>.md`, do maior para o menor; só nomes exatos e canônicos (sem zeros à esquerda),
-/// porque os irmãos `.diff`/`.json` são procurados por `PR-<n>`.
-List<int> reviewIds(Iterable<String> fileNames) {
-  final ids = <int>{};
-  for (final name in fileNames) {
-    final digits = _reviewIdPattern.firstMatch(name)?.group(1);
-    final n = digits == null ? null : int.tryParse(digits);
-    if (n != null && n.toString() == digits) ids.add(n);
-  }
-  return ids.toList()..sort((a, b) => b.compareTo(a));
-}
-
-/// `.md` não ocultos, do nome mais novo para o mais antigo (os nomes começam pela data).
-List<String> orderDetails(Iterable<String> names) {
-  String base(String s) => s.split('/').last;
-  final kept = names.where((n) => base(n).endsWith('.md') && !base(n).startsWith('.')).toList();
-  kept.sort((a, b) {
-    final byBase = base(b).compareTo(base(a));
-    return byBase != 0 ? byBase : b.compareTo(a);
-  });
-  return kept;
-}
-
 DiffStats diffStats(List<DiffFile> files) => DiffStats.sum(files.length, files.map((f) => (f.additions, f.deletions)));
 
 const kExcerptMaxLines = 40;
@@ -418,12 +395,71 @@ List<DiffRow> buildDiffRows(List<DiffFile> files, List<ReviewComment> comments, 
   return rows;
 }
 
-/// Stage of the Fluxo Smart that writes a root artifact, from its file name; `null` when none does.
-String? artifactStage(String rel) => switch (rel) {
-  'spec.md' => 'specify',
-  'challenge.md' || 'challenge-spec.md' => 'challenge-spec',
-  'plan.md' || 'adr-candidates.md' => 'plan',
-  'phases.md' || 'tasks.md' => 'tasks',
-  'verify.md' || 'qa.md' => 'verify',
+String docTitle(String rel) => switch (rel) {
+  'spec.md' => 'O que vai ser entregue',
+  'plan.md' => 'Como vai ser construído',
+  'tasks.md' => 'Tasks',
+  'phases.md' => 'Fases',
+  'challenge.md' || 'challenge-spec.md' => 'Desafio da spec',
+  'verify.md' => 'Verificação',
+  'qa.md' => 'QA',
+  'adr-candidates.md' => 'ADRs propostos',
+  _ when rel.startsWith('details/') => _withoutMd(rel.substring(8)),
+  _ => _withoutMd(rel),
+};
+
+String _withoutMd(String name) => name.endsWith('.md') ? name.substring(0, name.length - 3) : name;
+
+String? docKind(String rel) => switch (rel) {
+  'spec.md' => 'Especificação',
+  'plan.md' => 'Plano técnico',
+  'tasks.md' => 'Tasks',
   _ => null,
 };
+
+const _cycleOrder = [
+  'spec.md',
+  'plan.md',
+  'tasks.md',
+  'phases.md',
+  'challenge.md',
+  'challenge-spec.md',
+  'verify.md',
+  'qa.md',
+  'adr-candidates.md',
+];
+
+({List<DocEntry> cycle, List<DocEntry> details}) referenceDocs(DocsListing listing) {
+  int rank(DocEntry e) {
+    final i = _cycleOrder.indexOf(e.rel);
+    return i < 0 ? _cycleOrder.length : i;
+  }
+
+  final cycle = [...listing.artifacts]
+    ..sort((a, b) {
+      final byRank = rank(a).compareTo(rank(b));
+      return byRank != 0 ? byRank : a.rel.compareTo(b.rel);
+    });
+  return (cycle: cycle, details: listing.details);
+}
+
+/// [report] já vem filtrado por `gateReport`.
+String? docGateLine(String rel, ReportDoc? report) {
+  final name = switch (rel) {
+    'spec.md' => 'spec',
+    'plan.md' => 'plan',
+    'tasks.md' => 'tasks',
+    _ => null,
+  };
+  final owner = name == null ? null : kGateOwner[name];
+  if (report == null || name == null || owner == null) return null;
+  final gate = report.stages.where((s) => s.stage == owner && s.gate?.name == name).firstOrNull?.gate;
+  if (gate == null) return null;
+  return switch (gate.status) {
+    GateStatus.approved => gate.round > 1 ? 'aprovado, na ${gate.round}ª rodada' : 'aprovado',
+    GateStatus.passed => 'passou sem você',
+    GateStatus.open => 'esperando você no gate',
+    GateStatus.revising => 'em revisão, rodada ${gate.round}',
+    GateStatus.rejected => 'rejeitado',
+  };
+}

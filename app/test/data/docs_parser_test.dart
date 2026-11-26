@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:claude_flow/data/docs_models.dart';
 import 'package:claude_flow/data/docs_parser.dart';
+import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/report_models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -539,6 +540,101 @@ void main() {
       expect(reviewLine(doc('draft', extra: 'title: "x"\n')).title, 'x');
       expect(reviewLine(doc('draft', extra: "title: 'y'\n")).title, 'y');
       expect(reviewLine(doc('draft')).title, isNull);
+    });
+  });
+
+  group('reference docs', () {
+    DocEntry entry(String rel) => DocEntry(rel: rel, size: 1, modified: DateTime(2026));
+
+    test('docTitle names what the document is', () {
+      expect(docTitle('spec.md'), 'O que vai ser entregue');
+      expect(docTitle('plan.md'), 'Como vai ser construído');
+      expect(docTitle('tasks.md'), 'Tasks');
+      expect(docTitle('phases.md'), 'Fases');
+      expect(docTitle('challenge.md'), 'Desafio da spec');
+      expect(docTitle('challenge-spec.md'), 'Desafio da spec');
+      expect(docTitle('verify.md'), 'Verificação');
+      expect(docTitle('qa.md'), 'QA');
+      expect(docTitle('adr-candidates.md'), 'ADRs propostos');
+      expect(docTitle('details/2026-10-01-x.md'), '2026-10-01-x');
+      expect(docTitle('notas.md'), 'notas');
+    });
+
+    test('docKind only names spec, plan and tasks', () {
+      expect(docKind('spec.md'), 'Especificação');
+      expect(docKind('plan.md'), 'Plano técnico');
+      expect(docKind('tasks.md'), 'Tasks');
+      expect(docKind('qa.md'), isNull);
+      expect(docKind('details/x.md'), isNull);
+    });
+
+    test('referenceDocs orders the cycle docs and keeps details as listed', () {
+      final listing = DocsListing(
+        artifacts: [
+          for (final r in ['notas.md', 'tasks.md', 'spec.md', 'plan.md', 'verify.md']) entry(r),
+        ],
+        details: [entry('details/b.md'), entry('details/a.md')],
+      );
+      final docs = referenceDocs(listing);
+      expect(docs.cycle.map((e) => e.rel), ['spec.md', 'plan.md', 'tasks.md', 'verify.md', 'notas.md']);
+      expect(docs.details.map((e) => e.rel), ['details/b.md', 'details/a.md']);
+    });
+
+    test('referenceDocs sorts unknown docs alphabetically after the known ones', () {
+      final docs = referenceDocs(DocsListing(artifacts: [entry('z.md'), entry('a.md'), entry('adr-candidates.md')]));
+      expect(docs.cycle.map((e) => e.rel), ['adr-candidates.md', 'a.md', 'z.md']);
+    });
+  });
+
+  group('docGateLine', () {
+    ReportDoc report(Stage stage, String name, GateStatus status, {int round = 1}) => ReportDoc(
+      feature: 'f',
+      startedAt: null,
+      stages: [
+        StageReport(
+          stage: stage,
+          status: ReportStatus.done,
+          gate: ReportGate(name: name, status: status, round: round),
+        ),
+      ],
+    );
+
+    test('approved says the round only after the first', () {
+      expect(
+        docGateLine('plan.md', report(Stage.plan, 'plan', GateStatus.approved, round: 2)),
+        'aprovado, na 2ª rodada',
+      );
+      expect(docGateLine('plan.md', report(Stage.plan, 'plan', GateStatus.approved)), 'aprovado');
+    });
+
+    test('spec reads the gate of the challenge stage', () {
+      expect(docGateLine('spec.md', report(Stage.challenge, 'spec', GateStatus.approved)), 'aprovado');
+      expect(docGateLine('spec.md', report(Stage.specify, 'spec', GateStatus.approved)), isNull);
+    });
+
+    test('other statuses', () {
+      expect(docGateLine('tasks.md', report(Stage.tasks, 'tasks', GateStatus.passed)), 'passou sem você');
+      expect(docGateLine('tasks.md', report(Stage.tasks, 'tasks', GateStatus.open)), 'esperando você no gate');
+      expect(
+        docGateLine('tasks.md', report(Stage.tasks, 'tasks', GateStatus.revising, round: 3)),
+        'em revisão, rodada 3',
+      );
+      expect(docGateLine('tasks.md', report(Stage.tasks, 'tasks', GateStatus.rejected)), 'rejeitado');
+    });
+
+    test('null without report, stage, gate or for other docs', () {
+      final plan = report(Stage.plan, 'plan', GateStatus.approved);
+      expect(docGateLine('plan.md', null), isNull);
+      expect(docGateLine('notas.md', plan), isNull);
+      expect(docGateLine('qa.md', plan), isNull);
+      expect(docGateLine('tasks.md', plan), isNull);
+      const noGate = ReportDoc(
+        feature: 'f',
+        startedAt: null,
+        stages: [StageReport(stage: Stage.plan, status: ReportStatus.done)],
+      );
+      expect(docGateLine('plan.md', noGate), isNull);
+      expect(docGateLine('plan.md', const ReportDoc(feature: 'f', startedAt: null, stages: [])), isNull);
     });
   });
 }

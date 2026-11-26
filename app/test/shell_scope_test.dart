@@ -30,7 +30,7 @@ void main() {
     expect(groupTabs(ProjectGroup.cycle), [AppTab.flow, AppTab.runs]);
     expect(groupTabs(ProjectGroup.talks), [AppTab.sessions]);
     expect(groupTabs(ProjectGroup.prs), [AppTab.prs]);
-    expect(groupTabs(ProjectGroup.reference), [AppTab.artifacts, AppTab.adrs, AppTab.metrics]);
+    expect(groupTabs(ProjectGroup.reference), [AppTab.artifacts]);
   });
 
   test('groupOf round-trips groupTabs', () {
@@ -42,12 +42,14 @@ void main() {
   });
 
   test('every project tab is in exactly one group', () {
-    const outside = {AppTab.queue, AppTab.inbox, AppTab.reviews};
+    const outside = {AppTab.queue, AppTab.inbox, AppTab.reviews, AppTab.adrs, AppTab.metrics};
     for (final t in AppTab.values.where((t) => !outside.contains(t))) {
       final count = ProjectGroup.values.where((g) => groupTabs(g).contains(t)).length;
       expect(count, 1, reason: t.name);
     }
     expect(groupOf(AppTab.reviews), ProjectGroup.prs);
+    expect(groupOf(AppTab.adrs), ProjectGroup.reference);
+    expect(groupOf(AppTab.metrics), ProjectGroup.reference);
   });
 
   test('subTabLabel uses the sub-tab names and falls back to label', () {

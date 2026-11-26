@@ -3,6 +3,7 @@ import 'dart:developer';
 import 'dart:io';
 
 import 'docs_repository.dart';
+import 'docs_models.dart';
 import 'orgs.dart';
 
 typedef ProcessRunner = Future<ProcessResult> Function(String executable, List<String> arguments);

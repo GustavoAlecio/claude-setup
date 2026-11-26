@@ -58,6 +58,10 @@ String orgQueueLocation(String org) => Uri(pathSegments: ['', 'o', org, 'fila'])
 String reviewLocation(String project, int pr) =>
     Uri(pathSegments: ['', 'p', project, 'reviews'], queryParameters: {'pr': '$pr'}).toString();
 
+/// `/p/<project>/artifacts?doc=<rel>`: the Documentos screen with [rel] open.
+String artifactsLocation(String project, String rel) =>
+    Uri(pathSegments: ['', 'p', project, 'artifacts'], queryParameters: {'doc': rel}).toString();
+
 String orgInboxLocation(String org) => Uri(pathSegments: ['', 'o', org, 'revisar']).toString();
 
 String orgSessionsLocation(String org, {String? session}) =>

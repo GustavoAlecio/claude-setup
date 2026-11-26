@@ -5,20 +5,40 @@ import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/widgets/markdown_view.dart';
 import 'package:claude_flow/data/docs_repository.dart';
+import 'package:claude_flow/data/docs_models.dart';
 import 'package:claude_flow/data/flow_repository.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/data/report_models.dart';
+import 'package:claude_flow/features/reference/reference_nav.dart';
 import 'package:claude_flow/features/reviews/reviews_diff.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
+class _StalledDocs extends MockDocsRepository {
+  _StalledDocs() : super();
+
+  bool stall = false;
+  final pending = Completer<DocsListing>();
+
+  @override
+  Future<DocsListing> list(String project) => stall ? pending.future : super.list(project);
+}
+
 class _CountingDocs extends MockDocsRepository {
   _CountingDocs() : super();
 
   int opens = 0;
+  int listCalls = 0;
+
+  @override
+  Future<DocsListing> list(String project) {
+    listCalls++;
+    return super.list(project);
+  }
 
   @override
   Future<void> open(Uri uri) {
@@ -29,6 +49,8 @@ class _CountingDocs extends MockDocsRepository {
 
 /// Reemite a lista de projetos sob demanda, como o watcher faria a cada mudança no workflow.
 class _EmittingFlow extends MockFlowRepository {
+  _EmittingFlow({super.data});
+
   final _emissions = StreamController<List<Project>>.broadcast();
 
   @override
@@ -70,6 +92,31 @@ Finder _line(bool Function(DiffLineView) test) =>
 Finder _markdown(String source) =>
     find.byWidgetPredicate((w) => w is MarkdownView && w.source == source, description: 'markdown $source');
 
+Finder _item(String id) => find.byKey(ValueKey('ref-item-$id'));
+
+Text _itemText(WidgetTester tester, String id) =>
+    tester.widget<Text>(find.descendant(of: _item(id), matching: find.byType(Text)));
+
+String? _keyed(WidgetTester tester, String key) => tester.widget<Text>(find.byKey(ValueKey(key))).data;
+
+Project _demo({ReportDoc? report}) => Project(
+  name: 'demo-app',
+  path: '/dev/demo-app',
+  cycle: Cycle(stage: Stage.plan, runs: const [], stageMinutes: const {}, report: report, reportIsCurrent: true),
+);
+
+const _planApprovedTwice = ReportDoc(
+  feature: null,
+  startedAt: null,
+  stages: [
+    StageReport(
+      stage: Stage.plan,
+      status: ReportStatus.done,
+      gate: ReportGate(name: 'plan', status: GateStatus.approved, round: 2),
+    ),
+  ],
+);
+
 Finder get _subTabs => find.byWidgetPredicate((w) => w is SegmentedButton);
 
 bool _diffEnabled(WidgetTester tester) => (tester.widget(_subTabs) as SegmentedButton).segments.first.enabled;
@@ -85,36 +132,122 @@ String _file(String path, int added) => [
 
 void main() {
   setUp(() {
+    clearReferenceListingCache();
     final view = TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
     view.physicalSize = const Size(1440, 900);
     view.devicePixelRatio = 1;
   });
 
   group('Artefatos', () {
-    testWidgets('groups in order, opens the first by default and the selection lives in ?doc=', (tester) async {
+    testWidgets('switching to ADRs keeps the last document list in the first frame', (tester) async {
+      final docs = _StalledDocs();
+      await _open(tester, '/p/demo-app/artifacts', docs: docs);
+      expect(_item('spec.md'), findsOneWidget);
+
+      docs.stall = true;
+      await tester.tap(_item('adrs'));
+      await tester.pump();
+      expect(_item('spec.md'), findsOneWidget);
+    });
+
+    testWidgets('the nav lists in reading order, opens the spec by default and the selection lives in ?doc=', (
+      tester,
+    ) async {
       final router = await _open(tester, '/p/demo-app/artifacts');
 
-      expect(_at(router), '/p/demo-app/artifacts?doc=plan.md');
-      expect(find.text('Workflow'), findsOneWidget);
-      expect(find.text('Detalhamentos'), findsOneWidget);
-      final order = ['plan.md', 'spec.md', 'tasks.md', '2026-03-12-login', '2026-03-10-cache'];
-      final ys = [for (final t in order) tester.getTopLeft(find.text(t).first).dy];
-      expect(ys, [...ys]..sort());
-      expect(find.byWidgetPredicate((w) => w is Tooltip && w.message == '2026-03-12-login'), findsOneWidget);
-      // The open document's toolbar repeats its path and offers copy and Finder.
-      expect(find.text('plan.md'), findsNWidgets(2));
-      expect(find.byKey(const ValueKey('artifact-reveal')), findsOneWidget);
-      expect(find.text('Plano'), findsOneWidget);
-
-      await tester.tap(find.text('spec.md'));
-      await tester.pumpAndSettle();
       expect(_at(router), '/p/demo-app/artifacts?doc=spec.md');
+      expect(find.text('Deste ciclo'), findsOneWidget);
+      expect(find.text('Detalhamentos'), findsOneWidget);
+      expect(find.text('Do projeto'), findsOneWidget);
+      final order = [
+        'spec.md',
+        'plan.md',
+        'tasks.md',
+        'details/2026-03-12-login.md',
+        'details/2026-03-10-cache.md',
+        'adrs',
+        'metrics',
+      ];
+      final ys = [for (final id in order) tester.getTopLeft(_item(id)).dy];
+      expect(ys, [...ys]..sort());
+      expect(_itemText(tester, 'spec.md').data, 'O que vai ser entregue');
+      expect(_itemText(tester, 'plan.md').data, 'Como vai ser construído');
+      expect(_itemText(tester, 'details/2026-03-12-login.md').data, '2026-03-12-login');
+      expect(find.byWidgetPredicate((w) => w is Tooltip && w.message == '2026-03-12-login'), findsOneWidget);
+      expect(_itemText(tester, 'spec.md').style!.fontWeight, FontWeight.w600);
+      expect(_itemText(tester, 'plan.md').style!.fontWeight, FontWeight.w400);
+
+      expect(_keyed(tester, 'artifact-title'), 'O que vai ser entregue');
+      expect(find.byKey(const ValueKey('artifact-gate')), findsNothing);
+      expect(find.byKey(const ValueKey('artifact-copy')), findsOneWidget);
+      expect(find.byKey(const ValueKey('artifact-reveal')), findsOneWidget);
       expect(find.text('Spec: Exemplo'), findsOneWidget);
 
-      await tester.tap(find.text('2026-03-12-login'));
+      await tester.tap(_item('plan.md'));
+      await tester.pumpAndSettle();
+      expect(_at(router), '/p/demo-app/artifacts?doc=plan.md');
+      expect(_itemText(tester, 'plan.md').style!.fontWeight, FontWeight.w600);
+      expect(_itemText(tester, 'spec.md').style!.fontWeight, FontWeight.w400);
+      expect(_keyed(tester, 'artifact-title'), 'Como vai ser construído');
+      expect(find.text('Plano'), findsOneWidget);
+
+      await tester.tap(_item('details/2026-03-12-login.md'));
       await tester.pumpAndSettle();
       expect(_at(router), '/p/demo-app/artifacts?doc=details%2F2026-03-12-login.md');
+      expect(_keyed(tester, 'artifact-title'), '2026-03-12-login');
       expect(find.text('Detalhamento: login'), findsOneWidget);
+    });
+
+    testWidgets('the gate line follows the report of the cycle, without re-reading the document', (tester) async {
+      final data = [_demo()];
+      final flow = _EmittingFlow(data: data);
+      final docs = _CountingDocs();
+      await _open(tester, '/p/demo-app/artifacts?doc=plan.md', docs: docs, flow: flow);
+
+      expect(_keyed(tester, 'artifact-title'), 'Como vai ser construído');
+      expect(find.byKey(const ValueKey('artifact-gate')), findsNothing);
+      expect(docs.reads['plan.md'], 1);
+
+      data[0] = _demo(report: _planApprovedTwice);
+      final lists = docs.listCalls;
+      flow.emit();
+      await tester.pumpAndSettle();
+      expect(_keyed(tester, 'artifact-gate'), 'Plano técnico · aprovado, na 2ª rodada');
+      expect(docs.reads['plan.md'], 1);
+      expect(docs.listCalls, lists + 1, reason: 'the fed nav reads nothing on its own');
+      expect(find.byKey(const ValueKey('artifact-copy')), findsOneWidget);
+      expect(find.byKey(const ValueKey('artifact-reveal')), findsOneWidget);
+
+      final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
+      router.go('/p/demo-app/artifacts?doc=details%2F2026-03-10-cache.md');
+      await tester.pumpAndSettle();
+      expect(_keyed(tester, 'artifact-title'), '2026-03-10-cache');
+      expect(find.byKey(const ValueKey('artifact-gate')), findsNothing);
+    });
+
+    testWidgets('twelve documents with long titles at 1100x700 render without overflow', (tester) async {
+      tester.view.physicalSize = const Size(1100, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final long = 'documento-com-um-nome-bem-comprido-' * 4;
+      final docs = MockDocsRepository.empty();
+      for (var i = 0; i < 6; i++) {
+        docs
+          ..write('$long$i.md', '# Raiz $i')
+          ..write('details/$long$i.md', '# Detalhe $i');
+      }
+      final router = await _open(tester, '/p/demo-app/artifacts', docs: docs);
+
+      expect(router.routerDelegate.currentConfiguration.uri.queryParameters['doc'], '${long}0.md');
+      expect(
+        find.byWidgetPredicate(
+          (w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('ref-item-'),
+        ),
+        findsNWidgets(14),
+      );
+      expect(_keyed(tester, 'artifact-title'), '${long}0');
+      expect(find.text('Raiz 0'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('"Mostrar no Finder" asks the repository to reveal the open document', (tester) async {
@@ -128,16 +261,20 @@ void main() {
 
     testWidgets('unknown ?doc= falls back to the first item', (tester) async {
       final router = await _open(tester, '/p/demo-app/artifacts?doc=nope.md');
-      expect(_at(router), '/p/demo-app/artifacts?doc=plan.md');
+      expect(_at(router), '/p/demo-app/artifacts?doc=spec.md');
     });
 
-    testWidgets('empty project shows "nenhum artefato"', (tester) async {
+    testWidgets('empty project shows "nenhum documento" next to the nav', (tester) async {
       await _open(tester, '/p/demo-app/artifacts', docs: MockDocsRepository.empty());
-      expect(find.text('nenhum artefato'), findsOneWidget);
+      final empty = find.text('nenhum documento');
+      expect(empty, findsOneWidget);
+      expect(_item('adrs'), findsOneWidget);
+      expect(find.text('Deste ciclo'), findsNothing);
+      expect(tester.getTopLeft(empty).dx, greaterThan(tester.getTopRight(_item('adrs')).dx));
     });
 
     testWidgets('large document shows the warning in place of the content', (tester) async {
-      final docs = MockDocsRepository()..write('plan.md', 'x' * (kDocSizeLimit + 1));
+      final docs = MockDocsRepository()..write('spec.md', 'x' * (kDocSizeLimit + 1));
       await _open(tester, '/p/demo-app/artifacts', docs: docs);
       expect(find.text('arquivo grande demais'), findsOneWidget);
     });
@@ -421,7 +558,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('group-reference')));
     await tester.pumpAndSettle();
     expect(router.routerDelegate.currentConfiguration.uri.path, '/p/demo-app/artifacts');
-    expect(find.byKey(const ValueKey('subtab-artifacts')), findsOneWidget);
+    expect(find.byKey(const ValueKey('subtabs')), findsNothing);
+    expect(_item('adrs'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('group-prs')));
     await tester.pumpAndSettle();
