@@ -455,11 +455,13 @@ String? docGateLine(String rel, ReportDoc? report) {
   if (report == null || name == null || owner == null) return null;
   final gate = report.stages.where((s) => s.stage == owner && s.gate?.name == name).firstOrNull?.gate;
   if (gate == null) return null;
+  final decided = DateTime.tryParse(gate.decidedAt ?? '')?.toLocal();
+  final on = decided == null ? '' : ' em ${decided.day} ${_monthsPt[decided.month - 1]}';
   return switch (gate.status) {
-    GateStatus.approved => gate.round > 1 ? 'aprovado, na ${gate.round}ª rodada' : 'aprovado',
-    GateStatus.passed => 'passou sem você',
+    GateStatus.approved => gate.round > 1 ? 'aprovado$on, na ${gate.round}ª rodada' : 'aprovado$on',
+    GateStatus.passed => 'passou sem você$on',
     GateStatus.open => 'esperando você no gate',
     GateStatus.revising => 'em revisão, rodada ${gate.round}',
-    GateStatus.rejected => 'rejeitado',
+    GateStatus.rejected => 'rejeitado$on',
   };
 }

@@ -69,9 +69,12 @@ void main() {
     test('launch without a live pipeline session', () {
       expect(mode(const []), (kind: DiagnosisKind.launch, route: null));
       expect(mode([_session('s', '/plan', status: SessionStatus.done)]).kind, DiagnosisKind.launch);
-      expect(mode([_session('s', '/plan', status: SessionStatus.starting)]).kind, DiagnosisKind.launch);
       expect(mode([_session('s', '/plan', project: 'beta', pending: 1)]).kind, DiagnosisKind.launch);
       expect(mode([_session('s', '/plan', org: 'acme', pending: 1)]).kind, DiagnosisKind.launch);
+    });
+
+    test('busy for a starting pipeline session', () {
+      expect(mode([_session('s', '/plan', status: SessionStatus.starting)]), (kind: DiagnosisKind.busy, route: null));
     });
 
     test('a conversation outside the pipeline with a request does not change the mode', () {

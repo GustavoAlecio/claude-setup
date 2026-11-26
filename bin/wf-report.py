@@ -26,13 +26,13 @@ flag. Required gates are spec, pr and the names in ~/.claude/workflow/gates.json
 {"required": [...]} (missing, invalid or empty: spec and pr). No block, an `open` block with a
 question unanswered, `revising` and `rejected` ask; `approved` and `passed` skip untouched; an
 `open` block with nothing pending asks when required, otherwise skips and is written `passed`
-(rechecked under the report lock). No current.json, no report.json or a report from another
+with `decided_at` (rechecked under the report lock). No current.json, no report.json or a report from another
 cycle asks and writes nothing.
 
 `brief` writes the decision brief as `gate` on the owner stage (spec → challenge, plan → plan,
 tasks → tasks, pr → complete) and prints the same payload as `show`. The file is
-{summary, artifact, risks?, questions?, changes?, map?}; round, status, answer, history and cut
-are the script's and refuse the file. Risks and questions above 3 are cut in the order received
+{summary, artifact, risks?, questions?, changes?, map?}; round, status, answer, history, cut and
+decided_at are the script's and refuse the file. Risks and questions above 3 are cut in the order received
 and counted in `omitted`. `--candidates` is a JSON array of {id, text}: those whose id is not a
 kept question go to `cut` (up to 10).
 Rounds: with no block, or over a round 1 block that is not `revising`, it writes round 1 `open`,
@@ -68,6 +68,8 @@ records the option plus the text of the adjust (`answer_text`) and only exists i
 the adjust of a block without questions (→ `revising`), `--approve` needs nothing pending and
 `--reject` writes `rejected`. Repeating a recorded value is a no-op; an unknown question or
 option, or any other answer on an `approved`, `passed` or `rejected` block, exits 2.
+`decided_at` (ISO UTC) is stamped once, when `answer` or `gate` moves the block into `approved`,
+`rejected` or `passed`; it is never overwritten and resending the same file ignores it.
 `show` is read-only and prints {status, round, text_md, questions} in AskUserQuestion shape, with
 only the questions still unanswered and the recorded answers in `text_md`, or
 {"status":"absent"} when the stage has no brief. None of the three ever archives the report: a
@@ -118,7 +120,7 @@ GATES = ["spec", "plan", "tasks", "pr"]
 DEFAULT_REQUIRED = ["spec", "pr"]
 NEVER_ARCHIVE = ("brief", "answer", "show", "reopen")
 GATE_OWNER = {"spec": "challenge", "plan": "plan", "tasks": "tasks", "pr": "complete"}
-BRIEF_FORBIDDEN = ("round", "status", "answer", "history", "cut")
+BRIEF_FORBIDDEN = ("round", "status", "answer", "history", "cut", "decided_at")
 BRIEF_KEEP = 3
 CUT_MAX = 10
 ROUNDS_MAX = 3
@@ -502,6 +504,7 @@ def cmd_gate(a) -> str:
         if not still:
             raise _GateChanged(again)
         block["status"] = "passed"
+        block.setdefault("decided_at", now())
         return report
 
     try:
@@ -545,26 +548,61 @@ def check_option_ref(field, v, option_ids):
         raise InputError(f"{field}: {excerpt(v)} não é opção da pergunta (opções: {', '.join(option_ids)})")
 
 
-def glob_re(pattern):
+def glob_body(pattern):
+    """Regex source of a glob: `[...]` is a class (`!` negates), `{a,b}` is alternatives; unclosed or nested stays literal."""
     out, i = "", 0
     while i < len(pattern):
         c = pattern[i]
         if pattern.startswith("**/", i):
             out += "(?:.*/)?"
             i += 3
-        elif pattern.startswith("**", i):
+            continue
+        if pattern.startswith("**", i):
             out += ".*"
             i += 2
-        elif c == "*":
-            out += "[^/]*"
-            i += 1
-        elif c == "?":
-            out += "[^/]"
-            i += 1
-        else:
-            out += re.escape(c)
-            i += 1
-    return re.compile("^" + out + "$")
+            continue
+        if c == "[":
+            end = pattern.find("]", i + 1)
+            negated = pattern.startswith("!", i + 1)
+            chars = pattern[i + 2 if negated else i + 1:max(end, 0)]
+            # A negated class would otherwise match `/` and let one segment cross directories.
+            cls = "[" + ("^/" if negated else "") + re.sub(r"([\\\[\]^&|~])", r"\\\1", chars) + "]"
+            if chars and compiles(cls):
+                out += cls
+                i = end + 1
+                continue
+        if c == "{":
+            end = brace_end(pattern, i)
+            if end:
+                inner = pattern[i + 1:end]
+                nested = "{" in inner
+                out += re.escape(pattern[i:end + 1]) if nested else "(?:" + "|".join(map(glob_body, inner.split(","))) + ")"
+                i = end + 1
+                continue
+        out += "[^/]*" if c == "*" else "[^/]" if c == "?" else re.escape(c)
+        i += 1
+    return out
+
+
+def brace_end(pattern, start):
+    depth = 0
+    for j in range(start, len(pattern)):
+        depth += {"{": 1, "}": -1}.get(pattern[j], 0)
+        if depth == 0:
+            return j
+    return 0
+
+
+def compiles(source):
+    try:
+        re.compile(source)
+    except re.error:
+        return False
+    return True
+
+
+def glob_re(pattern):
+    return re.compile("^" + glob_body(pattern) + "$")
 
 
 def glob_match(glob: str, path: str) -> bool:
@@ -898,6 +936,7 @@ def without_answers(block: dict) -> dict:
     b = copy.deepcopy(block)
     b.pop("status", None)
     b.pop("answer", None)
+    b.pop("decided_at", None)
     for q in b.get("questions") or []:
         q["answer"] = None
         q.pop("answer_text", None)
@@ -1216,8 +1255,11 @@ def cmd_answer(a, report, text):
     block = s.get("gate") if s else None
     if not isinstance(block, dict):
         raise InputError(f"answer {a.name}: bloco ausente na etapa {GATE_OWNER[a.name]}; rode brief {a.name} antes")
-    s["gate"] = apply_answer(block, question=a.question, option=a.option, text=text,
-                             approve=a.approve, reject=a.reject)
+    after = apply_answer(block, question=a.question, option=a.option, text=text,
+                         approve=a.approve, reject=a.reject)
+    if after["status"] != block.get("status") and after["status"] in CLOSED_GATE:
+        after.setdefault("decided_at", now())
+    s["gate"] = after
 
 
 def cmd_show(a, wf: Path, cycle: dict) -> str:

@@ -881,6 +881,45 @@ void main() {
       expect(find.text('echo antigo'), findsOneWidget, reason: 'the tap wins over the default');
     });
 
+    testWidgets('work blocks: a block that stops being open by default stays open while reading far from the end', (
+      tester,
+    ) async {
+      final sessions = MockSessionsRepository()
+        ..addSession(summary('s-pin'), [
+          {'kind': 'user_text', 'text': 'faça'},
+          ...tool('t1', 'echo um'),
+          ...tool('t2', 'echo dois'),
+          ...tool('t3', 'echo três'),
+          {'kind': 'assistant_text', 'text': List.filled(120, 'linha de texto').join('\n\n')},
+        ], status: 'running');
+      await open(tester, sessions, 's-pin', settle: false);
+      // The running spinner never lets pumpAndSettle finish.
+      Future<void> frames() async {
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+      }
+
+      await frames();
+
+      final p = _feedPosition(tester);
+      expect(p.maxScrollExtent, greaterThan(p.viewportDimension * 2));
+      p.jumpTo(0);
+      await frames();
+      expect(find.text('echo um'), findsOneWidget, reason: 'only assistant text follows the block');
+
+      await sessions.interrupt('s-pin');
+      await frames();
+      expect(find.text('echo um'), findsOneWidget, reason: 'pinned open: the user is reading it');
+      expect(p.pixels, 0);
+
+      p.jumpTo(p.maxScrollExtent - 40);
+      await frames();
+      p.jumpTo(0);
+      await frames();
+      expect(find.text('echo um'), findsNothing, reason: 'back near the end, the automatic pin is dropped');
+    });
+
     testWidgets('work blocks: an open block stays open after scrolling 30 blocks away and back', (tester) async {
       final sessions = MockSessionsRepository()
         ..addSession(summary('s-long'), [

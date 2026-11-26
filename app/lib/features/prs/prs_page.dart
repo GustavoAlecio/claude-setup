@@ -77,6 +77,8 @@ class _ReviewMemo {
   final _ReviewRow row;
 }
 
+typedef _ReadRow = ({_ReviewRow row, bool failed});
+
 class _PrsViewState extends State<_PrsView> with SessionLauncher<_PrsView>, RefreshLoop<_PrsView> {
   List<PullRequest>? _prs;
   String? _error;
@@ -131,41 +133,48 @@ class _PrsViewState extends State<_PrsView> with SessionLauncher<_PrsView>, Refr
     final project = widget.projectName;
     final listing = await repository.list(project);
     final next = <int, _ReviewMemo>{};
+    final rows = <int, _ReviewRow>{};
     for (final entry in listing.reviews) {
       final memo = _memo[entry.number];
       if (memo != null && memo.report == entry.report && memo.meta == entry.meta) {
         next[entry.number] = memo;
+        rows[entry.number] = memo.row;
         continue;
       }
-      next[entry.number] = _ReviewMemo(entry.report, entry.meta, await _readRow(repository, project, entry));
+      final read = await _readRow(repository, project, entry);
+      rows[entry.number] = read.row;
+      // A failed read renders a placeholder row; memoizing it would keep the placeholder until the file changes.
+      if (!read.failed) next[entry.number] = _ReviewMemo(entry.report, entry.meta, read.row);
     }
     if (!mounted) return;
     setState(() {
       _memo
         ..clear()
         ..addAll(next);
-      _reviews = [for (final e in listing.reviews) next[e.number]!.row];
+      _reviews = [for (final e in listing.reviews) rows[e.number]!];
     });
   }
 
   static String? _nonEmpty(String? s) => s == null || s.trim().isEmpty ? null : s;
 
-  static Future<_ReviewRow> _readRow(DocsRepository repository, String project, ReviewEntry entry) async {
+  static Future<_ReadRow> _readRow(DocsRepository repository, String project, ReviewEntry entry) async {
     final report = await repository.read(project, entry.report.rel);
+    var failed = report.error != null;
     final line = reviewLine(report.text ?? '');
     var title = _nonEmpty(line.title);
     final metaEntry = entry.meta;
     if (title == null && metaEntry != null) {
-      if (await repository.read(project, metaEntry.rel) case DocText(:final String text)) {
-        title = _nonEmpty(parseReviewMeta(text)?.title);
-      }
+      final meta = await repository.read(project, metaEntry.rel);
+      if (meta.error != null) failed = true;
+      if (meta case DocText(:final String text)) title = _nonEmpty(parseReviewMeta(text)?.title);
     }
-    return _ReviewRow(
+    final row = _ReviewRow(
       number: entry.number,
       title: title ?? 'Review PR-${entry.number}',
       status: line.status,
       text: line.text,
     );
+    return (row: row, failed: failed);
   }
 
   void _reload() {

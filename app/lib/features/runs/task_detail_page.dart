@@ -21,6 +21,7 @@ class TaskDetailPage extends StatelessWidget {
     required this.runId,
     required this.taskId,
     this.fromRuns = false,
+    this.showOthers = false,
   });
 
   final String projectName;
@@ -29,6 +30,9 @@ class TaskDetailPage extends StatelessWidget {
 
   /// Opened from a row of the Execuções: "Voltar" returns there instead of the cycle.
   final bool fromRuns;
+
+  /// `?others=1`: the diagnosis opens with the hypotheses below the top one showing.
+  final bool showOthers;
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +54,7 @@ class TaskDetailPage extends StatelessWidget {
             run: run,
             task: task,
             fromRuns: fromRuns,
+            showOthers: showOthers,
           );
         },
       ),
@@ -64,12 +69,14 @@ class _TaskView extends StatelessWidget {
     required this.run,
     required this.task,
     required this.fromRuns,
+    required this.showOthers,
   });
 
   final String projectName;
   final Run run;
   final TaskRun task;
   final bool fromRuns;
+  final bool showOthers;
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +130,13 @@ class _TaskView extends StatelessWidget {
                 const SizedBox(height: 20),
               ],
               if (task.status == Verdict.blocked) ...[
-                DiagnosisPanel(key: const ValueKey('task-diagnosis'), task: task, run: run, project: project),
+                DiagnosisPanel(
+                  key: const ValueKey('task-diagnosis'),
+                  task: task,
+                  run: run,
+                  project: project,
+                  initialShowOthers: showOthers,
+                ),
                 const SizedBox(height: 20),
               ],
               Column(

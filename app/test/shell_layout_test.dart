@@ -119,6 +119,86 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('1100x700: a long project name with the pending pill is cut with an ellipsis, not overflowed', (
+      tester,
+    ) async {
+      final repository = MockFlowRepository(
+        data: [
+          Project(
+            name: 'p' * 80,
+            path: '~/development/long',
+            cycle: const Cycle(
+              feature: 'feature',
+              tracker: 'LIN-142',
+              stage: Stage.implement,
+              stageMinutes: {},
+              runs: [
+                Run(
+                  id: 'r1',
+                  kind: 'implement',
+                  status: Verdict.blocked,
+                  startedAt: '10/03 10:00',
+                  tasks: [
+                    TaskRun(
+                      id: 'T1',
+                      title: 'Titulo',
+                      complexity: Complexity.m,
+                      tier0: Tier.haiku,
+                      status: Verdict.blocked,
+                      attempts: [],
+                      blockedReason: 'max_attempts',
+                      diagnosis: [],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+      final router = await _open(tester, const Size(1100, 700), repository: repository);
+      router.go('/p/${'p' * 80}/flow');
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final pill = find.text('1 aguardando você');
+      expect(pill, findsOneWidget);
+      final bar = tester.getRect(find.byKey(const ValueKey('header-bar')));
+      expect(bar.contains(tester.getRect(pill).topLeft), isTrue);
+      expect(bar.contains(tester.getRect(pill).bottomRight), isTrue);
+      final name = find.byKey(const ValueKey('header-project-name'));
+      expect(tester.getSize(name).width, lessThan(bar.width / 2));
+    });
+
+    testWidgets('1440x900: a project name that fits in half of the header shows in full', (tester) async {
+      final longName = 'n' * 40;
+      final repository = MockFlowRepository(
+        data: [
+          Project(
+            name: longName,
+            path: '~/development/long',
+            cycle: const Cycle(
+              feature: 'feature',
+              tracker: 'LIN-142',
+              stage: Stage.implement,
+              stageMinutes: {},
+              runs: [],
+            ),
+          ),
+        ],
+      );
+      final router = await _open(tester, const Size(1440, 900), repository: repository);
+      router.go('/p/$longName/flow');
+      await tester.pumpAndSettle();
+      final name = find.byKey(const ValueKey('header-project-name'));
+      final text = tester.widget<Text>(name);
+      final painter = TextPainter(
+        text: TextSpan(text: text.data, style: DefaultTextStyle.of(tester.element(name)).style.merge(text.style)),
+        textDirection: TextDirection.ltr,
+        maxLines: 1,
+      )..layout();
+      expect(tester.getSize(name).width, closeTo(painter.width, 1));
+    });
+
     testWidgets('tracker card appears from a 1000 wide header: 1215 hides it, 1216 shows it', (tester) async {
       await openFlow(tester, const Size(1215, 700));
       expect(tracker, findsNothing);

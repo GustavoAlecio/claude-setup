@@ -252,6 +252,13 @@ void main() {
       expect(gate.answer, isNull);
     });
 
+    test('decided_at é lido quando o script o gravou e fica nulo sem ele', () {
+      final doc = parseReport(_fixture('gamma/report.json'))!;
+
+      expect(doc.stage(Stage.tasks)!.gate!.decidedAt, '2026-03-10T08:05:00Z');
+      expect(doc.stage(Stage.plan)!.gate!.decidedAt, isNull);
+    });
+
     test('spec mora na etapa challenge e tasks passou', () {
       final doc = parseReport(_fixture('gamma/report.json'))!;
 
@@ -1390,6 +1397,13 @@ void main() {
       expect(cycleNow(project(stage: Stage.verify), const []).kind, CycleNowKind.stalled);
       expect(now.skill, 'verify');
       expect(cycleNow(project(stage: Stage.challenge), const []).skill, 'challenge-spec');
+    });
+
+    test('stalled no kickoff não tem skill: a retomada abre o formulário', () {
+      final now = cycleNow(project(stage: Stage.kickoff), const []);
+
+      expect(now.kind, CycleNowKind.stalled);
+      expect(now.skill, isNull);
     });
 
     test('skill é null fora de next e stalled', () {

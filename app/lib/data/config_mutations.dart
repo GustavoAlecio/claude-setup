@@ -116,7 +116,7 @@ ConfigMutation saveOrgs(List<OrgConfig> orgs, {Map<String, String> renames = con
 
   final previous = <String, Map<String, dynamic>>{};
   for (final e in _list(raw['orgs'])) {
-    if (e is Map && e['name'] is String) previous[renames[e['name']] ?? e['name'] as String] = _map(e);
+    if (e is Map && e['name'] is String) previous.putIfAbsent(renames[e['name']] ?? e['name'] as String, () => _map(e));
   }
   final out = _copy(raw);
   out['orgs'] = [for (final o in orgs) _orgEntry(previous[o.name], o)];

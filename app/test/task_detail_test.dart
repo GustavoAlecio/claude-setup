@@ -161,6 +161,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  test('taskLocation with showOthers ends in others=1', () {
+    expect(taskLocation('tela', _impl, 'T2', showOthers: true), '/p/tela/runs/$_impl/T2?others=1');
+    expect(taskLocation('tela', _impl, 'T2', fromRuns: true, showOthers: true), endsWith('?from=runs&others=1'));
+    expect(taskLocation('tela', _impl, 'T2', fromRuns: true), '/p/tela/runs/$_impl/T2?from=runs');
+  });
+
+  testWidgets('without others=1 the other hypotheses stay closed', (tester) async {
+    await _pump(tester, _data(), location: taskLocation('tela', _impl, 'T2', fromRuns: true));
+
+    expect(_key('task-decide'), findsOneWidget);
+    expect(_key('task-hypothesis-1'), findsNothing);
+  });
+
+  testWidgets('others=1 opens the task with the other hypotheses showing, and they still fold', (tester) async {
+    await _pump(tester, _data(), location: taskLocation('tela', _impl, 'T2', fromRuns: true, showOthers: true));
+
+    expect(_key('task-hypothesis-1'), findsOneWidget);
+    expect(_key('task-hypothesis-2'), findsOneWidget);
+    expect(_in('task-back', find.text('Execuções')), findsOneWidget);
+
+    await _tap(tester, _key('task-other-options'));
+    expect(_key('task-hypothesis-1'), findsNothing);
+  });
+
   testWidgets('a task outside the cycle table has no position in the headline', (tester) async {
     final verify = Run(
       id: _verify,

@@ -77,7 +77,13 @@ class GateMapEdgesPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(GateMapEdgesPainter old) => old.edges != edges || old.color != color;
+  bool shouldRepaint(GateMapEdgesPainter old) {
+    if (old.color != color || old.edges.length != edges.length) return true;
+    for (var i = 0; i < edges.length; i++) {
+      if (old.edges[i].from != edges[i].from || old.edges[i].to != edges[i].to) return true;
+    }
+    return false;
+  }
 }
 
 /// The nodes of a gate map as fixed-height boxes placed by [mapLayout], the edges in one paint, and, on a built map,

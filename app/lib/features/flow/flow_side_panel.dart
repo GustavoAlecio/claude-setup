@@ -102,7 +102,10 @@ class _NoSession extends StatelessWidget {
             OutlinedButton.icon(
               key: const ValueKey('flow-orphan-resume'),
               style: OutlinedButton.styleFrom(foregroundColor: c.accent),
-              onPressed: () => showCommandPalette(context, ProjectTarget(project), skill: orphan.label),
+              // A kickoff takes a card or a description, which only its form asks for.
+              onPressed: () => orphan == Stage.kickoff
+                  ? showKickoffForm(context, project)
+                  : showCommandPalette(context, ProjectTarget(project), skill: orphan.label),
               icon: const Icon(Icons.play_arrow_rounded, size: 16),
               label: Text('Retomar /${orphan.label}'),
             ),

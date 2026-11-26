@@ -93,6 +93,7 @@ class ReportGate {
     this.artifact,
     this.answer,
     this.map,
+    this.decidedAt,
   });
 
   /// `spec`, `plan`, `tasks` or `pr`.
@@ -113,6 +114,9 @@ class ReportGate {
 
   /// Architecture map of the gate (ADR 0030); `null` keeps the screen as it was before maps.
   final GateMap? map;
+
+  /// ISO UTC written by the script when the block closes; absent in reports from before it.
+  final String? decidedAt;
 }
 
 /// `ignore` and node `paths` are not read.

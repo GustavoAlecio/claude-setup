@@ -19,6 +19,8 @@ DocsListing? cachedReferenceListing(String project) => _lastListings[project];
 
 void cacheReferenceListing(String project, DocsListing listing) => _lastListings[project] = listing;
 
+void forgetReferenceListing(String project) => _lastListings.remove(project);
+
 @visibleForTesting
 void clearReferenceListingCache() => _lastListings.clear();
 
@@ -59,7 +61,13 @@ class _ReferenceNavState extends State<ReferenceNav> with RefreshLoop<ReferenceN
 
   @override
   Future<void> sync() async {
-    final listing = await DocsScope.of(context).list(widget.project);
+    final DocsListing listing;
+    try {
+      listing = await DocsScope.of(context).list(widget.project);
+    } catch (_) {
+      forgetReferenceListing(widget.project);
+      rethrow;
+    }
     cacheReferenceListing(widget.project, listing);
     if (!mounted) return;
     setState(() => _listing = listing);

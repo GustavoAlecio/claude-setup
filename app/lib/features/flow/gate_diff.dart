@@ -12,7 +12,7 @@ import '../reviews/reviews_diff.dart';
 const kGateDiffFileLines = 400;
 
 /// The `caminho:início-fim` label of a `pr` point and its excerpt of the diff. [diff] carries `null` data when the
-/// diff is unavailable; while it loads nothing is drawn.
+/// diff is unavailable and an error when reading it threw; while it loads nothing is drawn.
 class GatePointDiff extends StatelessWidget {
   const GatePointDiff({super.key, required this.index, required this.anchor, required this.diff});
 
@@ -31,6 +31,11 @@ class GatePointDiff extends StatelessWidget {
         KeyedSubtree(
           key: ValueKey('gate-point-$index-excerpt'),
           child: switch (diff) {
+            AsyncSnapshot(hasError: true) => const Muted(
+              'não foi possível ler o diff',
+              key: ValueKey('gate-diff-error'),
+              size: 12,
+            ),
             AsyncSnapshot(connectionState: ConnectionState.done, data: final files?) => _excerpt(
               c,
               diffExcerpt(files, anchor),

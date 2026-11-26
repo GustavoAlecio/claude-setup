@@ -6,6 +6,7 @@ import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
 import 'package:claude_flow/core/theme/app_colors.dart';
 import 'package:claude_flow/data/attention.dart';
+import 'package:claude_flow/data/docs_repository.dart';
 import 'package:claude_flow/data/flow_aggregates.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
@@ -306,6 +307,15 @@ List<Question> _prQuestions() {
         ],
       ),
   ];
+}
+
+/// The read of `pr.diff` blows up with an `Error`, as a path outside the project does in the file repository.
+class _ThrowingDocs extends MockDocsRepository {
+  _ThrowingDocs() : super.empty();
+
+  @override
+  Future<DocText> read(String project, String rel) =>
+      rel == 'pr.diff' ? throw StateError('pr.diff ilegível') : super.read(project, rel);
 }
 
 MockDocsRepository _docs([String? diff]) => MockDocsRepository.empty()..write('pr.diff', diff ?? _deltaDiff());
@@ -1011,6 +1021,26 @@ void main() {
       });
     }
 
+    testWidgets('leitura do pr.diff que lança: cada ponto avisa, sem diff completo, e o envio funciona', (
+      tester,
+    ) async {
+      await _openPr(tester, docs: _ThrowingDocs());
+
+      expect(tester.takeException(), isNull);
+      expect(_key('gate-diff-error'), findsWidgets);
+      for (var i = 0; i < 2; i++) {
+        expect(
+          find.descendant(of: _key('gate-point-$i-excerpt'), matching: find.text('não foi possível ler o diff')),
+          findsOneWidget,
+        );
+      }
+      expect(find.text('diff indisponível'), findsNothing);
+      expect(_key('gate-diff-full'), findsNothing);
+      await _tap(tester, 'gate-option-0-0');
+      await _tap(tester, 'gate-option-1-0');
+      expect(_send(tester).onPressed, isNotNull);
+    });
+
     testWidgets('âncora de caminho ausente do diff mostra trecho fora do diff e mantém o rótulo', (tester) async {
       await _openPr(
         tester,
@@ -1547,6 +1577,29 @@ void main() {
           expect(tester.widget<Text>(_key('gate-map-node-${n.id}-count')).data, contains('arquivo'), reason: n.id);
         }
       }
+    });
+  });
+
+  group('GateMapEdgesPainter.shouldRepaint', () {
+    const edge = MapEdge(from: 'a', to: 'b');
+    GateMapEdgesPainter painter({Color color = Colors.grey, Offset to = const Offset(10, 20)}) =>
+        GateMapEdgesPainter(edges: [(index: 0, edge: edge, from: Offset.zero, to: to)], color: color);
+
+    test('same color and geometry in new instances does not repaint', () {
+      expect(painter().shouldRepaint(painter()), isFalse);
+    });
+
+    test('another end point repaints', () {
+      expect(painter().shouldRepaint(painter(to: const Offset(10, 30))), isTrue);
+    });
+
+    test('another color repaints', () {
+      expect(painter().shouldRepaint(painter(color: Colors.red)), isTrue);
+    });
+
+    test('another number of edges repaints', () {
+      final none = GateMapEdgesPainter(edges: const [], color: Colors.grey);
+      expect(painter().shouldRepaint(none), isTrue);
     });
   });
 

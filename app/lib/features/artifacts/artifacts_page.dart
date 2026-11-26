@@ -59,7 +59,13 @@ class _ArtifactsPageState extends State<ArtifactsPage> with RefreshLoop<Artifact
   Future<void> sync() async {
     final repository = DocsScope.of(context);
     final project = widget.projectName;
-    final listing = await repository.list(project);
+    final DocsListing listing;
+    try {
+      listing = await repository.list(project);
+    } catch (_) {
+      forgetReferenceListing(project);
+      rethrow;
+    }
     cacheReferenceListing(project, listing);
     if (!mounted) return;
     setState(() => _listing = listing);

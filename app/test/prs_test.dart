@@ -125,6 +125,14 @@ class _FlakyDocs extends MockDocsRepository {
   Future<DocsListing> list(String project) => failing ? Future.error(StateError('docs offline')) : super.list(project);
 }
 
+class _FlakyReads extends MockDocsRepository {
+  bool failing = true;
+
+  @override
+  Future<DocText> read(String project, String rel) =>
+      failing ? Future.value(const DocText.error('sem acesso')) : super.read(project, rel);
+}
+
 final _projects = [const Project(name: 'x', path: '/dev/org/x')];
 
 GoRouter _router(WidgetTester tester) => GoRouter.of(tester.element(find.byType(Scaffold).first));
@@ -731,6 +739,18 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('prs-reviews-error')), findsNothing);
       expect(find.byKey(const ValueKey('review-row-157')), findsOneWidget);
+    });
+
+    testWidgets('a review whose read failed is read again on the next round', (tester) async {
+      final docs = _FlakyReads();
+      await _open(tester, MockGitHubRepository(pullRequests: [_pr(number: 12)]), docs: docs);
+      expect(find.text('feat: cache de partidas'), findsNothing);
+      expect(find.byKey(const ValueKey('review-row-157')), findsOneWidget);
+
+      docs.failing = false;
+      await tester.pump(const Duration(seconds: 61));
+      await tester.pumpAndSettle();
+      expect(find.text('feat: cache de partidas'), findsOneWidget);
     });
 
     testWidgets('an empty front-matter title falls back to the meta, then to Review PR-n', (tester) async {

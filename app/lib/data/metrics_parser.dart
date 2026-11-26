@@ -257,7 +257,8 @@ String bandLabel(String complexity, String risk) {
   return risk == 'high' ? '$size, risco alto' : size;
 }
 
-int bandPercent(RoutingBand b) => b.n == 0 ? 0 : b.passTier0 * 100 ~/ b.n;
+/// Passes above n clamp to 100: the file is external.
+int bandPercent(RoutingBand b) => b.n == 0 ? 0 : (b.passTier0 * 100 ~/ b.n).clamp(0, 100);
 
 String bandId(RoutingBand b) => '${b.complexity}:${b.risk}';
 

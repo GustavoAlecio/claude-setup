@@ -45,6 +45,14 @@ class _FailingDocs extends MockDocsRepository {
   Future<DocsListing> list(String project) async => throw const FileSystemException('sem acesso');
 }
 
+class _SwitchDocs extends MockDocsRepository {
+  bool failing = false;
+
+  @override
+  Future<DocsListing> list(String project) =>
+      failing ? Future.error(const FileSystemException('sem acesso')) : super.list(project);
+}
+
 class _StoppedEngine extends MockEngineController {
   const _StoppedEngine();
 
@@ -59,6 +67,7 @@ class _StoppedEngine extends MockEngineController {
 
 void main() {
   setUp(() {
+    clearReferenceListingCache();
     final view = TestWidgetsFlutterBinding.instance.platformDispatcher.views.first;
     view.physicalSize = const Size(1440, 900);
     view.devicePixelRatio = 1;
@@ -403,6 +412,26 @@ void main() {
           await tester.pumpWidget(const SizedBox());
         }
       });
+
+      for (final from in ['metrics', 'artifacts']) {
+        testWidgets('a listing that fails on $from is not served stale to the next nav', (tester) async {
+          final docs = _SwitchDocs();
+          await open(tester, '/p/demo-app/$from', docs: docs);
+          expect(item('spec.md'), findsOneWidget);
+
+          docs.failing = true;
+          await tester.tap(item(from == 'metrics' ? 'adrs' : 'plan.md'));
+          await tester.pumpAndSettle();
+          if (from == 'metrics') {
+            await tester.tap(item('metrics'));
+            await tester.pumpAndSettle();
+          }
+
+          await tester.tap(item(from == 'metrics' ? 'adrs' : 'metrics'));
+          await tester.pump();
+          expect(item('spec.md'), findsNothing);
+        });
+      }
 
       testWidgets('ADRs at 1100x700 with the detail open renders without overflow', (tester) async {
         tester.view.physicalSize = const Size(1100, 700);

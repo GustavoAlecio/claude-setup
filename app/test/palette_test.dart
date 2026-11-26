@@ -545,6 +545,25 @@ void main() {
       expect(tester.getRect(_start).top, greaterThanOrEqualTo(tester.getRect(list).top));
     });
 
+    testWidgets('typing text that moves the selection back to the top scrolls it into view', (tester) async {
+      await _pump(tester, _projectRoute, sessions: _Sessions(loadSkills: () async => _twentySkills));
+      await _openPalette(tester);
+      final list = find.byKey(const ValueKey('palette-list'));
+      for (var i = 0; i < 15; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pumpAndSettle();
+      }
+      expect(tester.getRect(_conversation).bottom, lessThan(tester.getRect(list).top));
+
+      await _type(tester, 'tarefa');
+
+      expect(_selected('palette-action-conversation'), findsOneWidget);
+      final viewport = tester.getRect(list);
+      final entry = tester.getRect(_conversation);
+      expect(entry.top, greaterThanOrEqualTo(viewport.top));
+      expect(entry.bottom, lessThanOrEqualTo(viewport.bottom));
+    });
+
     testWidgets('20 skills with long descriptions fit a 1100 px window', (tester) async {
       tester.view.physicalSize = const Size(1100, 700);
       tester.view.devicePixelRatio = 1;

@@ -153,6 +153,8 @@ def run_report(wf, steps, project=None, repo=None):
         st["started_at"] = stamp(base + timedelta(minutes=15 * i))
         if "ended_at" in st:
             st["ended_at"] = stamp(base + timedelta(minutes=15 * i + 10))
+        if "decided_at" in (st.get("gate") or {}):
+            st["gate"]["decided_at"] = stamp(base + timedelta(minutes=15 * i + 5))
     dump(report, data)
 
 for f in sorted(src.glob("*.json")):

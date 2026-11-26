@@ -13,7 +13,9 @@ import 'package:claude_flow/data/report_models.dart';
 import 'package:claude_flow/data/report_parser.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/session_reducer.dart';
+import 'package:claude_flow/data/sessions_repository.dart';
 import 'package:claude_flow/data/sse.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:claude_flow/features/flow/flow_page.dart';
 import 'package:claude_flow/features/flow/last_cycle_line.dart';
 import 'package:claude_flow/features/sessions/session_labels.dart';
@@ -64,6 +66,28 @@ class _LiveSessions extends _Sessions {
 
   @override
   Stream<SessionDetail> watchSession(String id) => Stream.value(SessionDetail(summary: _session(id, '/kickoff')));
+}
+
+/// `create` stays in flight until the test decides how it ends; the list never shows the new session.
+class _HeldCreate extends _Sessions {
+  _HeldCreate() : super(const [], const {});
+
+  final gate = Completer<void>();
+
+  @override
+  Future<SessionSummary> create(
+    String project,
+    String command, {
+    String? cwd,
+    String? githubAccount,
+    required PermissionMode permissionMode,
+    OrgAgent agent = OrgAgent.anthropic,
+    List<ImageAttachment> images = const [],
+  }) async {
+    createCalls.add((project, command, cwd, githubAccount, permissionMode));
+    await gate.future;
+    throw const SessionsException('engine indisponível', statusCode: 500);
+  }
 }
 
 class _CountingMetrics implements MetricsRepository {
@@ -137,11 +161,12 @@ Future<_Sessions> _open(
   String location = '/p/$_project/flow',
   List<Project> others = const [],
   bool settle = true,
+  _Sessions? repository,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final sessions = _Sessions(list, logs);
+  final sessions = repository ?? _Sessions(list, logs);
   await tester.pumpWidget(
     ClaudeFlowApp(
       repository: MockFlowRepository(data: [project, ...others]),
@@ -424,6 +449,43 @@ void main() {
     _router(tester).go('/p/outro/flow');
     await tester.pumpAndSettle();
     expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+  });
+
+  testWidgets('criação em curso e o erro dela sobrevivem à troca entre split e gaveta', (tester) async {
+    final sessions = _HeldCreate();
+    await _open(
+      tester,
+      const Project(name: _project, path: '/synthetic/$_project'),
+      const [],
+      const {},
+      size: const Size(1440, 1400),
+      repository: sessions,
+    );
+    final input = find.byKey(const ValueKey('cycle-start-input'));
+    final submit = find.byKey(const ValueKey('cycle-start-submit'));
+    final error = find.byKey(const ValueKey('cycle-start-error'));
+    await tester.enterText(input, 'favoritar partidas');
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(sessions.createCalls, hasLength(1));
+    expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+    tester.view.physicalSize = const Size(1300, 1400);
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+    expect(tester.widget<TextField>(input).readOnly, isTrue);
+    expect(sessions.createCalls, hasLength(1));
+
+    sessions.gate.complete();
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+    expect(tester.widget<TextField>(input).readOnly, isFalse);
+    expect(tester.widget<Text>(error).data, contains('engine indisponível'));
+
+    tester.view.physicalSize = const Size(1440, 1400);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(error).data, contains('engine indisponível'));
   });
 
   testWidgets('sem ciclo e sem sessão: um único empty state, sem painel da direita', (tester) async {

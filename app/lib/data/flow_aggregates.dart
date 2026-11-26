@@ -306,7 +306,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: 'Nenhuma conversa está rodando esta etapa.',
       action: 'Retomar /$label',
       route: null,
-      skill: label,
+      skill: cycle.stage == Stage.kickoff ? null : label,
     );
   }
   return (
@@ -436,8 +436,11 @@ String findingLocation(String file, int? line, String? root) {
 String decisionLocation(String project, ({Run run, TaskRun task}) decision) =>
     taskLocation(project, decision.run.id, decision.task.id);
 
-String taskLocation(String project, String runId, String taskId, {bool fromRuns = false}) =>
-    '/p/$project/runs/$runId/$taskId${fromRuns ? '?from=runs' : ''}';
+/// [showOthers] opens the task with every hypothesis of its diagnosis showing, not only the top one.
+String taskLocation(String project, String runId, String taskId, {bool fromRuns = false, bool showOthers = false}) {
+  final query = [if (fromRuns) 'from=runs', if (showOthers) 'others=1'].join('&');
+  return '/p/$project/runs/$runId/$taskId${query.isEmpty ? '' : '?$query'}';
+}
 
 const _blockedReasons = {
   'same_failure_across_tiers':
@@ -563,7 +566,7 @@ DiagnosisMode diagnosisMode(Project? project, TaskRun task, Run run, List<Sessio
     return (kind: DiagnosisKind.answer, route: sessionLocation(pending));
   }
   final live = sessions.any(
-    (s) => !s.isOrgSession && s.project == project.name && isPipelineSession(s) && isLive(s.status),
+    (s) => !s.isOrgSession && s.project == project.name && isPipelineSession(s) && isLiveOrStarting(s.status),
   );
   return (kind: live ? DiagnosisKind.busy : DiagnosisKind.launch, route: null);
 }
@@ -630,8 +633,7 @@ List<({Project project, StageReport stage})> orphanGates(List<SessionSummary> se
   for (final p in projects)
     if (!p.hidden && !(p.cycle?.paused ?? false))
       for (final s in openGates(gateReport(p.cycle)))
-        if (!sessions.any((x) => x.id == s.sessionId && (isLive(x.status) || x.status == SessionStatus.starting)))
-          (project: p, stage: s),
+        if (!sessions.any((x) => x.id == s.sessionId && isLiveOrStarting(x.status))) (project: p, stage: s),
 ];
 
 /// Open gate of session [sessionId]: one session runs several stages, so the first in pipeline order wins.

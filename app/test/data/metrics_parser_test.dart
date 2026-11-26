@@ -316,6 +316,11 @@ void main() {
       expect(insight([band('M', 'low', 6, 10), band('S', 'low', 75, 100)]), isNotNull);
     });
 
+    test('passes acima de n contam como 100%', () {
+      final i = insight([band('L', 'high', 1, 5), band('S', 'low', 5, 3)]);
+      expect(i!.detail, contains('Todas as outras faixas passaram em 100%.'));
+    });
+
     test('pior faixa em 75% ou mais não trava', () {
       expect(insight([band('L', 'high', 3, 4), band('S', 'low', 10, 10)]), isNull);
     });
