@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:developer';
 
 import 'docs_repository.dart';
+import 'docs_models.dart';
 
 /// Os mesmos arquivos para qualquer projeto. [write] troca o conteúdo e o stamp; [reads] conta leituras
 /// por `rel` e [opened] guarda os links aceitos, para os testes de releitura e de links.

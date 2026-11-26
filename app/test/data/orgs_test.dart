@@ -1404,4 +1404,10 @@ void main() {
     expect(reviewLocation('demo-app', 157), '/p/demo-app/reviews?pr=157');
     expect(reviewLocation('a b', 1), '/p/a%20b/reviews?pr=1');
   });
+
+  test('artifactsLocation opens a document of the project', () {
+    expect(artifactsLocation('demo-app', 'plan.md'), '/p/demo-app/artifacts?doc=plan.md');
+    expect(artifactsLocation('demo-app', 'details/a b.md'), '/p/demo-app/artifacts?doc=details%2Fa+b.md');
+    expect(artifactsLocation('a b', 'spec.md'), '/p/a%20b/artifacts?doc=spec.md');
+  });
 }

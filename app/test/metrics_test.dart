@@ -454,7 +454,7 @@ void main() {
       ),
     );
     expect(find.byKey(const ValueKey('metrics-insight')), findsOneWidget);
-    expect(tester.getSize(find.byKey(const ValueKey('metrics-bands'))).width, 720);
+    expect(tester.getSize(find.byKey(const ValueKey('metrics-bands'))).width, lessThanOrEqualTo(720));
 
     await _show(tester, 'cycles');
     await _show(tester, 'tokens');

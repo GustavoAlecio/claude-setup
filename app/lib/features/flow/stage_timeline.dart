@@ -8,6 +8,7 @@ import '../../core/widgets/primitives.dart';
 import '../../core/widgets/session_launcher.dart';
 import '../../data/flow_aggregates.dart';
 import '../../data/models.dart';
+import '../../data/orgs.dart';
 import '../../data/report_models.dart';
 
 /// As 8 etapas com o relatório de cada uma colapsável. [project] `null` é o modo leitura (histórico): os
@@ -184,9 +185,7 @@ class _StageTimelineState extends State<StageTimeline> with SessionLauncher<Stag
                     else
                       TextButton(
                         style: TextButton.styleFrom(foregroundColor: c.accent),
-                        onPressed: () => context.go(
-                          Uri(pathSegments: ['', 'p', project, 'artifacts'], queryParameters: {'doc': rel}).toString(),
-                        ),
+                        onPressed: () => context.go(artifactsLocation(project, rel)),
                         child: Text(rel, style: const TextStyle(fontSize: 12)),
                       ),
                 ],

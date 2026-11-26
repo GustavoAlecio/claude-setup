@@ -16,6 +16,7 @@ import '../../core/widgets/refresh_loop.dart';
 import '../../core/widgets/session_launcher.dart';
 import '../../data/docs_parser.dart';
 import '../../data/docs_repository.dart';
+import '../../data/docs_models.dart';
 import '../../data/github_models.dart';
 import '../../data/github_parser.dart';
 import '../../data/github_repository.dart';

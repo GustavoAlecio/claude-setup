@@ -1,16 +1,34 @@
+import 'dart:io';
+
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/data/docs_repository.dart';
+import 'package:claude_flow/data/docs_models.dart';
 import 'package:claude_flow/data/flow_repository.dart';
+import 'package:claude_flow/data/inventory_repository.dart';
+import 'package:claude_flow/data/mock_docs_repository.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
+import 'package:claude_flow/data/mock_inventory_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/engine/engine_supervisor.dart';
+import 'package:claude_flow/features/reference/reference_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 
-Widget _app(FlowRepository repository, {EngineController engine = const MockEngineController()}) =>
-    ClaudeFlowApp(repository: repository, sessions: MockSessionsRepository(), engine: engine);
+Widget _app(
+  FlowRepository repository, {
+  EngineController engine = const MockEngineController(),
+  InventoryRepository inventory = const MockInventoryRepository.empty(),
+  DocsRepository? docs,
+}) => ClaudeFlowApp(
+  repository: repository,
+  sessions: MockSessionsRepository(),
+  engine: engine,
+  inventory: inventory,
+  docs: docs,
+);
 
 String _route(WidgetTester tester) =>
     GoRouter.of(tester.element(find.byType(Scaffold).first)).routerDelegate.currentConfiguration.uri.path;
@@ -21,6 +39,11 @@ Text _onlyText(WidgetTester tester, String key) =>
 FontWeight? _weight(WidgetTester tester, String key) => _onlyText(tester, key).style!.fontWeight;
 
 String? _label(WidgetTester tester, String key) => _onlyText(tester, key).data;
+
+class _FailingDocs extends MockDocsRepository {
+  @override
+  Future<DocsListing> list(String project) async => throw const FileSystemException('sem acesso');
+}
 
 class _StoppedEngine extends MockEngineController {
   const _StoppedEngine();
@@ -303,21 +326,124 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('group-reference')));
       await tester.pumpAndSettle();
       expect(_route(tester), '/p/demo-app/artifacts');
-      expect(find.text('nenhum artefato'), findsOneWidget);
-      expect(_label(tester, 'subtab-artifacts'), 'Documentos');
-      expect(find.byKey(const ValueKey('subtab-adrs')), findsOneWidget);
-      expect(_label(tester, 'subtab-metrics'), 'Números');
+      expect(find.text('nenhum documento'), findsOneWidget);
+      expect(find.byKey(const ValueKey('subtabs')), findsNothing);
+      expect(find.byKey(const ValueKey('ref-item-adrs')), findsOneWidget);
+      expect(_weight(tester, 'group-reference'), FontWeight.w600);
 
-      await tester.tap(find.byKey(const ValueKey('subtab-metrics')));
+      await tester.tap(find.byKey(const ValueKey('ref-item-metrics')));
       await tester.pumpAndSettle();
       expect(_route(tester), '/p/demo-app/metrics');
       expect(find.byKey(const ValueKey('metrics-show-cycles')), findsOneWidget);
+      expect(_weight(tester, 'group-reference'), FontWeight.w600);
+      expect(find.byKey(const ValueKey('subtabs')), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('subtab-adrs')));
+      await tester.tap(find.byKey(const ValueKey('ref-item-adrs')));
       await tester.pumpAndSettle();
       expect(_route(tester), '/p/demo-app/adrs');
       expect(find.text('este projeto não tem ADRs'), findsOneWidget);
+      expect(find.byKey(const ValueKey('ref-item-metrics')), findsOneWidget);
       expect(_weight(tester, 'group-reference'), FontWeight.w600);
+      expect(find.byKey(const ValueKey('subtabs')), findsNothing);
+    });
+
+    group('reference nav', () {
+      Future<void> open(
+        WidgetTester tester,
+        String location, {
+        InventoryRepository inventory = const MockInventoryRepository.empty(),
+        DocsRepository? docs,
+      }) async {
+        await tester.pumpWidget(_app(MockFlowRepository(), inventory: inventory, docs: docs));
+        await tester.pumpAndSettle();
+        GoRouter.of(tester.element(find.byType(Scaffold).first)).go(location);
+        await tester.pumpAndSettle();
+      }
+
+      Finder item(String id) => find.byKey(ValueKey('ref-item-$id'));
+
+      testWidgets('from ADRs, the items lead to Números and back, with the open one in bold', (tester) async {
+        await open(tester, '/p/demo-app/adrs', docs: MockDocsRepository());
+
+        expect(_label(tester, 'ref-item-adrs'), 'Decisões de arquitetura');
+        expect(_label(tester, 'ref-item-metrics'), 'Números');
+        expect(_label(tester, 'ref-item-spec.md'), 'O que vai ser entregue');
+        expect(_weight(tester, 'ref-item-adrs'), FontWeight.w600);
+        expect(_weight(tester, 'ref-item-metrics'), FontWeight.w400);
+        expect(_weight(tester, 'ref-item-spec.md'), FontWeight.w400);
+        expect(tester.getTopLeft(item('spec.md')).dy, lessThan(tester.getTopLeft(item('plan.md')).dy));
+        expect(tester.getTopLeft(item('plan.md')).dy, lessThan(tester.getTopLeft(item('adrs')).dy));
+
+        await tester.tap(item('metrics'));
+        await tester.pumpAndSettle();
+        expect(_route(tester), '/p/demo-app/metrics');
+        expect(find.byKey(const ValueKey('metrics-show-cycles')), findsOneWidget);
+        expect(_weight(tester, 'ref-item-metrics'), FontWeight.w600);
+        expect(_weight(tester, 'ref-item-adrs'), FontWeight.w400);
+        expect(_label(tester, 'ref-item-spec.md'), 'O que vai ser entregue');
+        expect(_weight(tester, 'group-reference'), FontWeight.w600);
+
+        await tester.tap(item('adrs'));
+        await tester.pumpAndSettle();
+        expect(_route(tester), '/p/demo-app/adrs');
+        expect(_weight(tester, 'ref-item-adrs'), FontWeight.w600);
+        expect(_weight(tester, 'ref-item-metrics'), FontWeight.w400);
+        expect(_weight(tester, 'group-reference'), FontWeight.w600);
+      });
+
+      testWidgets('a document item opens it in Documentos', (tester) async {
+        await open(tester, '/p/demo-app/metrics', docs: MockDocsRepository());
+
+        await tester.tap(item('plan.md'));
+        await tester.pumpAndSettle();
+        final uri = GoRouter.of(tester.element(find.byType(Scaffold).first)).routerDelegate.currentConfiguration.uri;
+        expect(uri.toString(), '/p/demo-app/artifacts?doc=plan.md');
+      });
+
+      testWidgets('ADRs without ADRs keeps the nav next to the empty message', (tester) async {
+        await open(tester, '/p/demo-app/adrs');
+
+        final empty = find.text('este projeto não tem ADRs');
+        expect(empty, findsOneWidget);
+        expect(item('metrics'), findsOneWidget);
+        expect(find.text('Deste ciclo'), findsNothing);
+        expect(tester.getTopLeft(empty).dx, greaterThan(tester.getTopRight(item('metrics')).dx));
+        expect(tester.getSize(find.byType(ReferenceNav)).width, 200);
+      });
+
+      testWidgets('a listing that throws leaves only "Do projeto"', (tester) async {
+        for (final tab in ['adrs', 'metrics']) {
+          await open(tester, '/p/demo-app/$tab', docs: _FailingDocs());
+
+          expect(find.text('Do projeto'), findsOneWidget, reason: tab);
+          expect(find.text('Deste ciclo'), findsNothing, reason: tab);
+          expect(find.text('Detalhamentos'), findsNothing, reason: tab);
+          expect(item('adrs'), findsOneWidget, reason: tab);
+          expect(item('metrics'), findsOneWidget, reason: tab);
+          expect(item('spec.md'), findsNothing, reason: tab);
+          expect(tester.takeException(), isNull, reason: tab);
+          await tester.pumpWidget(const SizedBox());
+        }
+      });
+
+      testWidgets('ADRs at 1100x700 with the detail open renders without overflow', (tester) async {
+        tester.view.physicalSize = const Size(1100, 700);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await open(tester, '/p/demo-app/adrs', inventory: MockInventoryRepository(), docs: MockDocsRepository());
+
+        const first = ValueKey('adr-item-/mock/demo-app/docs/adr/0001-parser.md');
+        expect(find.byKey(first), findsOneWidget);
+        expect(
+          find.byWidgetPredicate(
+            (w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('adr-detail-'),
+          ),
+          findsOneWidget,
+        );
+        expect(tester.getSize(find.byKey(first)).width, lessThanOrEqualTo(260));
+        expect(_weight(tester, 'ref-item-adrs'), FontWeight.w600);
+        expect(tester.takeException(), isNull);
+      });
     });
 
     testWidgets('queue stays in the cycle group with the Fluxo sub-tab', (tester) async {

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -14,6 +16,7 @@ import '../../data/metrics_repository.dart';
 import '../../data/models.dart';
 import '../../data/session_reducer.dart';
 import '../flow/cycle_report_dialog.dart';
+import '../reference/reference_nav.dart';
 
 class MetricsPage extends StatefulWidget {
   /// Built with `ValueKey(projectName)`: a project switch disposes this state, so a late answer for the
@@ -68,11 +71,19 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
     return BlocListener<ProjectsCubit, AsyncSnapshot<List<Project>>>(
       listenWhen: (_, s) => s.hasData,
       listener: (_, _) => refresh(),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _toolbar(context),
-          Expanded(child: _body(context)),
+          ReferenceNav(project: widget.projectName, selected: 'metrics'),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _toolbar(context),
+                Expanded(child: _body(context)),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -142,9 +153,9 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
             ),
           ],
         ),
-        if (_showCycles) ...[
+        if (_showCycles)
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             sliver: SliverToBoxAdapter(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -154,27 +165,31 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
                   if (cycles.isEmpty)
                     const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Muted('nenhum ciclo registrado'))
                   else
-                    const TableHeaderRow(_cycleColumns),
+                    LayoutBuilder(
+                      builder: (context, constraints) => SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: max(constraints.maxWidth, _cycleTableMinWidth),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const TableHeaderRow(_cycleColumns),
+                              for (final cycle in cycles)
+                                _CycleRow(
+                                  key: ValueKey('metrics-cycle-${cycle.dir}'),
+                                  cycle: cycle,
+                                  expanded: _expanded.contains(cycle.dir),
+                                  onToggle: () => _toggle(cycle.dir),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
           ),
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-            sliver: SliverList.builder(
-              itemCount: cycles.length,
-              itemBuilder: (context, i) {
-                final cycle = cycles[i];
-                return _CycleRow(
-                  key: ValueKey('metrics-cycle-${cycle.dir}'),
-                  cycle: cycle,
-                  expanded: _expanded.contains(cycle.dir),
-                  onToggle: () => _toggle(cycle.dir),
-                );
-              },
-            ),
-          ),
-        ],
         _column(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 40),
           children: [
@@ -206,6 +221,9 @@ class _MetricsPageState extends State<MetricsPage> with RefreshLoop<MetricsPage>
 }
 
 const _columnWidth = 720.0;
+
+/// The fixed columns add up to 704 px; below this the table scrolls sideways instead of cutting them.
+const _cycleTableMinWidth = 760.0;
 
 const _cycleColumns = <(String, double?)>[
   ('', 20),
@@ -314,21 +332,22 @@ class _TokenCards extends StatelessWidget {
   Widget build(BuildContext context) {
     String tokens(String role) => metrics.hasTokens ? formatTokens(metrics.tokensByRole[role] ?? 0) : '—';
     final otherTokens = metrics.tokensByRole['outros'] ?? 0;
+    final cards = [
+      _StatCard(id: 'tokens-dev', label: 'Implementação', value: tokens('dev')),
+      _StatCard(id: 'tokens-g0', label: 'Checagens', value: tokens('g0')),
+      _StatCard(id: 'tokens-g1', label: 'Revisão de código', value: tokens('g1')),
+      _StatCard(id: 'tokens-g2', label: 'QA', value: tokens('g2')),
+      if (metrics.hasTokens && otherTokens > 0)
+        _StatCard(id: 'tokens-outros', label: 'Outros', value: formatTokens(otherTokens)),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Muted('Tokens por papel', size: 10),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
+        Row(
           children: [
-            _StatCard(id: 'tokens-dev', label: 'Implementação', value: tokens('dev')),
-            _StatCard(id: 'tokens-g0', label: 'Checagens', value: tokens('g0')),
-            _StatCard(id: 'tokens-g1', label: 'Revisão de código', value: tokens('g1')),
-            _StatCard(id: 'tokens-g2', label: 'QA', value: tokens('g2')),
-            if (metrics.hasTokens && otherTokens > 0)
-              _StatCard(id: 'tokens-outros', label: 'Outros', value: formatTokens(otherTokens)),
+            for (final (i, card) in cards.indexed) ...[if (i > 0) const SizedBox(width: 12), Expanded(child: card)],
           ],
         ),
       ],
@@ -348,7 +367,6 @@ class _StatCard extends StatelessWidget {
     final c = context.colors;
     return Container(
       key: ValueKey('metrics-card-$id'),
-      width: 168,
       height: 92,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -368,6 +386,8 @@ class _StatCard extends StatelessWidget {
           const Spacer(),
           Text(
             value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: c.textPrimary),
           ),
         ],

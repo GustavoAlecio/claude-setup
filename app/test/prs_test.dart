@@ -6,6 +6,7 @@ import 'package:claude_flow/core/widgets/markdown_view.dart';
 import 'package:claude_flow/core/widgets/primitives.dart';
 import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/docs_repository.dart';
+import 'package:claude_flow/data/docs_models.dart';
 import 'package:claude_flow/data/github_models.dart';
 import 'package:claude_flow/data/github_repository.dart';
 import 'package:claude_flow/data/mock_docs_repository.dart';

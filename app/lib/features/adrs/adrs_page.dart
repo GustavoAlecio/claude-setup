@@ -17,6 +17,7 @@ import '../../data/inventory_models.dart';
 import '../../data/inventory_parser.dart';
 import '../../data/inventory_repository.dart';
 import '../../data/models.dart';
+import '../reference/reference_nav.dart';
 
 enum AdrFilter {
   all('todos', AdrStatusGroup.all),
@@ -122,7 +123,13 @@ class _AdrsPageState extends State<AdrsPage> with RefreshLoop<AdrsPage> {
     return BlocListener<ProjectsCubit, AsyncSnapshot<List<Project>>>(
       listenWhen: (_, s) => s.hasData,
       listener: (_, _) => refresh(),
-      child: _body(context),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ReferenceNav(project: widget.projectName, selected: 'adrs'),
+          Expanded(child: _body(context)),
+        ],
+      ),
     );
   }
 
@@ -230,7 +237,7 @@ class _AdrList extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Container(
-      width: 300,
+      width: 260,
       decoration: BoxDecoration(
         border: Border(right: BorderSide(color: c.border)),
       ),

@@ -176,12 +176,7 @@ class _GatePageState extends State<GatePage> {
         approval: gate.questions.isEmpty,
         leading: leading,
         omitted: gate.omitted,
-        artifactLocation: pr || gate.artifact == null
-            ? null
-            : Uri(
-                pathSegments: ['', 'p', project.name, 'artifacts'],
-                queryParameters: {'doc': gate.artifact},
-              ).toString(),
+        artifactLocation: pr || gate.artifact == null ? null : artifactsLocation(project.name, gate.artifact!),
         points: points ? [for (final q in matched.questions) blockQuestion(gate, q.question)] : null,
         diff: _diff,
         trailing: full,

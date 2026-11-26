@@ -16,6 +16,7 @@ import '../../core/widgets/permission_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/attention.dart';
 import '../../data/docs_repository.dart';
+import '../../data/docs_models.dart';
 import '../../data/inventory_models.dart';
 import '../../data/inventory_repository.dart';
 import '../../data/kickoff.dart';
@@ -134,7 +135,7 @@ Future<List<PaletteJump>> _jumpIndex(
         icon: Icons.description_outlined,
         label: e.rel,
         caption: 'artefato · ${project.name}',
-        route: '/p/${project.name}/artifacts?doc=${Uri.encodeQueryComponent(e.rel)}',
+        route: artifactsLocation(project.name, e.rel),
       ),
     for (final a in adrs)
       PaletteJump(
