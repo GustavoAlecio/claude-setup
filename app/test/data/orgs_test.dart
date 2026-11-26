@@ -1410,4 +1410,47 @@ void main() {
     expect(artifactsLocation('demo-app', 'details/a b.md'), '/p/demo-app/artifacts?doc=details%2Fa+b.md');
     expect(artifactsLocation('a b', 'spec.md'), '/p/a%20b/artifacts?doc=spec.md');
   });
+
+  group('orgSummaryLine', () {
+    test('anthropic inheriting the global mode with a GitHub account', () {
+      const org = OrgConfig(
+        name: 'r10',
+        github: OrgGithub(account: 'gh-demo'),
+      );
+      const config = DashboardConfig(orgs: [org]);
+      expect(orgSummaryLine(org, config), 'Claude · aceitar edições · GitHub gh-demo');
+    });
+
+    test('antigravity without an account, with its own mode', () {
+      const org = OrgConfig(
+        name: 'abm',
+        permissionMode: PermissionMode.bypassPermissions,
+        agent: OrgAgent(provider: AgentProvider.antigravity),
+      );
+      const config = DashboardConfig(orgs: [org]);
+      expect(orgSummaryLine(org, config), 'Antigravity nas conversas livres · bypass · GitHub da conta ativa');
+    });
+  });
+
+  group('orgRootsLabel', () {
+    test('swaps home for ~ and counts the other roots', () {
+      expect(orgRootsLabel(['/Users/x/dev', '/Users/x/work'], '/Users/x'), '~/dev +1');
+    });
+
+    test('null home keeps the path', () {
+      expect(orgRootsLabel(['/Users/x/dev', '/Users/x/work'], null), '/Users/x/dev +1');
+    });
+
+    test('no roots', () {
+      expect(orgRootsLabel([], '/Users/x'), 'sem pasta');
+    });
+
+    test('segment boundary: a sibling of home is not swapped', () {
+      expect(orgRootsLabel(['/Users/xy/dev'], '/Users/x'), '/Users/xy/dev');
+    });
+
+    test('home itself is ~', () {
+      expect(orgRootsLabel(['/Users/x'], '/Users/x'), '~');
+    });
+  });
 }

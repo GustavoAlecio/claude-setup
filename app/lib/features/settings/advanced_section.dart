@@ -82,7 +82,6 @@ class _AdvancedSectionState extends State<AdvancedSection> {
       ),
     );
     return Panel(
-      key: const ValueKey('settings-advanced'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -131,7 +130,7 @@ class _AdvancedSectionState extends State<AdvancedSection> {
                 ),
                 if (_savedEngine) ...[
                   const SizedBox(width: 12),
-                  const Muted('salvo; a engine usa os novos caminhos ao reiniciar', size: 12),
+                  const Flexible(child: Muted('salvo; a engine usa os novos caminhos ao reiniciar', size: 12)),
                   TextButton(
                     style: TextButton.styleFrom(foregroundColor: c.accent),
                     onPressed: () {

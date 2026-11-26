@@ -460,6 +460,23 @@ GithubScope githubFor(String? orgName, DashboardConfig? config) {
   return github == null ? GithubScope.none : GithubScope(account: github.account, owners: github.owners);
 }
 
+/// One-line summary of an org's settings row; the Antigravity account and the GitHub owners stay in the form.
+String orgSummaryLine(OrgConfig org, DashboardConfig config) {
+  final agent = org.agent?.provider == AgentProvider.antigravity ? 'Antigravity nas conversas livres' : 'Claude';
+  final mode = permissionModeLabel(org.permissionMode ?? config.permissionMode);
+  final account = githubFor(org.name, config).account;
+  return [agent, mode, account == null ? 'GitHub da conta ativa' : 'GitHub $account'].join(' · ');
+}
+
+/// First root (with [home] swapped for `~` when it holds it) plus `+N` for the others.
+String orgRootsLabel(List<String> roots, String? home) {
+  if (roots.isEmpty) return 'sem pasta';
+  final first = normalizePath(roots.first);
+  final h = home == null ? null : normalizePath(home);
+  final shown = h != null && containsPath(h, first) ? '~${first.substring(h == '/' ? 0 : h.length)}' : first;
+  return roots.length > 1 ? '$shown +${roots.length - 1}' : shown;
+}
+
 /// Mode a new session is created with: [sessionChoice] > the org's `permissionMode` > the global one. [kNoOrg], an
 /// org the config does not have and a `null` config fall through to the next level.
 PermissionMode effectivePermissionMode(PermissionMode? sessionChoice, String? orgName, DashboardConfig? config) =>

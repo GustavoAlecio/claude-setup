@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../engine/engine_config.dart';
 import 'config_mutations.dart';
+import 'flow_aggregates.dart';
 import 'flow_repository.dart';
 import 'models.dart';
 import 'orgs.dart';
@@ -15,11 +16,13 @@ class MockFlowRepository implements FlowRepository {
     this.numstats = const [],
     Map<String, dynamic>? config,
     this.suggestions = const [],
+    this.requiredGates = kAlwaysRequiredGates,
   }) : _raw = config ?? defaultConfig(data);
 
   final List<Project> data;
   final List<FileStat> numstats;
   final List<String> suggestions;
+  final Set<String> requiredGates;
 
   Map<String, dynamic> _raw;
   final _changes = StreamController<void>.broadcast();
@@ -58,17 +61,8 @@ class MockFlowRepository implements FlowRepository {
   @override
   Stream<DashboardConfig> watchConfig() => _watch(() => config);
 
-  /// The autopilot flag; [setAutoMode] flips it like `/auto` would.
-  bool autoMode = false;
-
   @override
-  Stream<bool> watchAutoMode() => _watch(() => autoMode);
-
-  @override
-  Future<void> setAutoMode(bool on) async {
-    autoMode = on;
-    _changes.add(null);
-  }
+  Future<Set<String>> loadRequiredGates() async => requiredGates;
 
   @override
   Future<void> updateConfig(ConfigMutation mutation) async {

@@ -4,6 +4,7 @@ import 'dart:ui' show AppExitResponse;
 
 import 'package:claude_flow/app/app.dart';
 import 'package:claude_flow/app/mock_engine_controller.dart';
+import 'package:claude_flow/core/claude_home.dart';
 import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/flow_repository.dart';
 import 'package:claude_flow/data/github_models.dart';
@@ -45,6 +46,7 @@ Future<void> _openSettings(
   FolderPicker? picker,
   GitHubRepository? github,
   MockSessionsRepository? sessions,
+  EffectivePaths? paths,
 }) async {
   await tester.pumpWidget(
     ClaudeFlowApp(
@@ -53,6 +55,7 @@ Future<void> _openSettings(
       engine: const MockEngineController(),
       pickDirectory: picker ?? () async => null,
       github: github,
+      paths: paths,
     ),
   );
   await tester.pumpAndSettle();
@@ -255,7 +258,7 @@ void main() {
       expect(find.byKey(const ValueKey('settings-org-form-Alfa')), findsOneWidget, reason: 'rename keeps it selected');
       expect(find.byKey(const ValueKey('settings-org-form-B')), findsNothing);
 
-      await _tap(tester, find.byKey(const ValueKey('settings-org-card-B')));
+      await _tap(tester, find.byKey(const ValueKey('settings-org-row-B')));
       await _tap(tester, _in('settings-org-form-B', find.text('Remover org')));
       expect(find.text('Remover B?'), findsOneWidget);
       expect(find.textContaining('2 projetos ficam sem org'), findsOneWidget);
@@ -328,6 +331,36 @@ void main() {
       );
     });
 
+    testWidgets('an org inserted above the open one keeps its dirty form mounted', (tester) async {
+      final repo = MockFlowRepository(data: _data, config: _config());
+      await _openSettings(tester, repo);
+
+      await _tap(tester, find.byKey(const ValueKey('settings-org-row-B')));
+      await tester.enterText(_in('settings-org-form-B', find.widgetWithText(TextField, 'Nome')), 'Bravo');
+      await tester.pumpAndSettle();
+
+      await repo.updateConfig(
+        (raw) => {
+          ...raw,
+          'orgs': [
+            {
+              'name': 'Z',
+              'roots': ['/dev/z'],
+            },
+            ...(raw['orgs'] as List),
+          ],
+        },
+      );
+      await tester.pumpAndSettle();
+
+      expect(repo.config.orgs.map((o) => o.name), ['Z', 'A', 'B']);
+      expect(find.byKey(const ValueKey('settings-org-form-B')), findsOneWidget);
+      expect(
+        tester.widget<TextField>(_in('settings-org-form-B', find.widgetWithText(TextField, 'Bravo'))).controller?.text,
+        'Bravo',
+      );
+    });
+
     testWidgets('Duplicar starts a new org with the same permissions and agent, asking only name and folder', (
       tester,
     ) async {
@@ -386,7 +419,7 @@ void main() {
       await scrollTo(tester, menu);
 
       expect(find.descendant(of: menu, matching: find.text('aceitar edições')), findsOneWidget);
-      expect(_in('settings-permissions', find.text('as sessões rodam sem pedir confirmação')), findsNothing);
+      expect(_in('settings-advanced', find.text('as sessões rodam sem pedir confirmação')), findsNothing);
 
       await pick(tester, menu, 'bypass');
       expect(find.text('Usar bypass?'), findsOneWidget);
@@ -396,7 +429,7 @@ void main() {
       await pick(tester, menu, 'bypass');
       await _tap(tester, find.text('Usar bypass'));
       expect(repo.rawConfig['permissionMode'], 'bypassPermissions');
-      expect(_in('settings-permissions', find.text('as sessões rodam sem pedir confirmação')), findsOneWidget);
+      expect(_in('settings-advanced', find.text('as sessões rodam sem pedir confirmação')), findsOneWidget);
     });
 
     testWidgets('OrgForm writes the org mode and "herdar global" removes the key', (tester) async {
@@ -443,7 +476,7 @@ void main() {
     testWidgets('desligar grava falso sem tocar; ligar grava verdadeiro e toca uma vez', (tester) async {
       final repo = MockFlowRepository(data: _data, config: _config());
       await open(tester, repo);
-      expect(_in('settings-permissions', find.text('toca quando algo novo espera você')), findsOneWidget);
+      expect(_in('settings-advanced', find.text('toca quando algo novo espera você')), findsOneWidget);
       expect(tester.widget<Switch>(toggle).value, isTrue);
 
       await _tap(tester, toggle);
@@ -699,7 +732,14 @@ void main() {
       await _tap(tester, _save('A'));
 
       expect(repo.rawConfig['orgs'][0]['agent'], {'provider': 'antigravity', 'model': 'gemini-3.1-pro-high'});
-      expect(find.text('Antigravity · default'), findsOneWidget, reason: 'the card shows the agent');
+      expect(
+        _in(
+          'settings-org-row-A',
+          find.text('Antigravity nas conversas livres · aceitar edições · GitHub da conta ativa'),
+        ),
+        findsOneWidget,
+        reason: 'the row shows the agent',
+      );
     });
 
     testWidgets('an account without login shows the terminal command and no models', (tester) async {
@@ -749,7 +789,7 @@ void main() {
   });
 
   group('unsaved changes', () {
-    testWidgets('an edited org shows it, and Voltar or another card asks before discarding', (tester) async {
+    testWidgets('an edited org shows it, and Voltar or another row asks before discarding', (tester) async {
       final repo = MockFlowRepository(data: _data, config: _config());
       await _openSettings(tester, repo);
 
@@ -762,7 +802,7 @@ void main() {
       await _tap(tester, find.text('Continuar editando'));
       expect(find.byKey(const ValueKey('settings-org-form-A')), findsOneWidget);
 
-      await _tap(tester, find.byKey(const ValueKey('settings-org-card-B')));
+      await _tap(tester, find.byKey(const ValueKey('settings-org-row-B')));
       await _tap(tester, find.text('Descartar'));
       expect(find.byKey(const ValueKey('settings-org-form-B')), findsOneWidget);
       expect(repo.config.orgs.map((o) => o.name), ['A', 'B']);
@@ -814,7 +854,7 @@ void main() {
 
     testWidgets('an untouched org leaves without asking', (tester) async {
       await _openSettings(tester, MockFlowRepository(data: _data, config: _config()));
-      await _tap(tester, find.byKey(const ValueKey('settings-org-card-B')));
+      await _tap(tester, find.byKey(const ValueKey('settings-org-row-B')));
       expect(find.text('Descartar alterações?'), findsNothing);
       expect(find.byKey(const ValueKey('settings-org-form-B')), findsOneWidget);
     });
@@ -865,7 +905,7 @@ void main() {
         MockFlowRepository(data: _data, config: _config()),
         picker: () async => '/dev/zeta',
       );
-      await _tap(tester, find.byKey(const ValueKey('settings-org-card-new')));
+      await _tap(tester, find.byKey(const ValueKey('settings-new-org-button')));
 
       await _tap(tester, _in('settings-new-org', find.text('Criar org')));
       expect(_in('settings-new-org', find.text('informe um nome para a org')), findsOneWidget);
@@ -899,6 +939,222 @@ void main() {
       await _tap(tester, inA(find.byKey(const ValueKey('org-agent-login-cancel'))));
       expect(inA(find.byKey(const ValueKey('org-agent-login'))), findsOneWidget);
       await tester.pump(const Duration(seconds: 4));
+    });
+  });
+
+  group('settings nav', () {
+    const paths = EffectivePaths(home: '/dev', workflowRoot: '/dev/.claude/workflow');
+    const sections = ['orgs', 'projects', 'stop', 'budget', 'advanced'];
+    final longRoot = '/dev/${'c' * 75}';
+
+    Map<String, dynamic> threeOrgs() {
+      final config = _config();
+      (config['orgs'] as List).add({
+        'name': 'C',
+        'roots': [longRoot, '/dev/other'],
+      });
+      ((config['orgs'] as List)[1] as Map)['github'] = {'account': 'gh-demo', 'owners': <String>[]};
+      return config;
+    }
+
+    void small(WidgetTester tester) {
+      final view = tester.binding.platformDispatcher.views.first;
+      view.physicalSize = const Size(1100, 700);
+      view.devicePixelRatio = 1;
+    }
+
+    Finder key(String k) => find.byKey(ValueKey(k));
+
+    List<String> bold(WidgetTester tester) => [
+      for (final id in sections)
+        if (tester.widget<Text>(_in('settings-nav-$id', find.byType(Text))).style?.fontWeight == FontWeight.w600) id,
+    ];
+
+    testWidgets('opens on Orgs; Avançado brings its section to the top and takes the highlight', (tester) async {
+      small(tester);
+      await _openSettings(
+        tester,
+        MockFlowRepository(data: _data, config: threeOrgs()),
+        paths: paths,
+      );
+
+      expect(key('settings-nav'), findsOneWidget);
+      expect(_in('settings-nav', find.byType(Scrollable)), findsNothing);
+      for (final id in sections) {
+        expect(key('settings-$id'), findsOneWidget);
+      }
+      expect(bold(tester), ['orgs']);
+
+      await tester.tap(key('settings-nav-advanced'));
+      await tester.pumpAndSettle();
+
+      final top = tester.getTopLeft(key('settings-advanced')).dy - tester.getTopLeft(key('settings-content')).dy;
+      expect(top, inInclusiveRange(0, 40));
+      expect(bold(tester), ['advanced']);
+
+      await tester.tap(key('settings-nav-stop'));
+      await tester.pumpAndSettle();
+      expect(bold(tester), ['stop']);
+      expect(
+        tester.getTopLeft(key('settings-stop')).dy - tester.getTopLeft(key('settings-content')).dy,
+        inInclusiveRange(0, 40),
+      );
+    });
+
+    testWidgets('each org is a row with folder, summary and count; the first is open and a tap opens another', (
+      tester,
+    ) async {
+      small(tester);
+      await _openSettings(
+        tester,
+        MockFlowRepository(data: _data, config: threeOrgs()),
+        paths: paths,
+      );
+
+      expect(_in('settings-org-row-A', find.text('~/a')), findsOneWidget);
+      expect(_in('settings-org-row-A', find.text('Claude · aceitar edições · GitHub da conta ativa')), findsOneWidget);
+      expect(_in('settings-org-row-A', find.text('2 projetos')), findsOneWidget);
+      expect(_in('settings-org-row-B', find.text('~/b')), findsOneWidget);
+      expect(_in('settings-org-row-B', find.text('Claude · aceitar edições · GitHub gh-demo')), findsOneWidget);
+      expect(_in('settings-org-row-B', find.text('1 projeto')), findsOneWidget);
+      expect(_in('settings-org-row-C', find.text('~/${'c' * 75} +1')), findsOneWidget);
+      expect(_in('settings-org-row-C', find.text('0 projetos')), findsOneWidget);
+
+      expect(key('settings-org-carousel'), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (w) => switch (w.key) {
+            ValueKey<String>(:final value) => value.startsWith('settings-org-card-'),
+            _ => false,
+          },
+        ),
+        findsNothing,
+      );
+
+      expect(key('settings-org-form-A'), findsOneWidget);
+      expect(
+        tester.getTopLeft(key('settings-org-form-A')).dy,
+        inInclusiveRange(
+          tester.getBottomLeft(key('settings-org-row-A')).dy,
+          tester.getTopLeft(key('settings-org-row-B')).dy,
+        ),
+        reason: 'the form sits right below its row',
+      );
+
+      await _tap(tester, key('settings-org-row-A'));
+      expect(key('settings-org-form-A'), findsOneWidget, reason: 'tapping the open row does not close it');
+
+      await _tap(tester, key('settings-org-row-B'));
+      expect(key('settings-org-form-B'), findsOneWidget);
+      expect(key('settings-org-form-A'), findsNothing);
+
+      await tester.enterText(_in('settings-org-form-B', find.widgetWithText(TextField, 'Nome')), 'Beta');
+      await tester.pumpAndSettle();
+      await _tap(tester, key('settings-org-row-C'));
+      expect(find.text('Descartar alterações?'), findsOneWidget);
+      await _tap(tester, find.text('Descartar'));
+      expect(key('settings-org-form-C'), findsOneWidget);
+
+      await _tap(tester, key('settings-new-org-button'));
+      expect(key('settings-new-org'), findsOneWidget);
+      expect(
+        tester.getBottomLeft(key('settings-new-org')).dy,
+        lessThanOrEqualTo(tester.getTopLeft(key('settings-org-row-A')).dy),
+      );
+    });
+
+    testWidgets('without a home the folder is shown whole', (tester) async {
+      await _openSettings(
+        tester,
+        MockFlowRepository(data: _data, config: _config()),
+        paths: const EffectivePaths(workflowRoot: '/dev/.claude/workflow'),
+      );
+
+      expect(_in('settings-org-row-A', find.text('/dev/a')), findsOneWidget);
+    });
+
+    testWidgets('Quando parar em você lists the three default rules, read-only', (tester) async {
+      small(tester);
+      await _openSettings(
+        tester,
+        MockFlowRepository(data: _data, config: threeOrgs()),
+        paths: paths,
+      );
+
+      const rules = [
+        ('Spec e PR', 'param sempre'),
+        ('Plano e tasks', 'param só quando há uma decisão sua'),
+        ('Travou ou bloqueou', 'para sempre'),
+      ];
+      for (final (i, (what, stops)) in rules.indexed) {
+        final title = _in('settings-stop-$i', find.text(what));
+        expect(title, findsOneWidget);
+        expect(tester.widget<Text>(title).style?.fontWeight, FontWeight.w600);
+        expect(_in('settings-stop-$i', find.text(stops)), findsOneWidget);
+      }
+      expect(key('settings-stop-3'), findsNothing);
+      expect(_in('settings-stop', find.textContaining('/auto no terminal')), findsOneWidget);
+    });
+
+    testWidgets('a required plan gate splits Plano and Tasks into two rows', (tester) async {
+      await _openSettings(
+        tester,
+        MockFlowRepository(data: _data, config: _config(), requiredGates: const {'spec', 'pr', 'plan'}),
+      );
+
+      expect(_in('settings-stop-1', find.text('Plano')), findsOneWidget);
+      expect(_in('settings-stop-1', find.text('param sempre')), findsOneWidget);
+      expect(_in('settings-stop-2', find.text('Tasks')), findsOneWidget);
+      expect(key('settings-stop-3'), findsOneWidget);
+      expect(key('settings-stop-4'), findsNothing);
+    });
+
+    testWidgets('Orçamento holds the budget field and Avançado the mode, the alert and the engine panel', (
+      tester,
+    ) async {
+      small(tester);
+      final repo = MockFlowRepository(data: _data, config: threeOrgs());
+      await _openSettings(tester, repo, paths: paths);
+
+      expect(_in('settings-budget', key('settings-cycle-budget')), findsOneWidget);
+      expect(_in('settings-advanced', key('settings-cycle-budget')), findsNothing);
+      expect(_in('settings-advanced', key('settings-permission-mode')), findsOneWidget);
+      expect(_in('settings-advanced', key('settings-alert-sound')), findsOneWidget);
+      expect(_in('settings-advanced', key('settings-advanced-toggle')), findsOneWidget);
+      expect(key('settings-permissions'), findsNothing);
+      expect(key('settings-advanced'), findsOneWidget);
+      expect(
+        tester.getTopLeft(key('settings-permission-mode')).dy,
+        lessThan(tester.getTopLeft(key('settings-alert-sound')).dy),
+      );
+      expect(
+        tester.getTopLeft(key('settings-alert-sound')).dy,
+        lessThan(tester.getTopLeft(key('settings-advanced-toggle')).dy),
+      );
+
+      await tester.enterText(key('settings-cycle-budget'), '3');
+      await tester.pumpAndSettle();
+      await _tap(tester, key('settings-cycle-budget-save'));
+      expect(repo.config.cycleBudget, 3);
+    });
+
+    testWidgets('1100x700 with three orgs, an 80-character folder and a form open does not overflow', (tester) async {
+      small(tester);
+      expect(longRoot, hasLength(80));
+      await _openSettings(
+        tester,
+        MockFlowRepository(data: _data, config: threeOrgs()),
+        paths: paths,
+      );
+      expect(tester.takeException(), isNull);
+
+      await _tap(tester, key('settings-org-row-C'));
+      expect(key('settings-org-form-C'), findsOneWidget);
+      for (final id in sections) {
+        await tester.tap(key('settings-nav-$id'));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull, reason: id);
+      }
     });
   });
 }

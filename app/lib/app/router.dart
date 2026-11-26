@@ -33,7 +33,11 @@ GoRouter buildRouter(EffectivePaths paths) {
         path: '/settings',
         pageBuilder: (_, state) => _instant(
           state,
-          SettingsPage(backTo: () => lastShellRoute, newOrg: state.uri.queryParameters['nova'] == '1'),
+          SettingsPage(
+            backTo: () => lastShellRoute,
+            newOrg: state.uri.queryParameters['nova'] == '1',
+            home: paths.home,
+          ),
         ),
       ),
       GoRoute(

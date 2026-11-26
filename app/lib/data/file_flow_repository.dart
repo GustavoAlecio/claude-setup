@@ -7,6 +7,7 @@ import '../core/claude_home.dart';
 import '../engine/engine_config.dart';
 import 'config_mutations.dart';
 import 'dashboard_config_repository.dart';
+import 'flow_aggregates.dart';
 import 'flow_repository.dart';
 import 'models.dart';
 import 'orgs.dart';
@@ -37,8 +38,6 @@ class FileFlowRepository implements FlowRepository {
   final FileDashboardConfigRepository _configRepository;
   final _updates = StreamController<List<Project>>.broadcast();
   final _configUpdates = StreamController<DashboardConfig>.broadcast();
-  final _autoUpdates = StreamController<bool>.broadcast();
-  bool? _auto;
 
   String? _root;
   bool _started = false;
@@ -82,27 +81,10 @@ class FileFlowRepository implements FlowRepository {
   }
 
   @override
-  Stream<bool> watchAutoMode() {
-    _ensureStarted();
-    return _replay(() => _auto, _autoUpdates.stream).distinct();
-  }
-
-  @override
-  Future<void> setAutoMode(bool on) async {
-    final flag = File('$_requestedRoot/auto_mode.flag');
-    if (on) {
-      await flag.parent.create(recursive: true);
-      await flag.writeAsString('on');
-    } else if (await flag.exists()) {
-      await flag.delete();
-    }
-    // Applied here rather than on the FSEvents echo, which may never arrive.
-    _setAuto(on);
-  }
-
-  void _setAuto(bool on) {
-    _auto = on;
-    if (!_autoUpdates.isClosed) _autoUpdates.add(on);
+  Future<Set<String>> loadRequiredGates() async {
+    final read = await readCapped('$_requestedRoot/gates.json', 64 * 1024);
+    if (read.problem != null) log('gates.json: ${read.problem}; using defaults', name: 'FileFlowRepository');
+    return parseRequiredGates(read.text);
   }
 
   @override
@@ -330,7 +312,6 @@ class FileFlowRepository implements FlowRepository {
   /// Runs only inside [_serialized].
   Future<void> _reloadRoot({_ConfigRead? read}) async {
     final root = _root;
-    _setAuto(root != null && await _autoMode(root));
     if (root == null) {
       _projects.clear();
       _mtimes.clear();
@@ -528,12 +509,6 @@ class FileFlowRepository implements FlowRepository {
       return null;
     }
     return parseReport(text);
-  }
-
-  Future<bool> _autoMode(String root) async {
-    final flag = File('$root/auto_mode.flag');
-    if (!await flag.exists()) return false;
-    return (await flag.readAsString()).trim() == 'on';
   }
 
   void _emit() {

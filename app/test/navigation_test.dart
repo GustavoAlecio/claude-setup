@@ -120,32 +120,10 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('the autopilot shows the real flag; turning it on asks first, turning it off does not', (tester) async {
-    final repo = MockFlowRepository();
-    await tester.pumpWidget(_app(repo));
+  testWidgets('the shell has no autopilot button', (tester) async {
+    await tester.pumpWidget(_app(MockFlowRepository()));
     await tester.pumpAndSettle();
-    Finder pill(String label) =>
-        find.descendant(of: find.byKey(const ValueKey('auto-mode')), matching: find.text(label));
-    expect(pill('off'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('auto-mode')));
-    await tester.pumpAndSettle();
-    expect(find.text('Ligar o piloto automático?'), findsOneWidget);
-    await tester.tap(find.text('Cancelar'));
-    await tester.pumpAndSettle();
-    expect(repo.autoMode, isFalse);
-
-    await tester.tap(find.byKey(const ValueKey('auto-mode')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ligar'));
-    await tester.pumpAndSettle();
-    expect(repo.autoMode, isTrue);
-    expect(pill('on'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('auto-mode')));
-    await tester.pumpAndSettle();
-    expect(find.text('Ligar o piloto automático?'), findsNothing);
-    expect(repo.autoMode, isFalse);
+    expect(find.byKey(const ValueKey('auto-mode')), findsNothing);
   });
 
   testWidgets('a blocked task takes the cycle card, whose Decidir opens the diagnosis', (tester) async {

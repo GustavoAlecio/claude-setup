@@ -26,11 +26,9 @@ abstract interface class FlowRepository {
   /// Folders offered when creating the first org.
   Future<List<String>> suggestedRoots();
 
-  /// The Smart Flow autopilot: one global `auto_mode.flag` in the workflow root, the same file `/auto` toggles.
-  Stream<bool> watchAutoMode();
-
-  /// Writes or removes `auto_mode.flag` exactly as `/auto` does.
-  Future<void> setAutoMode(bool on);
+  /// Gates that always stop the flow: `kAlwaysRequiredGates` plus `required` from the workflow root's
+  /// `gates.json`. Never throws.
+  Future<Set<String>> loadRequiredGates();
 }
 
 typedef FolderPicker = Future<String?> Function();

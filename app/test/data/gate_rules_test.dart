@@ -657,4 +657,55 @@ void main() {
       expect(builtSameLine(none), isNull);
     });
   });
+
+  group('parseRequiredGates', () {
+    const base = {'spec', 'pr'};
+
+    test('null, invalid and non-object fall back to spec and pr', () {
+      expect(parseRequiredGates(null), base);
+      expect(parseRequiredGates('{oops'), base);
+      expect(parseRequiredGates('["plan"]'), base);
+    });
+
+    test('required that is not a list, or holds a non-string, falls back', () {
+      expect(parseRequiredGates('{"required": "plan"}'), base);
+      expect(parseRequiredGates('{"required": ["plan", 1]}'), base);
+      expect(parseRequiredGates('{}'), base);
+    });
+
+    test('a valid list is united with spec and pr', () {
+      expect(parseRequiredGates('{"required": ["plan"]}'), {'spec', 'pr', 'plan'});
+    });
+  });
+
+  group('stopRules', () {
+    const sempre = 'param sempre';
+    const decisao = 'param só quando há uma decisão sua';
+
+    test('spec and pr only: three lines', () {
+      expect(stopRules({'spec', 'pr'}), [
+        (what: 'Spec e PR', when: sempre),
+        (what: 'Plano e tasks', when: decisao),
+        (what: 'Travou ou bloqueou', when: 'para sempre'),
+      ]);
+    });
+
+    test('all four gates fold plan and tasks into one always line', () {
+      expect(stopRules({'spec', 'pr', 'plan', 'tasks'})[1], (what: 'Plano e tasks', when: sempre));
+    });
+
+    test('only plan splits the lines', () {
+      final rules = stopRules({'spec', 'pr', 'plan'});
+      expect(rules, hasLength(4));
+      expect(rules[1], (what: 'Plano', when: sempre));
+      expect(rules[2], (what: 'Tasks', when: decisao));
+    });
+
+    test('unknown names are ignored', () {
+      final rules = stopRules({'spec', 'pr', 'tasks', 'foo'});
+      expect(rules, hasLength(4));
+      expect(rules[1], (what: 'Plano', when: decisao));
+      expect(rules[2], (what: 'Tasks', when: sempre));
+    });
+  });
 }

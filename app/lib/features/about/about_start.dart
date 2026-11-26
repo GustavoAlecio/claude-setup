@@ -51,7 +51,7 @@ const _glossary = [
   ('Gate', 'ponto em que o fluxo para e pede a sua aprovação antes de seguir.'),
   (
     'Piloto automático',
-    'avança as etapas sem pedir aprovação, menos nos gates obrigatórios. Liga e desliga na barra lateral.',
+    'pula confirmações das skills, como a classificação do kickoff; não muda os gates. Liga e desliga com /auto no terminal.',
   ),
   (
     'Permissões',
