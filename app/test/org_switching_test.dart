@@ -430,7 +430,7 @@ void main() {
       expect(find.byTooltip('sem ciclo ativo'), findsWidgets);
 
       await _meta(tester, LogicalKeyboardKey.keyK);
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, 'responda ok');
@@ -447,8 +447,9 @@ void main() {
       await tester.pumpAndSettle();
       await _meta(tester, LogicalKeyboardKey.keyK);
 
-      expect(find.text('nenhum projeto nesta org'), findsOneWidget);
-      await tester.tap(find.text('Nova conversa'));
+      final conversation = find.byKey(const ValueKey('palette-action-conversation'));
+      expect(find.descendant(of: conversation, matching: find.text('sem projeto nesta org')), findsOneWidget);
+      await tester.tap(conversation);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(find.textContaining('escreva o prompt'), findsNothing);

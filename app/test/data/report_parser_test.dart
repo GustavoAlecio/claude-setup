@@ -1361,6 +1361,14 @@ void main() {
 
       expect(now.kind, CycleNowKind.next);
       expect(text(now), 'Precisa de você | Etapa implement concluída | A próxima é /verify. | Rodar /verify | ');
+      expect(now.skill, 'verify');
+    });
+
+    test('next em challenge com etapa done aponta a skill plan', () {
+      final now = cycleNow(project(stage: Stage.challenge, report: [_stage('challenge')]), const []);
+
+      expect(now.kind, CycleNowKind.next);
+      expect(now.skill, 'plan');
     });
 
     test('9 stalled: etapa running sem sessão; sessão encerrada com a etapa running também (transitório)', () {
@@ -1380,6 +1388,29 @@ void main() {
 
       expect(cycleNow(p, [_session('v', '/verify', status: SessionStatus.done)]).kind, CycleNowKind.stalled);
       expect(cycleNow(project(stage: Stage.verify), const []).kind, CycleNowKind.stalled);
+      expect(now.skill, 'verify');
+      expect(cycleNow(project(stage: Stage.challenge), const []).skill, 'challenge-spec');
+    });
+
+    test('skill é null fora de next e stalled', () {
+      final nows = [
+        cycleNow(project(stage: Stage.implement, runs: [blockedRun]), const []),
+        cycleNow(project(report: [gateStage()]), const []),
+        cycleNow(project(report: [_stage('plan')]), [_session('a', '/plan')]),
+        cycleNow(project(report: [_stage('plan', status: 'blocked')]), const []),
+        cycleNow(project(stage: Stage.complete, report: [_stage('complete')]), const []),
+        cycleNow(project(report: [_stage('plan')]), [_session('a', '/plan', status: SessionStatus.idle)]),
+      ];
+
+      expect(nows.map((n) => n.kind).toSet(), {
+        CycleNowKind.blocked,
+        CycleNowKind.gate,
+        CycleNowKind.running,
+        CycleNowKind.waiting,
+        CycleNowKind.done,
+        CycleNowKind.idle,
+      });
+      expect(nows.map((n) => n.skill), everyElement(isNull));
     });
 
     test('10 waiting: etapa bloqueada no relatório, sem sessão', () {

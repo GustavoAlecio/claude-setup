@@ -87,4 +87,53 @@ void main() {
     expect(cardIdHint(const OrgTracker(kind: TrackerKind.jira, project: 'APP')), 'APP-101');
     expect(cardIdHint(const OrgTracker(kind: TrackerKind.linear)), 'LC-101');
   });
+
+  group('skillLabel', () {
+    test('known names use the fixed phrase', () {
+      expect(skillLabel('fix', 'qualquer coisa'), 'Corrigir um bug sem abrir ciclo');
+      expect(skillLabel('challenge-spec', ''), 'Desafiar a spec antes do plano');
+    });
+
+    test('strips the stage prefix and cuts at the first sentence', () {
+      expect(
+        skillLabel('foo', 'Etapa 2 do Fluxo Smart — gera plano técnico detalhado. Mais texto'),
+        'Gera plano técnico detalhado',
+      );
+      expect(skillLabel('foo', 'Fluxo Review etapa 2 — gate local. X'), 'Gate local');
+      expect(skillLabel('foo', 'etapa final do fluxo smart — fecha tudo'), 'Fecha tudo');
+    });
+
+    test('keeps inner dots and drops only the final one', () {
+      expect(
+        skillLabel('foo', 'Gera uma proposta (definida em company.json) em PDF.'),
+        'Gera uma proposta (definida em company.json) em PDF',
+      );
+    });
+
+    test('cuts at an em dash or a spaced hyphen', () {
+      expect(skillLabel('foo', 'faz isso — e aquilo'), 'Faz isso');
+      expect(skillLabel('foo', 'faz isso - e aquilo'), 'Faz isso');
+      expect(skillLabel('foo', 'pr-status sem corte'), 'Pr-status sem corte');
+    });
+
+    test('long text is cut at a word within 60 characters and ends in an ellipsis', () {
+      final description = List.filled(20, 'palavra').join(' ');
+      expect(description.length, greaterThan(100));
+      final label = skillLabel('foo', description);
+      expect(label.length, lessThanOrEqualTo(60));
+      expect(label.endsWith('…'), isTrue);
+      expect(label, 'Palavra ${List.filled(6, 'palavra').join(' ')}…');
+    });
+
+    test('empty description is the name', () {
+      expect(skillLabel('foo', ''), 'foo');
+      expect(skillLabel('foo', '   '), 'foo');
+    });
+  });
+
+  test('pendingLine', () {
+    expect(pendingLine(0), 'nada esperando você');
+    expect(pendingLine(1), '1 esperando você');
+    expect(pendingLine(3), '3 esperando você');
+  });
 }

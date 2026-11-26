@@ -324,6 +324,16 @@ void main() {
     expect(_inSide(find.byType(FilledButton)), findsNothing);
   });
 
+  testWidgets('Retomar do painel abre a paleta nos argumentos da etapa', (tester) async {
+    await _open(tester, _withCycle(_twoStages), const [], const {});
+
+    await _tapKey(tester, 'flow-orphan-resume');
+
+    final field = find.byType(TextField).last;
+    expect(tester.widget<TextField>(field).decoration!.hintText, 'argumentos (opcional)');
+    expect(find.descendant(of: field, matching: find.text('/${Stage.challenge.label}')), findsOneWidget);
+  });
+
   testWidgets('sem ciclo, o placeholder continua com Kickoff', (tester) async {
     await _open(tester, const Project(name: _project, path: '/synthetic/$_project'), [
       _session('s-rev', 'revise o PR', pending: 1),

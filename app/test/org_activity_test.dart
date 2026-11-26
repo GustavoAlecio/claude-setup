@@ -143,7 +143,8 @@ Future<void> _metaShift(WidgetTester tester, LogicalKeyboardKey key) async {
   await tester.pumpAndSettle();
 }
 
-final _orgPalette = find.text('Atividade em A…', findRichText: true);
+final _orgPalette = find.text('O que você quer fazer em A?', findRichText: true);
+final _conversation = find.byKey(const ValueKey('palette-action-conversation'));
 
 void main() {
   setUp(() {
@@ -421,17 +422,18 @@ void main() {
     }
 
     void expectOrgList(WidgetTester tester) {
-      expect(hint(tester), 'Atividade em A…');
-      expect(inPalette('/fix'), findsNothing);
-      expect(inPalette('/status'), findsNothing);
-      expect(inPalette('/kickoff'), findsNothing);
-      expect(inPalette('/review'), findsOneWidget);
-      expect(inPalette('Novo kickoff'), findsNothing);
-      expect(inPalette('Nova conversa em A'), findsOneWidget);
+      expect(hint(tester), 'O que você quer fazer em A?');
+      for (final pipeline in ['fix', 'status', 'kickoff']) {
+        expect(find.byKey(ValueKey('palette-skill-$pipeline')), findsNothing);
+      }
+      expect(find.byKey(const ValueKey('palette-skill-review')), findsOneWidget);
+      expect(inPalette('Atalhos da org'), findsOneWidget);
+      expect(find.byKey(const ValueKey('palette-action-start')), findsNothing);
+      expect(_conversation, findsOneWidget);
     }
 
     Future<void> startAndSend(WidgetTester tester) async {
-      await tester.tap(find.text('Nova conversa em A'));
+      await tester.tap(_conversation);
       await tester.pumpAndSettle();
       expect(hint(tester), 'Nova conversa em A: escreva o prompt');
       await tester.enterText(find.byType(TextField).last, 'liste as pastas');
@@ -476,7 +478,7 @@ void main() {
       await _go(tester, '/o/A/sessions');
 
       await _metaShift(tester, LogicalKeyboardKey.keyK);
-      await tester.tap(find.text('Nova conversa em A'));
+      await tester.tap(_conversation);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('palette-model-antigravity')));
       await tester.pumpAndSettle();
@@ -565,7 +567,7 @@ void main() {
       await _go(tester, '/o/A/sessions');
       await _metaShift(tester, LogicalKeyboardKey.keyK);
 
-      await tester.tap(find.text('/review'));
+      await tester.tap(find.byKey(const ValueKey('palette-skill-review')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, '12');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -600,7 +602,7 @@ void main() {
         await _go(tester, location);
         await _metaShift(tester, LogicalKeyboardKey.keyK);
         expect(find.byType(TextField).evaluate().where((e) => (e.widget as TextField).autofocus), isEmpty);
-        expect(find.text('Nova conversa em A'), findsNothing);
+        expect(_conversation, findsNothing);
       }
     });
 
@@ -608,11 +610,11 @@ void main() {
       await pump(tester);
       await _go(tester, '/p/loose/flow');
       await _metaShift(tester, LogicalKeyboardKey.keyK);
-      expect(find.textContaining('Atividade em'), findsNothing);
+      expect(_conversation, findsNothing);
 
       await _go(tester, '/p/gamma/flow');
       await _metaShift(tester, LogicalKeyboardKey.keyK);
-      expect(find.textContaining('Atividade em'), findsNothing);
+      expect(_conversation, findsNothing);
     });
 
     testWidgets('in /p/<unknown>/flow the menu item and ⌘⇧K agree', (tester) async {
@@ -634,7 +636,7 @@ void main() {
       final viaShortcut = find.byType(TextField).evaluate().isNotEmpty ? hint(tester) : null;
 
       expect(item.enabled, isTrue, reason: 'the shell shows lastOrg, A, which has roots');
-      expect(viaMenu, 'Atividade em A…');
+      expect(viaMenu, 'O que você quer fazer em A?');
       expect(viaShortcut, viaMenu);
     });
 
@@ -644,13 +646,13 @@ void main() {
       await _go(tester, '/p/alpha/runs');
       await _meta(tester, LogicalKeyboardKey.keyK);
       expect(find.byType(TextField), findsOneWidget);
-      expect(hint(tester), 'Executar skill em alpha…');
+      expect(hint(tester), 'O que você quer fazer em alpha?');
 
       await _metaShift(tester, LogicalKeyboardKey.keyK);
 
-      expect(find.textContaining('Atividade em'), findsNothing);
+      expect(_orgPalette, findsNothing);
       expect(find.byType(TextField), findsOneWidget);
-      expect(hint(tester), 'Executar skill em alpha…');
+      expect(hint(tester), 'O que você quer fazer em alpha?');
     });
 
     testWidgets('the org menu item opens the org palette', (tester) async {

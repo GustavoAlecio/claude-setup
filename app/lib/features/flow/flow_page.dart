@@ -244,7 +244,7 @@ class _FlowMain extends StatelessWidget {
     } else if (now.kind == CycleNowKind.paused) {
       unawaited(resumeCycle(context, project));
     } else {
-      unawaited(showCommandPalette(context, ProjectTarget(project)));
+      unawaited(showCommandPalette(context, ProjectTarget(project), skill: now.skill));
     }
   }
 

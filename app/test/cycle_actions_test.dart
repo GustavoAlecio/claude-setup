@@ -4,6 +4,7 @@ import 'package:claude_flow/data/flow_aggregates.dart';
 import 'package:claude_flow/data/mock_flow_repository.dart';
 import 'package:claude_flow/data/mock_sessions.dart';
 import 'package:claude_flow/data/models.dart';
+import 'package:claude_flow/data/report_models.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/sessions_repository.dart';
 import 'package:claude_flow/data/workflow_parser.dart';
@@ -104,7 +105,35 @@ void main() {
     await tester.tap(find.descendant(of: action, matching: find.text('Retomar')));
     await tester.pumpAndSettle();
     expect(sessions.cycleCalls, [('p', CycleAction.resume)]);
-    expect(find.text('Executar skill em p…'), findsOneWidget);
+    expect(find.text('O que você quer fazer em p?'), findsOneWidget);
+  });
+
+  testWidgets('Rodar /plan opens the palette on /plan', (tester) async {
+    await _open(
+      tester,
+      const Cycle(
+        stage: Stage.challenge,
+        runs: [],
+        stageMinutes: {},
+        feature: 'Favoritos',
+        report: ReportDoc(
+          feature: 'Favoritos',
+          startedAt: null,
+          stages: [StageReport(stage: Stage.challenge, status: ReportStatus.done)],
+        ),
+        reportIsCurrent: true,
+      ),
+    );
+
+    final action = find.byKey(const ValueKey('cycle-now-action'));
+    expect(find.descendant(of: action, matching: find.text('Rodar /plan')), findsOneWidget);
+
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    final field = find.byType(TextField).last;
+    expect(tester.widget<TextField>(field).decoration!.hintText, 'argumentos (opcional)');
+    expect(find.descendant(of: field, matching: find.text('/plan')), findsOneWidget);
+    expect(find.byKey(const ValueKey('palette-action-conversation')), findsNothing);
   });
 
   testWidgets('a paused cycle over its budget shows no budget banner', (tester) async {
