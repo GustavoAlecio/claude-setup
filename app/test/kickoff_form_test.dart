@@ -113,10 +113,8 @@ Finder _button(String label) =>
 Finder _segment(String label) =>
     find.descendant(of: find.byType(SegmentedButton<KickoffType>), matching: find.text(label));
 
-Finder _paletteItem(String label) => find.descendant(
-  of: find.ancestor(of: find.textContaining('Nova conversa'), matching: find.byType(ListView)).first,
-  matching: find.text(label),
-);
+final _paletteStart = find.byKey(const ValueKey('palette-action-start'));
+final _paletteConversation = find.byKey(const ValueKey('palette-action-conversation'));
 
 const _ado = {'kind': 'ado', 'org': 'o', 'project': 'p'};
 const _jira = {'kind': 'jira', 'site': 'x.atlassian.net', 'project': 'LC', 'email': 'me@x.com'};
@@ -348,7 +346,7 @@ void main() {
       expect(find.descendant(of: paletteMode, matching: find.text('aceitar edições')), findsOneWidget);
 
       await choose(tester, paletteMode, 'bypass');
-      await tester.tap(_paletteItem('Nova conversa em demo-app'));
+      await tester.tap(_paletteConversation);
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, 'resuma');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -359,7 +357,7 @@ void main() {
     testWidgets('the palette on a project without a folder shows the error and creates nothing', (tester) async {
       final sessions = await pump(tester, '/p/loose/flow');
       await _meta(tester, LogicalKeyboardKey.keyK);
-      await tester.tap(_paletteItem('Nova conversa em loose'));
+      await tester.tap(_paletteConversation);
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, 'algo');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
@@ -481,26 +479,26 @@ void main() {
       expect(_form('demo-app'), findsOneWidget);
     });
 
-    testWidgets('palette keeps "Novo kickoff" under any filter and opens the form', (tester) async {
+    testWidgets('palette keeps the start action under any filter and opens the form', (tester) async {
       await pump(tester, '/p/demo-app/flow');
       await _meta(tester, LogicalKeyboardKey.keyK);
       await tester.enterText(find.byType(TextField).last, 'xyz');
       await tester.pump();
 
-      await tester.tap(_paletteItem('Novo kickoff'));
+      await tester.tap(_paletteStart);
       await tester.pumpAndSettle();
-      expect(find.text('Nova conversa em demo-app'), findsNothing);
+      expect(_paletteConversation, findsNothing);
       expect(_form('demo-app'), findsOneWidget);
     });
 
-    testWidgets('the kickoff skill is listed once, as Novo kickoff, and opens the form', (tester) async {
+    testWidgets('the kickoff skill is listed once, as the start action, and opens the form', (tester) async {
       final sessions = await pump(tester, '/p/demo-app/flow');
       await _meta(tester, LogicalKeyboardKey.keyK);
       await tester.enterText(find.byType(TextField).last, 'kick');
       await tester.pump();
-      expect(_paletteItem('/kickoff'), findsNothing);
+      expect(find.byKey(const ValueKey('palette-skill-kickoff')), findsNothing);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.tap(_paletteStart);
       await tester.pumpAndSettle();
       expect(find.text('argumentos (opcional)'), findsNothing);
       expect(_form('demo-app'), findsOneWidget);
@@ -515,7 +513,7 @@ void main() {
       expect(tester.widget<ButtonStyleButton>(_cycleMore).enabled, isFalse);
 
       await _meta(tester, LogicalKeyboardKey.keyK);
-      await tester.tap(_paletteItem('Novo kickoff'));
+      await tester.tap(_paletteStart);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(find.text('ID do card'), findsNothing);

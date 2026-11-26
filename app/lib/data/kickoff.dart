@@ -65,4 +65,55 @@ String? startCommand(String text, OrgTracker? tracker) {
   return kickoffCommand(description: trimmed);
 }
 
+const _skillLabels = {
+  'fix': 'Corrigir um bug sem abrir ciclo',
+  'review': 'Revisar um PR',
+  'pr-status': 'Ver como estão meus PRs',
+  'pr-open': 'Abrir o PR desta branch',
+  'status': 'Ver em que pé está o ciclo',
+  'refine': 'Detalhar uma tarefa',
+  'adr': 'Registrar uma decisão de arquitetura',
+  'approve-review': 'Aprovar uma revisão local',
+  'post-review': 'Publicar uma revisão no PR',
+  'specify': 'Escrever a spec',
+  'challenge-spec': 'Desafiar a spec antes do plano',
+  'plan': 'Gerar o plano técnico',
+  'tasks': 'Quebrar o plano em tasks',
+  'implement': 'Implementar as tasks',
+  'verify': 'Verificar o ciclo',
+  'complete': 'Fechar o ciclo e abrir o PR',
+  'discovery': 'Amadurecer uma ideia de produto',
+  'orcamento': 'Gerar uma proposta comercial',
+};
+
+const _skillLabelMaxChars = 60;
+
+final _stagePrefix = RegExp(
+  r'^(Etapa \S+ do Fluxo Smart|Fluxo Review etapa \S+|Etapa final do Fluxo Smart)\s*—\s*',
+  caseSensitive: false,
+);
+
+/// The palette's phrase for a skill: the known name's fixed text, otherwise the first sentence of its
+/// [description] without the pipeline-stage prefix, capitalized and cut at a word within 60 characters.
+String skillLabel(String name, String description) {
+  final known = _skillLabels[name];
+  if (known != null) return known;
+  var text = description.trim().replaceFirst(_stagePrefix, '');
+  final cuts = [text.indexOf('. '), text.indexOf('—'), text.indexOf(' - ')].where((i) => i >= 0);
+  if (cuts.isNotEmpty) text = text.substring(0, cuts.reduce((a, b) => a < b ? a : b));
+  text = text.trim();
+  if (text.endsWith('.')) text = text.substring(0, text.length - 1).trimRight();
+  if (text.isEmpty) return name;
+  text = text[0].toUpperCase() + text.substring(1);
+  if (text.length <= _skillLabelMaxChars) return text;
+  final space = text.lastIndexOf(' ', _skillLabelMaxChars - 1);
+  final end = space > 0 ? space : _skillLabelMaxChars - 1;
+  return '${text.substring(0, end).trimRight()}…';
+}
+
+String pendingLine(int n) => switch (n) {
+  0 => 'nada esperando você',
+  _ => '$n esperando você',
+};
+
 String missingProjectPathError(Project project) => 'sem pasta para ${project.name}: adicione a pasta em Configurações';

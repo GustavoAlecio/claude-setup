@@ -817,6 +817,7 @@ class _TopBar extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             FilledButton.icon(
+              key: const ValueKey('header-palette'),
               style: FilledButton.styleFrom(
                 backgroundColor: c.accent,
                 foregroundColor: Colors.white,

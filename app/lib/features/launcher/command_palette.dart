@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
@@ -17,7 +18,9 @@ import '../../core/widgets/primitives.dart';
 import '../../data/attention.dart';
 import '../../data/docs_repository.dart';
 import '../../data/docs_models.dart';
+import '../../data/docs_parser.dart';
 import '../../data/inventory_models.dart';
+import '../../data/inventory_parser.dart';
 import '../../data/inventory_repository.dart';
 import '../../data/kickoff.dart';
 import '../../data/models.dart';
@@ -57,8 +60,14 @@ class OrgTarget extends PaletteTarget {
   final List<String> additionalDirectories;
 }
 
-/// [newConversation] skips the skill list and opens straight on the free prompt.
-Future<void> showCommandPalette(BuildContext context, PaletteTarget target, {bool newConversation = false}) {
+/// [newConversation] skips the list and opens straight on the free prompt; [skill] opens on the arguments of
+/// that command, without waiting for the engine to list it.
+Future<void> showCommandPalette(
+  BuildContext context,
+  PaletteTarget target, {
+  bool newConversation = false,
+  String? skill,
+}) {
   final router = GoRouter.of(context);
   final sessions = SessionsScope.of(context);
   final project = switch (target) {
@@ -72,6 +81,12 @@ Future<void> showCommandPalette(BuildContext context, PaletteTarget target, {boo
   final config = context.read<ConfigCubit>().state.data;
   final githubAccount = githubFor(org, config).account;
   final jumps = _jumpIndex(context, project, org, config);
+  // Read once, like ⌘J does: every org, and the route is relative to where the palette was opened.
+  final pending = pendingAttention(
+    context.read<SessionsCubit>().state.data ?? const [],
+    context.read<ProjectsCubit>().state.data ?? const [],
+  );
+  final pendingRoute = nextAttentionRoute(pending, router.routerDelegate.currentConfiguration.uri.toString());
   return showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
@@ -82,28 +97,53 @@ Future<void> showCommandPalette(BuildContext context, PaletteTarget target, {boo
       agentOf: (command) => agentFor(org, config, command),
       permissionMode: effectivePermissionMode(null, org, config),
       startOnPrompt: newConversation && (target is OrgTarget || project != null),
+      initialSkill: skill,
       onCreated: (s) => router.go(switch (target) {
         ProjectTarget() => '/p/${s.project}/sessions/${s.id}',
         OrgTarget(:final org) => orgSessionsLocation(org, session: s.id),
       }),
       onKickoff: () => showKickoffForm(context, project),
+      pending: pending.length,
+      onPending: pendingRoute == null ? null : () => router.go(pendingRoute),
       jumps: jumps,
       onJump: router.go,
     ),
   );
 }
 
-/// Something the palette search can open: a session, an artifact or an ADR.
+/// Something the palette search can open: a session, a document or an ADR.
 class PaletteJump {
-  const PaletteJump({required this.icon, required this.label, required this.caption, required this.route});
+  const PaletteJump({
+    required this.icon,
+    required this.label,
+    required this.caption,
+    required this.route,
+    this.keywords = const [],
+  });
 
   final IconData icon;
   final String label;
   final String caption;
   final String route;
+
+  /// Matched by the search besides [label] and [caption], never shown.
+  final List<String> keywords;
 }
 
-/// Sessions of the org, plus the artifacts and ADRs of [project]; a source that fails to load is left out.
+const _conversationKey = 'palette-action-conversation';
+
+/// Key of the entry a non-empty [query] selects: the first of [skills] (names of the visible shortcuts) whose name
+/// starts with it, else `jump` (the first jump) when [hasJump], else the conversation action. Matching only the
+/// phrase of a shortcut does not select it, so free text such as "revisar" does not land on `/review`.
+String paletteSelection(String query, {required List<String> skills, required bool hasJump}) {
+  final q = query.trim().toLowerCase();
+  for (final name in skills) {
+    if (name.toLowerCase().startsWith(q)) return 'palette-skill-$name';
+  }
+  return hasJump ? 'jump' : _conversationKey;
+}
+
+/// Sessions of the org, plus the documents and ADRs of [project]; a source that fails to load is left out.
 Future<List<PaletteJump>> _jumpIndex(
   BuildContext context,
   Project? project,
@@ -133,21 +173,48 @@ Future<List<PaletteJump>> _jumpIndex(
     for (final e in [...listing.artifacts, ...listing.details])
       PaletteJump(
         icon: Icons.description_outlined,
-        label: e.rel,
-        caption: 'artefato · ${project.name}',
+        label: docTitle(e.rel),
+        caption: 'documento · ${project.name}',
         route: artifactsLocation(project.name, e.rel),
+        keywords: [e.rel],
       ),
-    for (final a in adrs)
+    // `?adr=<id>` cannot open an ADR whose id is empty or repeated, and the route is what identifies the entry.
+    for (final a in adrs.where(adrSelectable))
       PaletteJump(
         icon: Icons.gavel_outlined,
         label: '${a.id} ${a.title}',
-        caption: 'ADR · ${adrStatusLabel(a.status)}',
+        caption: 'decisão · ${adrStatusLabel(a.status)}',
         route: '/p/${project.name}/adrs?adr=${Uri.encodeQueryComponent(a.id)}',
       ),
   ];
 }
 
 enum _Mode { list, args, prompt }
+
+enum _EntryKind { action, skill, jump }
+
+/// One line of the list. A disabled entry can be selected, but ↵ and a tap do nothing.
+class _Entry {
+  const _Entry(
+    this.kind, {
+    required this.key,
+    required this.title,
+    required this.onChoose,
+    this.detail = '',
+    this.icon,
+    this.trailing,
+    this.enabled = true,
+  });
+
+  final _EntryKind kind;
+  final String key;
+  final String title;
+  final String detail;
+  final IconData? icon;
+  final String? trailing;
+  final bool enabled;
+  final VoidCallback onChoose;
+}
 
 class _CommandPalette extends StatefulWidget {
   const _CommandPalette({
@@ -157,8 +224,11 @@ class _CommandPalette extends StatefulWidget {
     required this.agentOf,
     required this.permissionMode,
     required this.startOnPrompt,
+    required this.initialSkill,
     required this.onCreated,
     required this.onKickoff,
+    required this.pending,
+    required this.onPending,
     required this.jumps,
     required this.onJump,
   });
@@ -175,10 +245,19 @@ class _CommandPalette extends StatefulWidget {
   /// Effective mode of the target's org; changing it in the palette applies to this session only.
   final PermissionMode permissionMode;
   final bool startOnPrompt;
+
+  /// Opens on the arguments of this command; the engine, not the listed skills, says whether it exists.
+  final String? initialSkill;
   final void Function(SessionSummary session) onCreated;
 
   /// Runs after the palette closes; the kickoff form replaces it.
   final VoidCallback onKickoff;
+
+  /// How many items wait on the user, in every org, when the palette opened.
+  final int pending;
+
+  /// Runs after the palette closes; `null` when nothing waits.
+  final VoidCallback? onPending;
 
   /// What the search can open, besides skills; matched against the typed text from 2 characters on.
   final Future<List<PaletteJump>> jumps;
@@ -190,11 +269,22 @@ class _CommandPalette extends StatefulWidget {
 
 class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<_CommandPalette> {
   final _field = TextEditingController();
-  late _Mode _mode = widget.startOnPrompt ? _Mode.prompt : _Mode.list;
+  final _anchors = <String, GlobalKey>{};
+  late _Mode _mode = widget.initialSkill != null
+      ? _Mode.args
+      : widget.startOnPrompt
+      ? _Mode.prompt
+      : _Mode.list;
   List<PaletteSkill> _skills = const [];
   String? _skillsError;
-  PaletteSkill? _skill;
+  late PaletteSkill? _skill = switch (widget.initialSkill) {
+    final name? => PaletteSkill(name, ''),
+    null => null,
+  };
   int _index = 0;
+
+  /// Set by ↑↓ and cleared by typing: while unset, the selection follows the text when the list changes shape.
+  bool _navigated = false;
   bool _creating = false;
   String? _error;
   late PermissionMode _permissionMode = widget.permissionMode;
@@ -216,7 +306,8 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
     _loadSkills();
     widget.jumps.then(
       (j) {
-        if (mounted) setState(() => _allJumps = j);
+        if (!mounted) return;
+        setState(() => _keepSelection(() => _allJumps = j));
       },
       onError: (Object e, StackTrace st) =>
           log('cannot index palette', name: 'CommandPalette', error: e, stackTrace: st),
@@ -226,7 +317,7 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
   List<PaletteJump> get _jumps {
     final q = _field.text.trim();
     if (q.length < 2) return const [];
-    return _allJumps.where((j) => matchesQuery([j.label, j.caption], q)).take(8).toList();
+    return _allJumps.where((j) => matchesQuery([j.label, j.caption, ...j.keywords], q)).take(8).toList();
   }
 
   @override
@@ -238,7 +329,17 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
   Future<void> _loadSkills() async {
     try {
       final skills = await widget.sessions.skills();
-      if (mounted) setState(() => _skills = skills);
+      if (!mounted) return;
+      // The engine can list the same name twice (two folders, one `name:`), and the name is what identifies the entry.
+      final names = <String>{};
+      setState(
+        () => _keepSelection(
+          () => _skills = [
+            for (final s in skills)
+              if (names.add(s.name)) s,
+          ],
+        ),
+      );
     } on Exception catch (e, st) {
       log('cannot list skills', name: 'CommandPalette', error: e, stackTrace: st);
       if (mounted) setState(() => _skillsError = '$e');
@@ -247,8 +348,45 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
 
   void _onChanged(String _) => setState(() {
     _error = null;
-    if (_mode == _Mode.list) _index = 0;
+    if (_mode != _Mode.list) return;
+    _navigated = false;
+    _select();
   });
+
+  void _select() {
+    final query = _field.text.trim();
+    if (query.isEmpty) {
+      _index = 0;
+      return;
+    }
+    final entries = _entries;
+    final key = paletteSelection(
+      query,
+      skills: [for (final s in _filtered) s.name],
+      hasJump: entries.any((e) => e.kind == _EntryKind.jump),
+    );
+    _index = entries.indexWhere((e) => key == 'jump' ? e.kind == _EntryKind.jump : e.key == key);
+  }
+
+  /// After ↑↓ the selection is the entry, not its position: [change] can put shortcuts above it.
+  void _keepSelection(VoidCallback change) {
+    final before = _entries;
+    final key = _mode == _Mode.list && _navigated ? before[_selectedIn(before)].key : null;
+    change();
+    if (key == null) return _reselect();
+    final at = _entries.indexWhere((e) => e.key == key);
+    if (at >= 0) {
+      _index = at;
+    } else {
+      _select();
+    }
+  }
+
+  /// Skills and jumps arrive after the first frame and shortcuts land above the jumps: without this, ↵ would
+  /// choose another entry than the one the typed text had selected.
+  void _reselect() {
+    if (_mode == _Mode.list && !_navigated && _field.text.trim().isNotEmpty) _select();
+  }
 
   Project? get _project => switch (widget.target) {
     ProjectTarget(:final project) => project,
@@ -258,61 +396,117 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
   bool get _canStart => widget.target is OrgTarget || _project != null;
 
   List<PaletteSkill> get _filtered {
-    final q = _field.text.trim().toLowerCase();
+    final q = _field.text;
     final orgMode = widget.target is OrgTarget;
     return _skills
-        // `/kickoff` is the fixed "Novo kickoff" entry, with its form; listed as a skill it would show twice.
+        // `/kickoff` is the "Começar um ciclo" action, with its form; listed as a shortcut it would show twice.
         .where(
           (s) =>
-              s.name.toLowerCase().contains(q) &&
               s.name != _kickoffSkill &&
-              !(orgMode && kPipelineSkills.contains(s.name)),
+              !(orgMode && kPipelineSkills.contains(s.name)) &&
+              matchesQuery([s.name, skillLabel(s.name, s.description)], q),
         )
         .toList();
   }
 
-  /// Skills plus the fixed "Novo kickoff" (projects only) and "Nova conversa" entries at the end.
-  int get _fixed => _filtered.length + (widget.target is OrgTarget ? 1 : 2);
+  /// Actions, then shortcuts, then jumps: the only order ↑↓, ↵ and taps know.
+  List<_Entry> get _entries {
+    final canStart = _canStart;
+    void close(VoidCallback? then) {
+      Navigator.of(context).pop();
+      then?.call();
+    }
 
-  /// Plus the search results after the fixed entries.
-  int get _count => _fixed + _jumps.length;
+    return [
+      if (widget.target is ProjectTarget)
+        _Entry(
+          _EntryKind.action,
+          key: 'palette-action-start',
+          title: 'Começar um ciclo',
+          detail: canStart ? 'de um card ou de uma descrição' : 'sem projeto nesta org',
+          enabled: canStart,
+          onChoose: () => close(widget.onKickoff),
+        ),
+      _Entry(
+        _EntryKind.action,
+        key: _conversationKey,
+        title: 'Nova conversa',
+        detail: canStart ? 'perguntar ou pedir algo fora de um ciclo' : 'sem projeto nesta org',
+        enabled: canStart,
+        onChoose: () => _enter(_Mode.prompt, keepText: true),
+      ),
+      _Entry(
+        _EntryKind.action,
+        key: 'palette-action-pending',
+        title: 'Ir para a próxima pendência',
+        detail: pendingLine(widget.pending),
+        trailing: '⌘J',
+        enabled: widget.onPending != null,
+        onChoose: () => close(widget.onPending),
+      ),
+      for (final s in _filtered)
+        _Entry(
+          _EntryKind.skill,
+          key: 'palette-skill-${s.name}',
+          title: skillLabel(s.name, s.description),
+          trailing: '/${s.name}',
+          enabled: canStart,
+          onChoose: () => _enter(_Mode.args, skill: s),
+        ),
+      for (final j in _jumps)
+        _Entry(
+          _EntryKind.jump,
+          key: 'palette-jump-${j.route}',
+          title: j.label,
+          detail: j.caption,
+          icon: j.icon,
+          onChoose: () => close(() => widget.onJump(j.route)),
+        ),
+    ];
+  }
 
-  void _enter(_Mode mode, {PaletteSkill? skill}) => setState(() {
+  int _selectedIn(List<_Entry> entries) => _index.clamp(0, entries.length - 1);
+
+  void _enter(_Mode mode, {PaletteSkill? skill, bool keepText = false}) => setState(() {
     _mode = mode;
     _skill = skill;
     _error = null;
-    _field.clear();
+    _index = 0;
+    _navigated = false;
+    if (keepText) {
+      _field.selection = TextSelection.collapsed(offset: _field.text.length);
+    } else {
+      _field.clear();
+    }
   });
 
-  void _choose(int index) {
-    if (index >= _fixed) {
-      final route = _jumps[index - _fixed].route;
-      Navigator.of(context).pop();
-      widget.onJump(route);
-      return;
-    }
-    if (!_canStart) return;
-    final filtered = _filtered;
-    if (widget.target is OrgTarget) {
-      if (index == filtered.length) {
-        _enter(_Mode.prompt);
-      } else {
-        _enter(_Mode.args, skill: filtered[index]);
-      }
-    } else if (index == filtered.length + 1) {
-      _enter(_Mode.prompt);
-    } else if (index == filtered.length) {
-      Navigator.of(context).pop();
-      widget.onKickoff();
-    } else {
-      _enter(_Mode.args, skill: filtered[index]);
-    }
+  void _move(int delta) {
+    final entries = _entries;
+    final from = _selectedIn(entries);
+    final to = (from + delta) % entries.length;
+    setState(() {
+      _index = to;
+      _navigated = true;
+    });
+    final anchor = _anchors[entries[to].key]?.currentContext;
+    if (anchor == null) return;
+    unawaited(
+      Scrollable.ensureVisible(
+        anchor,
+        duration: const Duration(milliseconds: 100),
+        alignmentPolicy: to > from
+            ? ScrollPositionAlignmentPolicy.keepVisibleAtEnd
+            : ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+      ),
+    );
   }
 
   void _submit() {
     switch (_mode) {
       case _Mode.list:
-        _choose(_index);
+        final entries = _entries;
+        final entry = entries[_selectedIn(entries)];
+        if (entry.enabled) entry.onChoose();
       case _Mode.args:
         final args = _field.text.trim();
         _create(args.isEmpty ? '/${_skill!.name}' : '/${_skill!.name} $args');
@@ -393,11 +587,11 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
     if (_mode == _Mode.prompt) return onPasteKey(node, event);
     if (_mode != _Mode.list) return KeyEventResult.ignored;
     if (key == LogicalKeyboardKey.arrowDown) {
-      setState(() => _index = (_index + 1) % _count);
+      _move(1);
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowUp) {
-      setState(() => _index = (_index - 1 + _count) % _count);
+      _move(-1);
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -406,6 +600,31 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final entries = _entries;
+    final selected = _selectedIn(entries);
+    Widget item(int i) {
+      final e = entries[i];
+      return KeyedSubtree(
+        key: _anchors.putIfAbsent(e.key, GlobalKey.new),
+        child: _Item(
+          key: ValueKey(e.key),
+          selected: i == selected,
+          onTap: e.enabled ? e.onChoose : null,
+          title: e.title,
+          detail: e.detail,
+          icon: e.icon,
+          trailing: e.trailing,
+          action: e.kind == _EntryKind.action,
+        ),
+      );
+    }
+
+    List<Widget> items(_EntryKind kind) => [
+      for (final (i, e) in entries.indexed)
+        if (e.kind == kind) item(i),
+    ];
+    final shortcuts = items(_EntryKind.skill);
+    final jumps = items(_EntryKind.jump);
     return PopScope(
       canPop: !_creating,
       child: Align(
@@ -441,9 +660,9 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
                           border: InputBorder.none,
                           hintText: switch (_mode) {
                             _Mode.list => switch (widget.target) {
-                              OrgTarget(:final org) => 'Atividade em $org…',
-                              ProjectTarget(project: final p?) => 'Executar skill em ${p.name}…',
-                              ProjectTarget() => 'Skills (sem projeto nesta org)',
+                              OrgTarget(:final org) => 'O que você quer fazer em $org?',
+                              ProjectTarget(project: final p?) => 'O que você quer fazer em ${p.name}?',
+                              ProjectTarget() => 'O que você quer fazer?',
                             },
                             _Mode.args => 'argumentos (opcional)',
                             _Mode.prompt => switch (widget.target) {
@@ -491,71 +710,37 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
                       // Fixed height: filtering would otherwise resize the dialog on every keystroke.
                       SizedBox(
                         height: 360,
-                        child: ListView(
+                        // Not a lazy list: the selected entry has to exist to be scrolled into view.
+                        child: SingleChildScrollView(
                           padding: const EdgeInsets.all(6),
-                          children: [
-                            for (final (i, s) in _filtered.indexed)
-                              _Item(
-                                selected: i == _index,
-                                onTap: _canStart ? () => _choose(i) : null,
-                                leading: Mono('/${s.name}', color: c.textPrimary, size: 13),
-                                description: s.description,
-                              ),
-                            if (_skillsError case final error?)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                                child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
-                              ),
-                            if (widget.target is ProjectTarget)
-                              _Item(
-                                selected: _index == _fixed - 2,
-                                onTap: _canStart ? () => _choose(_fixed - 2) : null,
-                                leading: Text(
-                                  'Novo kickoff',
-                                  style: TextStyle(fontSize: 13, color: _canStart ? c.textPrimary : c.textMuted),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              ...items(_EntryKind.action),
+                              if (_skillsError case final error?)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                                  child: Text(error, style: TextStyle(fontSize: 12, color: c.fail)),
                                 ),
-                                description: _canStart ? 'ID do card ou descrição' : 'sem projeto',
-                              ),
-                            _Item(
-                              selected: _index == _fixed - 1,
-                              onTap: _canStart ? () => _choose(_fixed - 1) : null,
-                              leading: Text(switch (widget.target) {
-                                OrgTarget(:final org) => 'Nova conversa em $org',
-                                ProjectTarget(project: final p?) => 'Nova conversa em ${p.name}',
-                                ProjectTarget() => 'Nova conversa',
-                              }, style: TextStyle(fontSize: 13, color: _canStart ? c.textPrimary : c.textMuted)),
-                              description: _canStart ? 'prompt livre' : 'nenhum projeto nesta org',
-                            ),
-                            if (_jumps case final jumps when jumps.isNotEmpty) ...[
-                              const Padding(
-                                padding: EdgeInsets.fromLTRB(12, 12, 12, 4),
-                                child: Muted('Ir para', size: 11),
-                              ),
-                              for (final (i, j) in jumps.indexed)
-                                _Item(
-                                  key: ValueKey('palette-jump-${j.route}'),
-                                  selected: _index == _fixed + i,
-                                  onTap: () => _choose(_fixed + i),
-                                  leading: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(j.icon, size: 14, color: c.textMuted),
-                                      const SizedBox(width: 8),
-                                      ConstrainedBox(
-                                        constraints: const BoxConstraints(maxWidth: 260),
-                                        child: Text(
-                                          j.label,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(fontSize: 13, color: c.textPrimary),
-                                        ),
-                                      ),
-                                    ],
+                              if (shortcuts.isNotEmpty) ...[
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                                  child: Muted(
+                                    widget.target is OrgTarget ? 'Atalhos da org' : 'Atalhos do projeto',
+                                    size: 11,
                                   ),
-                                  description: j.caption,
                                 ),
+                                ...shortcuts,
+                              ],
+                              if (jumps.isNotEmpty) ...[
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(12, 12, 12, 4),
+                                  child: Muted('Ir para', size: 11),
+                                ),
+                                ...jumps,
+                              ],
                             ],
-                          ],
+                          ),
                         ),
                       ),
                     ],
@@ -569,7 +754,7 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
                           Expanded(
                             child: Muted(
                               _mode == _Mode.list
-                                  ? '↑↓ navegar · ↵ escolher · esc fechar · roda no engine local'
+                                  ? 'Digite para buscar conversas, documentos e decisões · esc fecha'
                                   : '↵ iniciar · esc voltar · permissões aparecem na aba Sessões',
                               size: 11,
                             ),
@@ -611,20 +796,38 @@ class _Item extends StatelessWidget {
     super.key,
     required this.selected,
     required this.onTap,
-    required this.leading,
-    required this.description,
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.trailing,
+    required this.action,
   });
 
   final bool selected;
 
   /// `null` renders the entry disabled.
   final VoidCallback? onTap;
-  final Widget leading;
-  final String description;
+  final String title;
+  final String detail;
+  final IconData? icon;
+  final String? trailing;
+
+  /// One of the fixed actions at the top, which read as the heavier lines.
+  final bool action;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final label = Text(
+      title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: action ? FontWeight.w600 : null,
+        color: onTap == null ? c.textMuted : c.textPrimary,
+      ),
+    );
     return Material(
       color: selected ? c.hover : Colors.transparent,
       borderRadius: BorderRadius.circular(6),
@@ -635,10 +838,23 @@ class _Item extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             children: [
-              leading,
-              const SizedBox(width: 14),
-              Expanded(child: Muted(description)),
-              if (selected && onTap != null) Mono('↵', color: c.textMuted),
+              if (icon case final icon?) ...[Icon(icon, size: 14, color: c.textMuted), const SizedBox(width: 8)],
+              if (detail.isEmpty)
+                Expanded(child: label)
+              else ...[
+                ConstrainedBox(constraints: const BoxConstraints(maxWidth: 260), child: label),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    detail,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: action ? c.textSecondary : c.textMuted),
+                  ),
+                ),
+              ],
+              if (trailing case final trailing?) ...[const SizedBox(width: 12), Mono(trailing, color: c.textMuted)],
+              if (selected && onTap != null) ...[const SizedBox(width: 8), Mono('↵', color: c.textMuted)],
             ],
           ),
         ),

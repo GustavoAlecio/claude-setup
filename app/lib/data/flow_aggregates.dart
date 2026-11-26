@@ -177,7 +177,15 @@ const kNeedsYou = 'Precisa de você';
 enum CycleNowKind { blocked, gate, request, paused, running, done, idle, next, stalled, waiting }
 
 /// [action] is the button label; [route] is `null` when the action is not a navigation.
-typedef CycleNow = ({CycleNowKind kind, String eyebrow, String title, String detail, String? action, String? route});
+typedef CycleNow = ({
+  CycleNowKind kind,
+  String eyebrow,
+  String title,
+  String detail,
+  String? action,
+  String? route,
+  String? skill,
+});
 
 String pendingRequestsTitle(int n) => n == 1 ? '1 pedido esperando resposta' : '$n pedidos esperando resposta';
 
@@ -196,6 +204,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: '${decision.task.title}: o diagnóstico espera a sua decisão',
       action: 'Decidir',
       route: decisionLocation(project.name, decision),
+      skill: null,
     );
   }
   if (cardGate(project)?.gate case final gate?) {
@@ -207,6 +216,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: summary.isEmpty ? 'Nada roda antes da sua resposta.' : summary,
       action: 'Decidir',
       route: gateLocation(project.name, gate.name),
+      skill: null,
     );
   }
   final pending = pendingProjectSessions(sessions, project.name);
@@ -218,6 +228,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: pending.first.title,
       action: 'Responder',
       route: sessionLocation(pending.first),
+      skill: null,
     );
   }
   if (cycle.pausedAt case final since?) {
@@ -233,6 +244,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: '${when}Nada roda até você retomar.',
       action: 'Retomar',
       route: null,
+      skill: null,
     );
   }
   final live =
@@ -249,6 +261,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: live.title,
       action: 'Acompanhar a conversa',
       route: sessionLocation(live),
+      skill: null,
     );
   }
   if (report?.stage(Stage.complete)?.status == ReportStatus.done) {
@@ -259,6 +272,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: 'O relatório e o PR estão nos detalhes do ciclo.',
       action: null,
       route: null,
+      skill: null,
     );
   }
   if (live != null) {
@@ -269,6 +283,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: live.title,
       action: 'Abrir a conversa',
       route: sessionLocation(live),
+      skill: null,
     );
   }
   if (cycle.stage != Stage.complete && report?.stage(cycle.stage)?.status == ReportStatus.done) {
@@ -280,6 +295,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: 'A próxima é /$next.',
       action: 'Rodar /$next',
       route: null,
+      skill: next,
     );
   }
   if (orphanCurrentStage(cycle, null, hasSession: false) != null) {
@@ -290,6 +306,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
       detail: 'Nenhuma conversa está rodando esta etapa.',
       action: 'Retomar /$label',
       route: null,
+      skill: label,
     );
   }
   return (
@@ -299,6 +316,7 @@ CycleNow cycleNow(Project project, List<SessionSummary> sessions) {
     detail: 'Nenhuma conversa está rodando. Use a paleta para seguir.',
     action: 'Abrir a paleta',
     route: null,
+    skill: null,
   );
 }
 

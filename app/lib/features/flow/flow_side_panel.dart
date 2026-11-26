@@ -102,7 +102,7 @@ class _NoSession extends StatelessWidget {
             OutlinedButton.icon(
               key: const ValueKey('flow-orphan-resume'),
               style: OutlinedButton.styleFrom(foregroundColor: c.accent),
-              onPressed: () => showCommandPalette(context, ProjectTarget(project)),
+              onPressed: () => showCommandPalette(context, ProjectTarget(project), skill: orphan.label),
               icon: const Icon(Icons.play_arrow_rounded, size: 16),
               label: Text('Retomar /${orphan.label}'),
             ),

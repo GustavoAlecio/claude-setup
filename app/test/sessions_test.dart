@@ -291,15 +291,11 @@ Future<void> _chooseHeaderMode(WidgetTester tester, String label) async {
 
 Finder _paletteField() => find.byType(TextField).last;
 
-Finder _paletteList() =>
-    find.ancestor(of: find.text('Nova conversa em demo-app'), matching: find.byType(ListView)).first;
+Finder _entry(String key) => find.byKey(ValueKey(key));
 
-Finder _inPalette(String label) => find.descendant(of: _paletteList(), matching: find.text(label));
+const _conversation = 'palette-action-conversation';
 
-Finder _selected(String label) => find.descendant(
-  of: find.ancestor(of: _inPalette(label), matching: find.byType(Row)).first,
-  matching: find.text('↵'),
-);
+Finder _selected(String key) => find.descendant(of: _entry(key), matching: find.text('↵'));
 
 Future<void> _cmdEnter(WidgetTester tester) async {
   await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
@@ -1225,25 +1221,24 @@ void main() {
       await openSessions(tester, sessions: sessions);
       await openPalette(tester);
 
-      expect(_inPalette('/fix'), findsOneWidget);
-      expect(_inPalette('/status'), findsOneWidget);
-      expect(_inPalette('/review'), findsOneWidget);
-      expect(_selected('/fix'), findsOneWidget);
+      expect(_entry('palette-skill-fix'), findsOneWidget);
+      expect(_entry('palette-skill-status'), findsOneWidget);
+      expect(_entry('palette-skill-review'), findsOneWidget);
+      expect(_selected('palette-action-start'), findsOneWidget);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.pump();
-      expect(_selected('/status'), findsOneWidget);
-      expect(_selected('/fix'), findsNothing);
+      await tester.pumpAndSettle();
+      expect(_selected(_conversation), findsOneWidget);
+      expect(_selected('palette-action-start'), findsNothing);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
-      await tester.pump();
-      expect(_selected('Nova conversa em demo-app'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(_selected('palette-skill-review'), findsOneWidget, reason: 'wraps from the first entry to the last');
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.pump();
-      expect(_selected('/status'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(_selected('palette-skill-status'), findsOneWidget);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
@@ -1256,7 +1251,7 @@ void main() {
 
       expect(sessions.created, [('demo-app', '/status agora')]);
       expect(sessions.cwds, ['~/development/demo-app']);
-      expect(find.text('Nova conversa em demo-app'), findsNothing);
+      expect(_entry(_conversation), findsNothing);
       expect(find.text('/status agora'), findsWidgets);
       expect(find.text('aguardando resposta'), findsOneWidget);
     });
@@ -1289,24 +1284,25 @@ void main() {
     testWidgets('escape closes the palette', (tester) async {
       await openSessions(tester);
       await openPalette(tester);
-      expect(find.text('Nova conversa em demo-app'), findsOneWidget);
+      expect(_entry(_conversation), findsOneWidget);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      expect(find.text('Nova conversa em demo-app'), findsNothing);
+      expect(_entry(_conversation), findsNothing);
     });
 
     testWidgets('escape in the arguments step goes back to the list', (tester) async {
       await openSessions(tester);
       await openPalette(tester);
+      await tester.enterText(_paletteField(), 'fix');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(find.text('argumentos (opcional)'), findsOneWidget);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      expect(find.text('Nova conversa em demo-app'), findsOneWidget);
-      expect(_selected('/fix'), findsOneWidget);
+      expect(_entry(_conversation), findsOneWidget);
+      expect(_selected('palette-action-start'), findsOneWidget);
     });
 
     testWidgets('typing filters the skills and keeps the new conversation entry', (tester) async {
@@ -1314,10 +1310,10 @@ void main() {
       await openPalette(tester);
       await tester.enterText(_paletteField(), 'rev');
       await tester.pump();
-      expect(_inPalette('/review'), findsOneWidget);
-      expect(_inPalette('/fix'), findsNothing);
-      expect(find.text('Nova conversa em demo-app'), findsOneWidget);
-      expect(_selected('/review'), findsOneWidget);
+      expect(_entry('palette-skill-review'), findsOneWidget);
+      expect(_entry('palette-skill-fix'), findsNothing);
+      expect(_entry(_conversation), findsOneWidget);
+      expect(_selected('palette-skill-review'), findsOneWidget);
     });
 
     testWidgets('new conversation entry sends the free prompt as the command', (tester) async {
@@ -1325,7 +1321,7 @@ void main() {
       await openSessions(tester, sessions: sessions);
       await openPalette(tester);
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(find.text('Nova conversa em demo-app: escreva o prompt'), findsOneWidget);
@@ -1358,6 +1354,7 @@ void main() {
     testWidgets('missing cwd shows the engine error inline and keeps the palette open', (tester) async {
       await openSessions(tester, sessions: _NoCwdSessions());
       await openPalette(tester);
+      await tester.enterText(_paletteField(), 'fix');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
