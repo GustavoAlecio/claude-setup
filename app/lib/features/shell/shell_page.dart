@@ -12,7 +12,6 @@ import '../../app/inbox_cubit.dart';
 import '../../app/projects_cubit.dart';
 import '../../app/sessions_cubit.dart';
 import '../../core/theme/app_colors.dart';
-import '../../core/widgets/auto_mode.dart';
 import '../../core/widgets/primitives.dart';
 import '../../data/attention.dart';
 import '../../data/config_mutations.dart';
@@ -290,8 +289,6 @@ class _Sidebar extends StatelessWidget {
                     ],
                   ),
           ),
-          const SizedBox(height: 8),
-          const _AutoModeIndicator(key: ValueKey('auto-mode')),
           const SizedBox(height: 8),
           const _EngineFooter(key: ValueKey('engine-footer')),
           const SizedBox(height: 6),
@@ -581,77 +578,6 @@ class _ProjectTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-/// The global Smart Flow autopilot (`auto_mode.flag`, the same one `/auto` toggles). Turning it on asks first:
-/// stages then advance without approval, except at the required gates.
-class _AutoModeIndicator extends StatelessWidget {
-  const _AutoModeIndicator({super.key});
-
-  Future<void> _toggle(BuildContext context, bool on) async {
-    final repository = RepositoryScope.of(context);
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    if (!on) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Ligar o piloto automático?'),
-          content: const Text(
-            'O Fluxo Smart passa a avançar as etapas sem pedir aprovação. Ele ainda para nos gates obrigatórios '
-            '(spec e PR, ou os de gates.json), em bloqueios, push e operações destrutivas. Vale para todos os projetos.',
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Ligar')),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
-    try {
-      await repository.setAutoMode(!on);
-    } on Exception catch (e, st) {
-      log('autopilot toggle failed', name: 'ShellPage', error: e, stackTrace: st);
-      messenger?.showSnackBar(SnackBar(content: Text('não foi possível alterar o piloto: $e')));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return AutoModeBuilder(
-      builder: (context, value) {
-        final on = value == true;
-        return Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: value == null ? null : () => _toggle(context, on),
-            child: Tooltip(
-              message: on ? 'Desligar: o fluxo volta a parar em todos os gates' : 'Ligar o piloto automático',
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: c.border),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.flight_takeoff, size: 14, color: on ? c.accent : c.textMuted),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text('Piloto automático', style: TextStyle(fontSize: 12, color: c.textSecondary)),
-                    ),
-                    Pill(label: on ? 'on' : 'off', color: on ? c.accent : c.idle, dot: false),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
     );
   }
 }

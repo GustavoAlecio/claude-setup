@@ -3,15 +3,6 @@ import 'package:flutter/material.dart';
 import '../../engine/engine_config.dart';
 import '../theme/app_colors.dart';
 
-/// "auto (classificador)" keeps the SDK mode apart from the pipeline's piloto automático.
-String permissionModeLabel(PermissionMode mode) => switch (mode) {
-  PermissionMode.defaultMode => 'padrão',
-  PermissionMode.acceptEdits => 'aceitar edições',
-  PermissionMode.auto => 'auto (classificador)',
-  PermissionMode.bypassPermissions => 'bypass',
-  PermissionMode.plan => 'só leitura',
-};
-
 String permissionModeHint(PermissionMode mode) => switch (mode) {
   PermissionMode.defaultMode => 'pede confirmação para editar e rodar comandos',
   PermissionMode.acceptEdits => 'edições sem confirmação; comandos pedem',

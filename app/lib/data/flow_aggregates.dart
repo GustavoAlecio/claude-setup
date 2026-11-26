@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'models.dart';
 import 'orgs.dart';
 import 'report_models.dart';
@@ -906,4 +908,41 @@ String? builtSameLine(GateMap map) {
     if (existing > 0) '$existing ${existing == 1 ? 'não foi tocada' : 'não foram tocadas'}',
   ];
   return parts.isEmpty ? null : parts.join(', ');
+}
+
+/// Gates that always stop the cycle, whatever `gates.json` says.
+const kAlwaysRequiredGates = {'spec', 'pr'};
+
+/// Same rule as `required_gates` in `wf-report.py`: only an object whose `required` is a list of strings widens the
+/// set; anything else leaves [kAlwaysRequiredGates].
+Set<String> parseRequiredGates(String? source) {
+  if (source == null) return kAlwaysRequiredGates;
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(source);
+  } on FormatException {
+    return kAlwaysRequiredGates;
+  }
+  final required = decoded is Map ? decoded['required'] : null;
+  if (required is! List || !required.every((x) => x is String)) return kAlwaysRequiredGates;
+  return {...kAlwaysRequiredGates, ...required.cast<String>()};
+}
+
+/// When the pipeline stops for the user, given the required gates; names outside spec, pr, plan and tasks are ignored.
+List<({String what, String when})> stopRules(Set<String> required) {
+  const always = 'param sempre';
+  final plan = required.contains('plan');
+  final tasks = required.contains('tasks');
+  const onlyOnDecision = 'param só quando há uma decisão sua';
+  String when(bool on) => on ? always : onlyOnDecision;
+  return [
+    (what: 'Spec e PR', when: always),
+    if (plan == tasks)
+      (what: 'Plano e tasks', when: plan ? always : onlyOnDecision)
+    else ...[
+      (what: 'Plano', when: when(plan)),
+      (what: 'Tasks', when: when(tasks)),
+    ],
+    (what: 'Travou ou bloqueou', when: 'para sempre'),
+  ];
 }

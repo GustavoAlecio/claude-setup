@@ -64,6 +64,15 @@ enum PermissionMode {
   static PermissionMode? parseConfig(Object? raw) => kConfigPermissionModes.where((m) => m.wire == raw).firstOrNull;
 }
 
+/// "auto (classificador)" keeps the SDK mode apart from the pipeline's piloto automático.
+String permissionModeLabel(PermissionMode mode) => switch (mode) {
+  PermissionMode.defaultMode => 'padrão',
+  PermissionMode.acceptEdits => 'aceitar edições',
+  PermissionMode.auto => 'auto (classificador)',
+  PermissionMode.bypassPermissions => 'bypass',
+  PermissionMode.plan => 'só leitura',
+};
+
 /// Modes the global and org pickers offer and the config accepts.
 const kConfigPermissionModes = [
   PermissionMode.defaultMode,

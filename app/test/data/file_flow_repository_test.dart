@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/file_flow_repository.dart';
+import 'package:claude_flow/data/flow_aggregates.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/orgs.dart';
 import 'package:claude_flow/data/report_models.dart';
@@ -88,21 +89,22 @@ void main() {
       expect(_project(list, 'beta').cycle!.runs.single.status, Verdict.running);
     });
 
-    test('auto mode is the global flag: on only when it says "on"; setAutoMode writes and removes it', () async {
-      await loaded();
-      expect(await repo.watchAutoMode().first, isTrue);
+    group('required gates', () {
+      test('without gates.json only spec and pr stop', () async {
+        expect(await repo.loadRequiredGates(), kAlwaysRequiredGates);
+      });
 
-      await repo.setAutoMode(false);
-      expect(File('$root/auto_mode.flag').existsSync(), isFalse);
-      expect(await repo.watchAutoMode().first, isFalse);
+      test('gates.json adds its required gates to spec and pr', () async {
+        File('$root/gates.json').writeAsStringSync('{"required":["plan"]}');
+        expect(await repo.loadRequiredGates(), {'spec', 'pr', 'plan'});
+      });
 
-      await repo.setAutoMode(true);
-      expect(File('$root/auto_mode.flag').readAsStringSync(), 'on');
-      expect(await repo.watchAutoMode().first, isTrue);
-
-      File('$root/auto_mode.flag').writeAsStringSync('off\n');
-      await repo.reload();
-      expect(await repo.watchAutoMode().first, isFalse);
+      test('invalid JSON or a required that is not a list falls back to spec and pr', () async {
+        File('$root/gates.json').writeAsStringSync('{not json');
+        expect(await repo.loadRequiredGates(), kAlwaysRequiredGates);
+        File('$root/gates.json').writeAsStringSync('{"required":"plan"}');
+        expect(await repo.loadRequiredGates(), kAlwaysRequiredGates);
+      });
     });
 
     test('path from .dashboard.json, stack by detect in path/app, branch from git', () async {
