@@ -463,7 +463,7 @@ void main() {
       expect(find.byKey(const ValueKey('awaiting-report-challenge')), findsNothing);
     });
 
-    testWidgets('PermissionRequest vira linha que abre em Sessões, sem responder no Fluxo', (tester) async {
+    testWidgets('PermissionRequest vira linha que abre em Conversas, sem responder no Fluxo', (tester) async {
       final sessions = await _open(
         tester,
         _withCycle(),
@@ -484,7 +484,7 @@ void main() {
       expect(_inCard(find.text('Permissão pendente em sessão s1 —')), findsOneWidget);
       expect(_inCard(find.text('Responder')), findsNothing);
 
-      await tester.tap(_inCard(find.text('abrir em Sessões')));
+      await tester.tap(_inCard(find.text('abrir em Conversas')));
       await tester.pumpAndSettle();
 
       expect(_location(tester), '/p/$_project/sessions/s1');
@@ -505,9 +505,9 @@ void main() {
       _router(tester).go('/p/$_project/flow?stage=specify');
       await tester.pumpAndSettle();
 
-      expect(_inCard(find.text('challenge-spec: sessão encerrada — retome em Sessões')), findsOneWidget);
+      expect(_inCard(find.text('challenge-spec: sessão encerrada — retome em Conversas')), findsOneWidget);
 
-      await tester.tap(_inCard(find.text('abrir em Sessões')));
+      await tester.tap(_inCard(find.text('abrir em Conversas')));
       await tester.pumpAndSettle();
       expect(_location(tester), '/p/$_project/sessions/s-dead');
     });
@@ -719,7 +719,7 @@ void main() {
       expect(_inCard(find.text('Pergunta do review?')), findsOneWidget);
     });
 
-    testWidgets('aba Sessões mantém o QuestionCard do mesmo pedido', (tester) async {
+    testWidgets('aba Conversas mantém o QuestionCard do mesmo pedido', (tester) async {
       await _openGamma(tester);
       _router(tester).go('/p/$_gamma/sessions/s-plan');
       await tester.pumpAndSettle();

@@ -1399,6 +1399,12 @@ void main() {
       expect(cycleNow(project(stage: Stage.challenge), const []).skill, 'challenge-spec');
     });
 
+    test('resumesThroughKickoffForm: só o kickoff; nulo é false', () {
+      expect(resumesThroughKickoffForm(Stage.kickoff), isTrue);
+      expect(resumesThroughKickoffForm(Stage.plan), isFalse);
+      expect(resumesThroughKickoffForm(null), isFalse);
+    });
+
     test('stalled no kickoff não tem skill: a retomada abre o formulário', () {
       final now = cycleNow(project(stage: Stage.kickoff), const []);
 

@@ -300,7 +300,8 @@ class QuestionRequest extends PendingRequest {
 
   final List<Question> questions;
 
-  /// Id of the `AskUserQuestion` call this request answers; absent in older recorded sessions.
+  /// Id of the question call this request answers, whatever the call is named: the feed matches the call by this id.
+  /// Absent in older recorded sessions.
   final String? toolUseId;
 
   /// `{question: label}`; only known when the answer was sent from this client.

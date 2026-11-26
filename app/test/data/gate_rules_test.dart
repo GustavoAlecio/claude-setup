@@ -708,4 +708,13 @@ void main() {
       expect(rules[2], (what: 'Tasks', when: sempre));
     });
   });
+
+  group('isAdjustLabel', () {
+    test('recognises Ajustar ignoring case and surrounding spaces', () {
+      expect(isAdjustLabel('Ajustar o plano'), isTrue);
+      expect(isAdjustLabel('  ajustar'), isTrue);
+      expect(isAdjustLabel('Aprovar'), isFalse);
+      expect(isAdjustLabel('Rejeitar'), isFalse);
+    });
+  });
 }

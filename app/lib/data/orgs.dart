@@ -67,7 +67,7 @@ String orgInboxLocation(String org) => Uri(pathSegments: ['', 'o', org, 'revisar
 String orgSessionsLocation(String org, {String? session}) =>
     Uri(pathSegments: ['', 'o', org, 'sessions', ?session]).toString();
 
-/// Where session [s] opens: its org's activities for an org session, else its project's Sessões tab.
+/// Where session [s] opens: its org's activities for an org session, else its project's Conversas tab.
 String sessionLocation(SessionSummary s) => switch (s.org) {
   final org? => orgSessionsLocation(org, session: s.id),
   null => Uri(pathSegments: ['', 'p', s.project, 'sessions', s.id]).toString(),
@@ -99,7 +99,8 @@ String gateBackTarget(String project, String lastShellRoute, DashboardConfig? co
       : target;
 }
 
-/// Org sessions of [org], resolved by [sessionOrg]: what its "Atividades da org" counts and lists.
+/// Org sessions of [org] (`isOrgSession`, resolved by [sessionOrg]): what the org's "Atividades" lists and counts,
+/// in the order of [sessions]; project sessions never appear.
 List<SessionSummary> orgActivities(
   List<SessionSummary> sessions,
   List<Project> projects,
@@ -484,6 +485,10 @@ PermissionMode effectivePermissionMode(PermissionMode? sessionChoice, String? or
     (orgName == null ? null : orgConfigOf(config, orgName)?.permissionMode) ??
     config?.permissionMode ??
     kDefaultPermissionMode;
+
+/// GitHub account and permission mode a new session of [org] starts with.
+({String? githubAccount, PermissionMode permissionMode}) launchDefaults(String? org, DashboardConfig? config) =>
+    (githubAccount: githubFor(org, config).account, permissionMode: effectivePermissionMode(null, org, config));
 
 /// Org and permission mode of a [cwd] for launching a session (Resolver, Revisar): the org of the known project
 /// at that path (if its path exactly matches), else the org whose root holds it, else [kNoOrg]. The mode is the

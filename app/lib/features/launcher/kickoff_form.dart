@@ -23,16 +23,16 @@ Future<void> showKickoffForm(BuildContext context, Project? project) async {
   final router = GoRouter.of(context);
   final sessions = SessionsScope.of(context);
   final config = context.read<ConfigCubit>().state.data;
-  final githubAccount = githubFor(project.org, config).account;
+  final launch = launchDefaults(project.org, config);
   await showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
     builder: (_) => _KickoffForm(
       project: project,
       sessions: sessions,
-      githubAccount: githubAccount,
+      githubAccount: launch.githubAccount,
       tracker: orgConfigOf(config, project.org)?.tracker,
-      permissionMode: effectivePermissionMode(null, project.org, config),
+      permissionMode: launch.permissionMode,
       onCreated: (s) => router.go('/p/${s.project}/sessions/${s.id}'),
     ),
   );

@@ -12,7 +12,7 @@ import '../data/sessions_repository.dart';
 import 'config_cubit.dart';
 import 'projects_cubit.dart';
 
-/// Answers the terminal's `/app`: imports the session the same way the Sessões tab does (org, mode and account of
+/// Answers the terminal's `/app`: imports the session the same way the Conversas tab does (org, mode and account of
 /// the project it ran in) and opens it. Bringing the window forward is the script's `open`.
 class TerminalHandoffListener extends StatefulWidget {
   const TerminalHandoffListener({super.key, required this.router, required this.child});

@@ -32,7 +32,6 @@ void main() {
       final router = await _open(tester, const Size(1100, 700));
       router.go('/p/web-console/$tab');
       await tester.pumpAndSettle();
-      tester.view.physicalSize = const Size(1100, 700);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     });
@@ -47,7 +46,6 @@ void main() {
     final router = await _open(tester, const Size(1400, 700));
     router.go('/p/demo-app/flow');
     await tester.pumpAndSettle();
-    tester.view.physicalSize = const Size(1400, 700);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });

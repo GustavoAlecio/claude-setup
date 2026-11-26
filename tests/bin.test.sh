@@ -414,6 +414,9 @@ show_q "d['questions'][0]['header']=='Q1'" "without header the id heads the ques
 mkb dotted "d['questions'][0]['prefers']={'author':'a','critic':'b'}; d['questions'][0]['options'][0]['consequence']='Testável por e2e!'"
 wfr brief plan --workflow-dir "$B" --file "$BD/dotted.json" >/dev/null
 show_q "[o['description'] for o in d['questions'][0]['options']]==['Testável por e2e! Preferida pelo autor.','Depende do modelo. Preferida pelo crítico.']" "a consequence already ending in punctuation gets no extra dot"
+mkb suffixed "d['questions'][0]['options'][0]['label']='No script (Recomendado)'"
+wfr brief plan --workflow-dir "$B" --file "$BD/suffixed.json" >/dev/null
+show_q "[o['label'] for o in d['questions'][0]['options']]==['No script (Recomendado)','Na skill']" "a label already ending in the recommended suffix does not get it twice"
 mkb header "d['questions'][0]['header']='Regra parada'"
 wfr brief plan --workflow-dir "$B" --file "$BD/header.json" >/dev/null
 gate_ok "g['questions'][0]['header']=='Regra parada'" "brief keeps the header"
@@ -590,16 +593,16 @@ got=0; wfr answer plan --workflow-dir "$R2" --question Q1 --option a >/dev/null 
 got=0; wfr answer tasks --workflow-dir "$R2" --approve >/dev/null 2>"$AD/err" || got=$?
 [ "$got" = 2 ] && grep -qF "answer tasks: bloco ausente" "$AD/err" || fail "answer without a block"
 
-echo "- wf-report: glob_match is pure and keeps the glob_re of adr-index"
-HOME="$HOME_BIN_SHIM" python3 - "$BIN/wf-report.py" "$BIN/adr-index.py" <<'PY' || fail "glob_match and check_glob"
-import importlib.util, inspect, sys
+echo "- wf-report: glob_match is pure and shares glob_util with adr-index"
+HOME="$HOME_BIN_SHIM" python3 - "$BIN/wf-report.py" "$BIN/glob_util.py" <<'PY' || fail "glob_match and check_glob"
+import importlib.util, sys
 
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     return m
 
-wr, adr = load("wf_report", sys.argv[1]), load("adr_index", sys.argv[2])
+wr, gu = load("wf_report", sys.argv[1]), load("glob_util", sys.argv[2])
 cases = {
     "star stays in one dir": ("bin/*.py", "bin/x/y.py", False),
     "star matches a file": ("bin/*.py", "bin/a.py", True),
@@ -637,14 +640,12 @@ cases = {
 }
 for name, (glob, path, want) in cases.items():
     assert wr.glob_match(glob, path) is want, name
-for fn in ("glob_body", "brace_end", "compiles", "glob_re"):
-    assert inspect.getsource(getattr(wr, fn)) == inspect.getsource(getattr(adr, fn)), f"{fn} differs between the scripts"
-for glob in ("bin/*.py", "bin/**", "**/x/*.md", "a?b", "docs/a.b+c", "x/**/y", "README.md", "[ab]*", "[!ab]*",
-             "{x,y}", "bin/{a,x/*}.py", "[ab", "{x,y", "{a,{b,c}}"):
-    assert wr.glob_re(glob).pattern == adr.glob_re(glob).pattern, f"parity: {glob}"
-    for path in ("bin/a.py", "bin/x/y.py", "x/y", "x/a/b/y", "README.md", "a.b+c", "docs/a.b+c", "aab", "[ab]z",
-                 "x", "y", "zz", "[ab", "{x,y", "{a,{b,c}}"):
-        assert bool(wr.glob_re(glob).match(path)) == bool(adr.glob_re(glob).match(path)), f"parity: {glob} {path}"
+for glob, pattern in (("bin/*.py", r"^bin/[^/]*\.py$"), ("a?b", r"^a[^/]b$"), ("bin/**", r"^bin/.*$"),
+                      ("**/x", r"^(?:.*/)?x$"), ("{x,y}", r"^(?:x|y)$"), ("[!ab]", r"^[^/ab]$")):
+    assert gu.glob_re(glob).pattern == pattern, f"glob_re pattern: {glob}"
+assert wr.glob_re.__module__ == "glob_util", "wf-report uses the glob_util glob_re"
+assert gu.brace_end("{a,b}c", 0) == 4 and gu.brace_end("{a,b", 0) == 0, "brace_end"
+assert gu.compiles("[ab]") and not gu.compiles("[z-a]"), "compiles"
 for bad in ("", " ", "/etc/x", "a/../b", "..", "./bin/a.py", "bin\\a.py", "a" * 121):
     try:
         wr.check_glob("g", bad)
@@ -652,6 +653,31 @@ for bad in ("", " ", "/etc/x", "a/../b", "..", "./bin/a.py", "bin\\a.py", "a" * 
         continue
     raise AssertionError(f"check_glob accepted {bad!r}")
 assert wr.check_glob("g", "bin/a..b.py") == "bin/a..b.py", "dots inside a name are not a .. segment"
+PY
+
+echo "- wf-report: a round 1 resend with a broken git keeps the previous map; list_changed times out"
+FAKEGIT=$(tmp)
+printf '#!/bin/sh\nsleep 30\n' > "$FAKEGIT/git"; chmod +x "$FAKEGIT/git"
+HOME="$HOME_BIN_SHIM" FAKEGIT="$FAKEGIT" python3 - "$BIN/wf-report.py" <<'PY' || fail "pr_map_refs round 1 and list_changed timeout"
+import importlib.util, os, sys, time
+
+spec = importlib.util.spec_from_file_location("wf_report", sys.argv[1])
+wr = importlib.util.module_from_spec(spec); spec.loader.exec_module(wr)
+
+refs = {"base": "b1", "tree": "t1"}
+prev_map = {"summary": "anterior", "nodes": [], "edges": []}
+plan_block = {"map": {"summary": "plano", "nodes": [], "edges": []}}
+report = {"stages": [{"stage": wr.GATE_OWNER["plan"], "gate": plan_block},
+                     {"stage": wr.GATE_OWNER["pr"], "gate": dict(refs, round=1, status="open", map=prev_map)}]}
+got, reason = wr.pr_map_refs(report, dict(refs), None, "git indisponível")
+assert got == dict(refs, map=prev_map) and reason is None, (got, reason)
+
+wr.GIT_TIMEOUT = 1
+os.environ["PATH"] = os.environ["FAKEGIT"] + os.pathsep + os.environ["PATH"]
+start = time.monotonic()
+files, why = wr.list_changed(os.environ["FAKEGIT"], "a", "b")
+assert files is None and "git diff passou de" in why, (files, why)
+assert time.monotonic() - start < 5, "list_changed did not honor GIT_TIMEOUT"
 PY
 
 echo "- wf-report: plan map contract, refusals, drop-map and rounds"

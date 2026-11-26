@@ -65,6 +65,9 @@ class _Sessions extends MockSessionsRepository {
   Completer<void>? hold;
   bool fail = false;
 
+  /// Thrown as is, past the Exception handling of the session action.
+  Error? crash;
+
   void update() => _bump.add(null);
 
   @override
@@ -89,6 +92,7 @@ class _Sessions extends MockSessionsRepository {
   Future<void> answer(String id, String requestId, PermissionDecision decision, {Map<String, String>? answers}) async {
     answerCalls.add((id, requestId, decision, answers));
     if (hold case final hold?) await hold.future;
+    if (crash case final crash?) throw crash;
     if (fail) throw const SessionsException('engine parado', statusCode: 503);
     events[id] = [
       for (final e in events[id]!)
@@ -522,6 +526,19 @@ void main() {
       expect(find.text('3 de 3 decididas'), findsOneWidget);
     });
 
+    testWidgets('erro fora de Exception no envio reabilita o botão', (tester) async {
+      final (_, sessions) = await _deciding(tester);
+      sessions.crash = StateError('falha inesperada');
+      await _answerAll(tester);
+
+      // The error leaves the unawaited submit as an uncaught async error, which only a zone can observe.
+      Object? uncaught;
+      await runZonedGuarded(() => _tap(tester, 'gate-send'), (error, _) => uncaught = error);
+      await tester.pumpAndSettle();
+      expect(uncaught ?? tester.takeException(), isA<StateError>());
+      expect(_send(tester).onPressed, isNotNull);
+    });
+
     testWidgets('gate sem perguntas: Ajustar pede texto, Aprovar envia o rótulo do pedido', (tester) async {
       final (_, sessions) = await _open(
         tester,
@@ -847,7 +864,7 @@ void main() {
         report: _report(),
         sessions: [_session('s-plan', status: SessionStatus.done, pending: 0)],
       );
-      expect(find.text('sessão encerrada, retome em Sessões'), findsOneWidget);
+      expect(find.text('sessão encerrada, retome em Conversas'), findsOneWidget);
     });
 
     testWidgets('voltar leva à última rota do shell', (tester) async {

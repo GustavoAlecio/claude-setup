@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/session_models.dart';
 import 'package:claude_flow/data/session_reducer.dart';
 import 'package:claude_flow/data/sse.dart';
@@ -897,6 +898,12 @@ void main() {
     expect(answerDisplay('A (Recomendado), B'), 'A, B');
     expect(answerDisplay('A (Recomendado)'), 'A');
     expect(answerDisplay('Sim, claro'), 'Sim, claro');
+  });
+
+  test('tierOfModel ignores case and returns null for unknown models', () {
+    expect(tierOfModel('Claude-Opus'), Tier.opus);
+    expect(tierOfModel('claude-haiku-4'), Tier.haiku);
+    expect(tierOfModel('gpt-5'), isNull);
   });
 
   test('shortModel', () {

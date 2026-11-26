@@ -69,7 +69,7 @@ class _DiagnosisPanelState extends State<DiagnosisPanel> with SessionLauncher<Di
   String get logName => 'DiagnosisPanel';
 
   void _launch(Project project, String action, String command) {
-    final config = context.read<ConfigCubit>().state.data;
+    final launch = launchDefaults(project.org, context.read<ConfigCubit>().state.data);
     final cwd = project.path;
     if (cwd == null) {
       setState(() => _pathError = missingProjectPathError(project));
@@ -86,8 +86,8 @@ class _DiagnosisPanelState extends State<DiagnosisPanel> with SessionLauncher<Di
         project.name,
         command,
         cwd: cwd,
-        githubAccount: githubFor(project.org, config).account,
-        permissionMode: effectivePermissionMode(null, project.org, config),
+        githubAccount: launch.githubAccount,
+        permissionMode: launch.permissionMode,
       ),
     );
   }

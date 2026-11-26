@@ -849,7 +849,7 @@ class _ProjectsSection extends StatefulWidget {
         ? 'Antigravity · ${agent.account ?? kDefaultAgentAccount}'
         : 'Claude',
     github: githubFor(orgName, config).account ?? 'conta ativa do gh',
-    mode: permissionModeLabel(effectivePermissionMode(null, orgName, config)),
+    mode: permissionModeLabel(launchDefaults(orgName, config).permissionMode),
   );
 }
 
@@ -962,7 +962,7 @@ class _ProjectsSectionState extends State<_ProjectsSection> {
     return [
       'conversas: ${agent.provider == AgentProvider.antigravity ? 'Antigravity · ${agent.account ?? kDefaultAgentAccount}' : 'Claude'}'
           '${agent.model == null ? '' : ' · ${agent.model}'}',
-      'modo: ${permissionModeLabel(effectivePermissionMode(null, name, config))}',
+      'modo: ${permissionModeLabel(launchDefaults(name, config).permissionMode)}',
       'GitHub: ${github ?? 'conta ativa'}',
     ].join(' · ');
   }

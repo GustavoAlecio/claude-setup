@@ -21,7 +21,7 @@ import '../sessions/session_view.dart';
 import 'stage_timeline.dart';
 
 /// "Aguardando você": questions the project's sessions hold, answered here, plus pending permissions and `running`
-/// stages whose session ended, both sent to Sessões. The session the side panel shows is left out. Nothing to show →
+/// stages whose session ended, both sent to Conversas. The session the side panel shows is left out. Nothing to show →
 /// no space taken.
 class AwaitingPanel extends StatelessWidget {
   const AwaitingPanel({
@@ -67,7 +67,7 @@ class AwaitingPanel extends StatelessWidget {
               _SessionsLink(
                 key: ValueKey('awaiting-ended-${e.stage.name}'),
                 icon: Icons.link_off,
-                text: '${e.stage.label}: sessão encerrada — retome em Sessões',
+                text: '${e.stage.label}: sessão encerrada — retome em Conversas',
                 session: e.session,
               ),
           ],
@@ -234,7 +234,7 @@ class _SessionsLink extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => context.go('/p/${session.project}/sessions/${session.id}'),
-            child: Text('abrir em Sessões', style: TextStyle(color: c.accent, fontSize: 12)),
+            child: Text('abrir em Conversas', style: TextStyle(color: c.accent, fontSize: 12)),
           ),
         ],
       ),

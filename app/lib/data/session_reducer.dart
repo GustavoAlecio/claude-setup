@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'dart:developer';
 
 import '../engine/engine_config.dart';
-import 'github_parser.dart';
 import 'models.dart';
 import 'session_models.dart';
 import 'sse.dart';
+import 'time_text.dart';
 
 const _liveTools = {SessionStatus.starting, SessionStatus.running, SessionStatus.waitingPermission};
 
@@ -552,11 +552,15 @@ String workLine(int steps, int seconds, {int errors = 0}) {
 /// Inverse of the multiSelect join in [answersFor]: strips the recommended suffix from each part.
 String answerDisplay(String answer) => answer.split(', ').map((p) => optionView(p).label).join(', ');
 
-String? shortModel(String? model) {
-  if (model == null) return null;
+Tier? tierOfModel(String model) {
   final id = model.toLowerCase();
   for (final tier in Tier.values) {
-    if (id.contains(tier.name)) return tier.name;
+    if (id.contains(tier.name)) return tier;
   }
-  return model;
+  return null;
+}
+
+String? shortModel(String? model) {
+  if (model == null) return null;
+  return tierOfModel(model)?.name ?? model;
 }

@@ -19,6 +19,7 @@ import '../../data/github_repository.dart';
 import '../../data/models.dart';
 import '../../data/orgs.dart';
 import '../../data/session_models.dart';
+import '../../data/time_text.dart';
 import '../../engine/engine_config.dart';
 
 const _logName = 'InboxHomePage';
@@ -343,11 +344,6 @@ class _Footer extends StatelessWidget {
   }
 }
 
-String _projectLabel(Project p) {
-  final feature = p.cycle?.feature;
-  return feature == null || feature.isEmpty ? p.name : '${p.name} · $feature';
-}
-
 /// A footer count that always opens a menu, even with one project, so the count reads the same at any size.
 class _ProjectsMenu extends StatelessWidget {
   const _ProjectsMenu({required this.id, required this.label, required this.projects});
@@ -371,7 +367,7 @@ class _ProjectsMenu extends StatelessWidget {
             key: ValueKey('$id-${p.name}'),
             value: p.name,
             height: 36,
-            child: Text(_projectLabel(p), style: const TextStyle(fontSize: 13)),
+            child: Text(featureLabel(p.name, p.cycle?.feature), style: const TextStyle(fontSize: 13)),
           ),
       ],
       child: Padding(

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:claude_flow/data/flow_aggregates.dart';
 import 'package:claude_flow/data/models.dart';
 import 'package:claude_flow/data/report_parser.dart';
 import 'package:claude_flow/data/workflow_parser.dart';
@@ -338,10 +339,10 @@ void main() {
       expect(f.line, isNull);
     });
 
-    test('diagnosis only on blocked task, ordered by confidence desc', () {
+    test('diagnosis only on blocked task, in diagnosis order', () {
       final run = parseResultRun('impl-20260310T101500Z', result, {}, now: now);
       expect(run.tasks[0].diagnosis, isEmpty);
-      expect(run.tasks[1].diagnosis.map((h) => h.action), ['act2', 'act1']);
+      expect(run.tasks[1].diagnosis.map((h) => h.action), ['act1', 'act2']);
       expect(run.tasks[1].blockedReason, 'same_failure_across_tiers');
       expect(run.tasks[0].blockedReason, isNull);
       expect(run.blockedTask?.id, 'T2');
@@ -412,7 +413,8 @@ void main() {
       final t2 = run.tasks.firstWhere((t) => t.id == 'T2');
       expect(t2.attempts, hasLength(4));
       expect(t2.attempts.map((a) => a.escalatedTo), [null, Tier.sonnet, null, null]);
-      expect(t2.diagnosis.first.confidence, 0.8);
+      expect(t2.diagnosis.map((h) => h.confidence), [0.55, 0.8, 0.3]);
+      expect(rankedHypotheses(t2).first.confidence, 0.8);
     });
   });
 
