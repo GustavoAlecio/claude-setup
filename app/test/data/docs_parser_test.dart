@@ -587,14 +587,14 @@ void main() {
   });
 
   group('docGateLine', () {
-    ReportDoc report(Stage stage, String name, GateStatus status, {int round = 1}) => ReportDoc(
+    ReportDoc report(Stage stage, String name, GateStatus status, {int round = 1, String? decidedAt}) => ReportDoc(
       feature: 'f',
       startedAt: null,
       stages: [
         StageReport(
           stage: stage,
           status: ReportStatus.done,
-          gate: ReportGate(name: name, status: status, round: round),
+          gate: ReportGate(name: name, status: status, round: round, decidedAt: decidedAt),
         ),
       ],
     );
@@ -605,6 +605,28 @@ void main() {
         'aprovado, na 2ª rodada',
       );
       expect(docGateLine('plan.md', report(Stage.plan, 'plan', GateStatus.approved)), 'aprovado');
+    });
+
+    // 2026-10-01T12:00:00Z is 1 out in any zone from UTC-11 to UTC+11; outside it the local day shifts.
+    test('decided gates carry the local date', () {
+      const at = '2026-10-01T12:00:00Z';
+      expect(
+        docGateLine('plan.md', report(Stage.plan, 'plan', GateStatus.approved, decidedAt: at)),
+        'aprovado em 1 out',
+      );
+      expect(
+        docGateLine('plan.md', report(Stage.plan, 'plan', GateStatus.approved, round: 2, decidedAt: at)),
+        'aprovado em 1 out, na 2ª rodada',
+      );
+      expect(
+        docGateLine('tasks.md', report(Stage.tasks, 'tasks', GateStatus.passed, decidedAt: at)),
+        'passou sem você em 1 out',
+      );
+      expect(
+        docGateLine('tasks.md', report(Stage.tasks, 'tasks', GateStatus.rejected, decidedAt: at)),
+        'rejeitado em 1 out',
+      );
+      expect(docGateLine('plan.md', report(Stage.plan, 'plan', GateStatus.approved, decidedAt: 'x')), 'aprovado');
     });
 
     test('spec reads the gate of the challenge stage', () {

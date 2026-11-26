@@ -472,7 +472,7 @@ String orgSummaryLine(OrgConfig org, DashboardConfig config) {
 String orgRootsLabel(List<String> roots, String? home) {
   if (roots.isEmpty) return 'sem pasta';
   final first = normalizePath(roots.first);
-  final h = home == null ? null : normalizePath(home);
+  final h = home == null || home.isEmpty ? null : normalizePath(home);
   final shown = h != null && containsPath(h, first) ? '~${first.substring(h == '/' ? 0 : h.length)}' : first;
   return roots.length > 1 ? '$shown +${roots.length - 1}' : shown;
 }

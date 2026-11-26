@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -53,8 +54,9 @@ class _GatePageState extends State<GatePage> {
   GateSent? _sent;
   bool _leaving = false;
 
-  /// `pr.diff` of the round on screen: `null` data once read means unavailable. Kept here, above the screen states,
-  /// so rebuilds and a recreated form never read it again; only a new round does, since `/complete` rewrites it.
+  /// `pr.diff` of the round on screen: `null` data once read means unavailable, an error that the read threw. Kept
+  /// here, above the screen states, so rebuilds and a recreated form never read it again; only a new round does, since
+  /// `/complete` rewrites it.
   _DiffKey? _diffKey;
   AsyncSnapshot<List<DiffFile>?> _diff = const AsyncSnapshot.nothing();
 
@@ -65,12 +67,20 @@ class _GatePageState extends State<GatePage> {
     _diff = const AsyncSnapshot.waiting();
     final repository = DocsScope.of(context);
     unawaited(() async {
-      final files = switch (await repository.read(project, 'pr.diff')) {
-        DocText(:final String text) => await parseDiffText(text, text.length),
-        _ => null,
-      };
+      AsyncSnapshot<List<DiffFile>?> next;
+      // Not `on Exception`: a path that escapes the project throws a `StateError`, and the points would wait forever.
+      try {
+        final files = switch (await repository.read(project, 'pr.diff')) {
+          DocText(:final String text) => await parseDiffText(text, text.length),
+          _ => null,
+        };
+        next = AsyncSnapshot.withData(ConnectionState.done, files);
+      } catch (e, st) {
+        log('cannot read pr.diff of $project', name: 'GatePage', error: e, stackTrace: st);
+        next = AsyncSnapshot.withError(ConnectionState.done, e, st);
+      }
       if (!mounted || _diffKey != key) return;
-      setState(() => _diff = AsyncSnapshot.withData(ConnectionState.done, files));
+      setState(() => _diff = next);
     }());
   }
 

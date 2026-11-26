@@ -746,6 +746,12 @@ void main() {
       expect(calls.map((c) => c.id), ['t1']);
     });
 
+    test('a QuestionRequest hides the call with its toolUseId whatever the call name', () {
+      final card = QuestionRequest(at(2), requestId: 'q', seq: 1, questions: const [], toolUseId: 't1');
+      final b = feedBlocks([tool(1), card, tool(3)]);
+      expect(b.expand((x) => x.events).whereType<ToolCall>().map((c) => c.id), ['t3']);
+    });
+
     test('two questions in one message hide both calls once both requests are in', () {
       QuestionRequest card(int m, String id) =>
           QuestionRequest(at(m), requestId: 'q$m', seq: m, questions: const [], toolUseId: id);

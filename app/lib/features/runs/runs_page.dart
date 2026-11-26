@@ -129,7 +129,7 @@ class _RunsViewState extends State<_RunsView> {
               task: blocked,
               run: run,
               project: widget.project,
-              onExpand: () => context.go(taskLocation(project, run.id, blocked.id, fromRuns: true)),
+              onExpand: () => context.go(taskLocation(project, run.id, blocked.id, fromRuns: true, showOthers: true)),
             ),
           )
           ..add(const SizedBox(height: 16));

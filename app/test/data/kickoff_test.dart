@@ -125,6 +125,29 @@ void main() {
       expect(label, 'Palavra ${List.filled(6, 'palavra').join(' ')}…');
     });
 
+    test('parentheses do not end the sentence nor take the cut', () {
+      expect(
+        skillLabel('foo', 'Pega uma issue (ex. LC-101) e detalha. Mais texto'),
+        'Pega uma issue (ex. LC-101) e detalha',
+      );
+      final long =
+          'Faz algo muito longo e detalhado sobre (um grupo entre parênteses que passa do limite de tamanho) fim';
+      final label = skillLabel('foo', long);
+      expect(label.length, lessThanOrEqualTo(60));
+      expect(label, 'Faz algo muito longo e detalhado sobre…');
+    });
+
+    test('jira-refine and linear-refine have their own phrase', () {
+      expect(
+        skillLabel('jira-refine', 'Pega uma issue do Jira pela key (ex. LC-101), entende a regra'),
+        'Detalhar uma issue do Jira',
+      );
+      expect(
+        skillLabel('linear-refine', 'Pega uma issue do Linear pela key (ex. LC-101), entende'),
+        'Detalhar uma issue do Linear',
+      );
+    });
+
     test('empty description is the name', () {
       expect(skillLabel('foo', ''), 'foo');
       expect(skillLabel('foo', '   '), 'foo');

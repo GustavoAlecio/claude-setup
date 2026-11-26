@@ -1,4 +1,5 @@
 import 'dart:developer';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -741,12 +742,16 @@ class _TopBar extends StatelessWidget {
   /// Header width from which the tracker card fits beside the name; below it the card lives in the cycle footer.
   static const _trackerMinWidth = 1000.0;
 
+  /// Room the name leaves for the "/" separator, which does not shrink.
+  static const _separatorReserve = 40.0;
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final cycle = project.cycle;
     return LayoutBuilder(
       builder: (context, constraints) => Container(
+        key: const ValueKey('header-bar'),
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         decoration: BoxDecoration(
@@ -755,38 +760,46 @@ class _TopBar extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: Row(
-                children: [
-                  ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: constraints.maxWidth / 2),
-                    child: Text(
-                      project.name,
-                      key: const ValueKey('header-project-name'),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  if (cycle != null) ...[
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Text('/', style: TextStyle(color: c.textMuted)),
-                    ),
-                    Flexible(
+              // Flexible alone would split the slot evenly with the feature; the cap is half of the header, shrunk to the slot only when the pill and buttons leave less.
+              child: LayoutBuilder(
+                builder: (context, slot) => Row(
+                  children: [
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: math.min(
+                          constraints.maxWidth / 2,
+                          math.max(0.0, slot.maxWidth - (cycle == null ? 0 : _separatorReserve)),
+                        ),
+                      ),
                       child: Text(
-                        cycle.feature ?? project.name,
-                        key: const ValueKey('header-feature'),
+                        project.name,
+                        key: const ValueKey('header-project-name'),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: c.textSecondary),
+                        style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
-                    if (cycle.tracker case final tracker? when constraints.maxWidth >= _trackerMinWidth) ...[
-                      const SizedBox(width: 10),
-                      Mono(tracker, key: const ValueKey('header-tracker'), color: c.textMuted, size: 11),
+                    if (cycle != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Text('/', style: TextStyle(color: c.textMuted)),
+                      ),
+                      Flexible(
+                        child: Text(
+                          cycle.feature ?? project.name,
+                          key: const ValueKey('header-feature'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: c.textSecondary),
+                        ),
+                      ),
+                      if (cycle.tracker case final tracker? when constraints.maxWidth >= _trackerMinWidth) ...[
+                        const SizedBox(width: 10),
+                        Mono(tracker, key: const ValueKey('header-tracker'), color: c.textMuted, size: 11),
+                      ],
                     ],
                   ],
-                ],
+                ),
               ),
             ),
             if (pending > 0) ...[

@@ -336,7 +336,7 @@ gate_ok "g['questions'][0]['answer'] is None and g['status']=='open'" "round 1 b
 mkb other "d['summary']='Outro resumo.'"
 wfr brief plan --workflow-dir "$B" --file "$BD/other.json" >/dev/null
 gate_ok "g['summary']=='Outro resumo.' and g['round']==1" "another file replaces the round 1 block"
-for k in round status answer history cut; do
+for k in round status answer history cut decided_at; do
   mkb "forbid-$k" "d['$k']=1"
   brief_refused "with $k" "$k: campo do script" --file "$BD/forbid-$k.json"
 done
@@ -442,6 +442,12 @@ refused() {
   grep -qF -- "$want" "$AD/err" || fail "$label: stderr '$(cat "$AD/err")' lacks '$want'"
 }
 ans() { wfr answer plan --workflow-dir "$A" "$@"; }
+STAMPED="__import__('re').fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', g.get('decided_at') or '')"
+pin_decided() {
+  python3 -c "
+import json,sys; r=json.load(open(sys.argv[1])); g=[s for s in r['stages'] if s['stage']=='plan'][0]['gate']
+g['decided_at']='2000-01-01T00:00:00Z'; json.dump(r,open(sys.argv[1],'w'),indent=2)" "$1/report.json"
+}
 aq() { python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert $1, d" "$(wfr show plan --workflow-dir "$A")" || fail "$2"; }
 mka two "d['questions'].append(dict(d['questions'][0], id='Q2', text='Quem grava o bloco?', prefers={'author':'a','critic':'b'}))"
 printf 'Prefiro um terceiro caminho.\n' > "$AD/free.md"
@@ -461,17 +467,21 @@ refused "--text-file alone with questions" "--text-file sem --question só vale 
 refused "--option without --question" "--option exige --question" answer plan --workflow-dir "$A" --option a
 ans --question Q2 --option a
 agate "g['status']=='approved'" "all answers equal to assumed approve the block"
+agate "$STAMPED" "the answer that approves stamps decided_at"
+pin_decided "$A"
 aq "d['status']=='approved' and d['questions']==[]" "show of an approved block asks nothing"
 report_snap "$A"; ans --question Q2 --option a
 report_untouched "$A" "repeating a recorded answer on an approved block is a no-op"
+agate "g['decided_at']=='2000-01-01T00:00:00Z'" "repeating the answer keeps decided_at"
 refused "another answer on an approved block" "answer plan: bloco já está approved" answer plan --workflow-dir "$A" --question Q2 --option b
 refused "--reject on an approved block" "bloco já está approved" answer plan --workflow-dir "$A" --reject
 
 wfr brief plan --workflow-dir "$A" --file "$AD/two.json" >/dev/null
 agate "g['status']=='open' and g['round']==1 and all(q['answer'] is None for q in g['questions'])" "round 1 brief over approved replaces it"
+agate "'decided_at' not in g" "a replaced block starts without decided_at"
 ans --question Q1 --option a
 ans --question Q2 --option b
-agate "g['status']=='revising'" "an answer other than assumed leads to revising"
+agate "g['status']=='revising' and 'decided_at' not in g" "an answer other than assumed leads to revising, with no decided_at"
 F=$(tmp)
 printf '{"feature":"Feat Ft","start_date":"2026-06-04T00:00:00Z"}' > "$F/current.json"
 wfr stage-start plan --workflow-dir "$F"
@@ -500,9 +510,12 @@ report_untouched "$A" "the same file over an open round 2 is a no-op"
 refused "another file over an open round 2" "bloco open na rodada 2 só aceita o mesmo arquivo" brief plan --workflow-dir "$A" --file "$AD/two.json"
 ans --question Q3 --option a
 agate "g['status']=='approved' and g['round']==2" "round 2 approves"
+agate "$STAMPED" "round 2 approval stamps decided_at"
+pin_decided "$A"
 refused "another file over an approved round 2" "bloco approved na rodada 2 só aceita o mesmo arquivo" brief plan --workflow-dir "$A" --file "$AD/r2dup.json"
 report_snap "$A"; wfr brief plan --workflow-dir "$A" --file "$AD/r2.json" >/dev/null
 report_untouched "$A" "the same file over an approved round 2 keeps the answers"
+agate "g['decided_at']=='2000-01-01T00:00:00Z'" "the same file over an approved round 2 keeps decided_at"
 
 python3 -c "
 import json,sys; r=json.load(open(sys.argv[1])); g=[s for s in r['stages'] if s['stage']=='plan'][0]['gate']
@@ -547,7 +560,10 @@ assert g['round']==2 and g['history']==[{'round':1,'questions':[],'answer':{'tex
 wfr answer plan --workflow-dir "$R" --approve
 python3 -c "
 import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
-assert g['status']=='approved', g" "$R/report.json" || fail "--approve without pending approves"
+assert g['status']=='approved' and $STAMPED, g" "$R/report.json" || fail "--approve without pending approves and stamps decided_at"
+pin_decided "$R"
+report_snap "$R"; wfr answer plan --workflow-dir "$R" --approve
+report_untouched "$R" "--approve again keeps decided_at"
 wfr brief plan --workflow-dir "$R" --file "$AD/noq.json" >/dev/null 2>&1 && fail "another file over approved round 2 must refuse"
 R2=$(tmp)
 printf '{"feature":"Feat Rj2","start_date":"2026-06-03T00:00:00Z"}' > "$R2/current.json"
@@ -556,8 +572,19 @@ wfr brief plan --workflow-dir "$R2" --file "$AD/two.json" >/dev/null
 wfr answer plan --workflow-dir "$R2" --reject
 python3 -c "
 import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
-assert g['status']=='rejected', g" "$R2/report.json" || fail "--reject writes rejected"
-wfr answer plan --workflow-dir "$R2" --reject
+assert g['status']=='rejected' and $STAMPED, g" "$R2/report.json" || fail "--reject writes rejected and stamps decided_at"
+pin_decided "$R2"
+report_snap "$R2"; wfr answer plan --workflow-dir "$R2" --reject
+report_untouched "$R2" "--reject again keeps decided_at"
+R3=$(tmp)
+printf '{"feature":"Feat Rj3","start_date":"2026-06-05T00:00:00Z"}' > "$R3/current.json"
+wfr stage-start plan --workflow-dir "$R3"
+wfr brief plan --workflow-dir "$R3" --file "$AD/noq.json" >/dev/null
+pin_decided "$R3"
+wfr answer plan --workflow-dir "$R3" --approve
+python3 -c "
+import json,sys; g=[s for s in json.load(open(sys.argv[1]))['stages'] if s['stage']=='plan'][0]['gate']
+assert g['status']=='approved' and g['decided_at']=='2000-01-01T00:00:00Z', g" "$R3/report.json" || fail "a decided_at already on the block is never overwritten"
 got=0; wfr answer plan --workflow-dir "$R2" --question Q1 --option a >/dev/null 2>&1 || got=$?
 [ "$got" = 2 ] || fail "answer on a rejected block: expected exit 2, got $got"
 got=0; wfr answer tasks --workflow-dir "$R2" --approve >/dev/null 2>"$AD/err" || got=$?
@@ -565,7 +592,7 @@ got=0; wfr answer tasks --workflow-dir "$R2" --approve >/dev/null 2>"$AD/err" ||
 
 echo "- wf-report: glob_match is pure and keeps the glob_re of adr-index"
 HOME="$HOME_BIN_SHIM" python3 - "$BIN/wf-report.py" "$BIN/adr-index.py" <<'PY' || fail "glob_match and check_glob"
-import importlib.util, sys
+import importlib.util, inspect, sys
 
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -587,12 +614,36 @@ cases = {
     "leading **/ matches the root": ("**/test_*.py", "test_a.py", True),
     "leading **/ matches nested": ("**/test_*.py", "a/b/test_a.py", True),
     "question mark is one char": ("bin/?.py", "bin/ab.py", False),
+    "class matches one of its chars": ("lib/[ab].dart", "lib/a.dart", True),
+    "class is not a literal": ("lib/[ab].dart", "lib/[ab].dart", False),
+    "class rejects other chars": ("lib/[ab].dart", "lib/c.dart", False),
+    "class range": ("lib/[a-c].dart", "lib/b.dart", True),
+    "negated class": ("lib/[!ab].dart", "lib/c.dart", True),
+    "negated class rejects its chars": ("lib/[!ab].dart", "lib/a.dart", False),
+    "negated class stays in one dir": ("lib[!a]x.dart", "lib/x.dart", False),
+    "caret inside a class is a char": ("lib/[^a].dart", "lib/^.dart", True),
+    "caret inside a class does not negate": ("lib/[^a].dart", "lib/b.dart", False),
+    "braces are alternatives": ("lib/{x,y}.dart", "lib/y.dart", True),
+    "braces reject the rest": ("lib/{x,y}.dart", "lib/z.dart", False),
+    "braces are not a literal": ("lib/{x,y}.dart", "lib/{x,y}.dart", False),
+    "wildcards inside braces": ("{lib,test}/**/*_{a,b*}.dart", "test/x/y_bz.dart", True),
+    "braces with a trailing slash": ("{lib,test}/", "test/a/b.dart", True),
+    "unclosed bracket is literal": ("lib/[ab.dart", "lib/[ab.dart", True),
+    "empty class is literal": ("lib/[].dart", "lib/[].dart", True),
+    "invalid range is literal": ("lib/[z-a].dart", "lib/[z-a].dart", True),
+    "unclosed brace is literal": ("lib/{x,y.dart", "lib/{x,y.dart", True),
+    "nested braces are literal": ("lib/{a,{b,c}}.dart", "lib/{a,{b,c}}.dart", True),
+    "nested braces do not expand": ("lib/{a,{b,c}}.dart", "lib/a.dart", False),
 }
 for name, (glob, path, want) in cases.items():
     assert wr.glob_match(glob, path) is want, name
-for glob in ("bin/*.py", "bin/**", "**/x/*.md", "a?b", "docs/a.b+c", "x/**/y", "README.md", "[ab]*"):
+for fn in ("glob_body", "brace_end", "compiles", "glob_re"):
+    assert inspect.getsource(getattr(wr, fn)) == inspect.getsource(getattr(adr, fn)), f"{fn} differs between the scripts"
+for glob in ("bin/*.py", "bin/**", "**/x/*.md", "a?b", "docs/a.b+c", "x/**/y", "README.md", "[ab]*", "[!ab]*",
+             "{x,y}", "bin/{a,x/*}.py", "[ab", "{x,y", "{a,{b,c}}"):
     assert wr.glob_re(glob).pattern == adr.glob_re(glob).pattern, f"parity: {glob}"
-    for path in ("bin/a.py", "bin/x/y.py", "x/y", "x/a/b/y", "README.md", "a.b+c", "docs/a.b+c", "aab", "[ab]z"):
+    for path in ("bin/a.py", "bin/x/y.py", "x/y", "x/a/b/y", "README.md", "a.b+c", "docs/a.b+c", "aab", "[ab]z",
+                 "x", "y", "zz", "[ab", "{x,y", "{a,{b,c}}"):
         assert bool(wr.glob_re(glob).match(path)) == bool(adr.glob_re(glob).match(path)), f"parity: {glob} {path}"
 for bad in ("", " ", "/etc/x", "a/../b", "..", "./bin/a.py", "bin\\a.py", "a" * 121):
     try:
@@ -985,6 +1036,15 @@ case("a folded dir named outros joins the tail", six, outros_small, lambda m, b:
     assert_([n["id"] for n in m["nodes"]][6:] == ["unplanned:a", "unplanned:outros"]),
     single_outros(m, ["b/1.py", "b/2.py", "outros/1.py"]),
 ))
+case("brackets and braces",
+     {"nodes": [node("cls", "new", "lib/[ab].dart"), node("alt", "changed", "lib/{x,y}.dart"),
+                node("open", "new", "lib/[c.dart", "lib/{d,e.dart")]},
+     ["lib/a.dart", "lib/y.dart", "lib/[c.dart", "lib/{d,e.dart", "lib/c.dart", "lib/d.dart"], lambda m, b: (
+    assert_(b["cls"]["built"] == "planned" and b["cls"]["files"] == ["lib/a.dart"]),
+    assert_(b["alt"]["built"] == "planned" and b["alt"]["files"] == ["lib/y.dart"]),
+    assert_(b["open"]["files"] == ["lib/[c.dart", "lib/{d,e.dart"]),
+    assert_(b["unplanned:lib"]["files"] == ["lib/c.dart", "lib/d.dart"]),
+))
 case("ties are alphabetical", {"nodes": []}, ["zz/a.py", "aa/b.py", "mm/c.py", "mm/d.py"],
      lambda m, b: assert_([n["id"] for n in m["nodes"]] == ["unplanned:mm", "unplanned:aa", "unplanned:zz"]))
 deep = "very/long/directory/path/that/goes/on"
@@ -1205,6 +1265,11 @@ gate_status() {
 import json,sys; s=[x for x in json.load(open(sys.argv[1]))['stages'] if x['stage']==sys.argv[2]][0]
 print(s['gate']['status'])" "$GW/report.json" "$1"
 }
+gate_decided() {
+  python3 -c "
+import json,re,sys; s=[x for x in json.load(open(sys.argv[1]))['stages'] if x['stage']==sys.argv[2]][0]
+print(s['gate'].get('decided_at', 'absent'))" "$GW/report.json" "$1"
+}
 owner_of() { case $1 in spec) echo challenge ;; pr) echo complete ;; *) echo "$1" ;; esac; }
 table() {
   case $1 in
@@ -1258,6 +1323,15 @@ printf '{"summary": "Sem decisão.", "artifact": "plan.md", "questions": []}' > 
 wfr stage-start plan --workflow-dir "$GW"
 wfr brief plan --workflow-dir "$GW" --file "$GT/noq.json" >/dev/null
 [ "$(gate plan)" = skip ] && [ "$(gate_status plan)" = passed ] || fail "plan without questions passes"
+[[ "$(gate_decided plan)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || fail "gate that writes passed stamps decided_at (got $(gate_decided plan))"
+python3 -c "
+import json,sys; r=json.load(open(sys.argv[1])); g=[s for s in r['stages'] if s['stage']=='plan'][0]['gate']
+g['decided_at']='2000-01-01T00:00:00Z'; json.dump(r,open(sys.argv[1],'w'),indent=2)" "$GW/report.json"
+[ "$(gate plan)" = skip ] && [ "$(gate_decided plan)" = 2000-01-01T00:00:00Z ] || fail "gate on a passed block keeps decided_at"
+python3 -c "
+import json,sys; r=json.load(open(sys.argv[1])); g=[s for s in r['stages'] if s['stage']=='plan'][0]['gate']
+g['status']='open'; json.dump(r,open(sys.argv[1],'w'),indent=2)" "$GW/report.json"
+[ "$(gate plan)" = skip ] && [ "$(gate_status plan)" = passed ] && [ "$(gate_decided plan)" = 2000-01-01T00:00:00Z ] || fail "gate never overwrites a decided_at already on the block"
 wfr stage-start plan --workflow-dir "$GW"
 [ "$(gate plan)" = ask ] || fail "stage-start plan after passed drops the block and the gate asks"
 

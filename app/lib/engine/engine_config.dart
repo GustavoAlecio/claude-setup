@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer';
 
 /// Must match `version` in `engine/package.json`; a mismatch only raises a non-blocking warning.
 const kEngineVersion = '0.8.0';
@@ -345,19 +346,7 @@ class DashboardConfig {
                 if (e.key is String && _nonEmpty(e.value) != null) e.key as String: e.value as String,
             }
           : const {},
-      orgs: [
-        for (final o in _maps(decoded['orgs']))
-          if (_nonEmpty(o['name']) != null)
-            OrgConfig(
-              name: o['name'] as String,
-              roots: _strings(o['roots']),
-              github: OrgGithub.fromRaw(o['github']),
-              permissionMode: PermissionMode.parseConfig(o['permissionMode']),
-              agent: OrgAgent.fromRaw(o['agent']),
-              cycleBudget: parseBudget(o['cycleBudget']),
-              tracker: OrgTracker.fromRaw(o['tracker']),
-            ),
-      ],
+      orgs: _orgs(decoded['orgs']),
       projects: [
         for (final p in _maps(decoded['projects']))
           if (_nonEmpty(p['name']) != null)
@@ -369,6 +358,32 @@ class DashboardConfig {
       cycleBudget: parseBudget(decoded['cycleBudget']),
       alertSound: decoded['alertSound'] != false,
     );
+  }
+
+  /// The first org of a name wins: the name is the key everywhere else, and a repeat would shadow it.
+  static List<OrgConfig> _orgs(Object? raw) {
+    final seen = <String>{};
+    final orgs = <OrgConfig>[];
+    for (final o in _maps(raw)) {
+      final name = _nonEmpty(o['name']);
+      if (name == null) continue;
+      if (!seen.add(name)) {
+        log('duplicate org "$name" ignored', name: 'DashboardConfig');
+        continue;
+      }
+      orgs.add(
+        OrgConfig(
+          name: name,
+          roots: _strings(o['roots']),
+          github: OrgGithub.fromRaw(o['github']),
+          permissionMode: PermissionMode.parseConfig(o['permissionMode']),
+          agent: OrgAgent.fromRaw(o['agent']),
+          cycleBudget: parseBudget(o['cycleBudget']),
+          tracker: OrgTracker.fromRaw(o['tracker']),
+        ),
+      );
+    }
+    return orgs;
   }
 
   static String? _nonEmpty(Object? value) => value is String && value.isNotEmpty ? value : null;

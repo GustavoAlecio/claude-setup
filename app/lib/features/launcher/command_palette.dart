@@ -351,7 +351,19 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
     if (_mode != _Mode.list) return;
     _navigated = false;
     _select();
+    _revealSelection();
   });
+
+  /// Typing moves the selection to another entry without a ↑↓: the list keeps its old scroll offset.
+  void _revealSelection() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final entries = _entries;
+      final anchor = _anchors[entries[_selectedIn(entries)].key]?.currentContext;
+      if (anchor == null) return;
+      unawaited(Scrollable.ensureVisible(anchor, duration: const Duration(milliseconds: 100)));
+    });
+  }
 
   void _select() {
     final query = _field.text.trim();
@@ -712,6 +724,7 @@ class _CommandPaletteState extends State<_CommandPalette> with ImageAttachments<
                         height: 360,
                         // Not a lazy list: the selected entry has to exist to be scrolled into view.
                         child: SingleChildScrollView(
+                          key: const ValueKey('palette-list'),
                           padding: const EdgeInsets.all(6),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,

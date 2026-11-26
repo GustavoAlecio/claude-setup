@@ -157,6 +157,7 @@ ReportGate? _parseGate(Object? raw) {
     artifact: _string(raw['artifact']),
     answer: _answer(raw['answer'], null),
     map: _parseMap(raw['map']),
+    decidedAt: _string(raw['decided_at']),
   );
 }
 

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -108,6 +109,54 @@ class _SessionBodyState extends State<_SessionBody> {
   /// Work blocks the user toggled, by position in `feedBlocks`; the others follow `workOpenByDefault`.
   final _open = <int, bool>{};
 
+  /// Blocks that stopped being open by default while the user was reading further up: kept open so the content
+  /// under their eyes does not collapse. Dropped when the user comes back to the end.
+  final _autoOpen = <int>{};
+
+  /// Written by the feed's scroll position; read here only when an event arrives.
+  final nearEnd = ValueNotifier<bool>(true);
+  Set<int> _defaultOpen = const {};
+  (int, SessionStatus)? _decidedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    nearEnd.addListener(_onNearEnd);
+  }
+
+  @override
+  void dispose() {
+    nearEnd.dispose();
+    super.dispose();
+  }
+
+  void _onNearEnd() {
+    if (!nearEnd.value || _autoOpen.isEmpty) return;
+    void drop() {
+      if (mounted) setState(_autoOpen.clear);
+    }
+
+    // The scroll position can notify while the feed is laid out, where setState is not allowed.
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      SchedulerBinding.instance.addPostFrameCallback((_) => drop());
+    } else {
+      drop();
+    }
+  }
+
+  void _decideAutoOpen(List<FeedBlock> blocks, int eventCount, SessionStatus status) {
+    if (_decidedAt == (eventCount, status)) return;
+    _decidedAt = (eventCount, status);
+    final now = {
+      for (final (i, b) in blocks.indexed)
+        if (b.work && workOpenByDefault(blocks, i, status)) i,
+    };
+    if (!nearEnd.value) {
+      _autoOpen.addAll(_defaultOpen.difference(now).where((i) => !_open.containsKey(i)));
+    }
+    _defaultOpen = now;
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = widget.session;
@@ -122,7 +171,8 @@ class _SessionBodyState extends State<_SessionBody> {
         sessionAction(context, () => sessions.answer(s.id, requestId, decision, answers: answers));
     final agy = s.provider == AgentProvider.antigravity;
     final blocks = feedBlocks(events);
-    bool isOpen(int i) => _open[i] ?? workOpenByDefault(blocks, i, s.status);
+    _decideAutoOpen(blocks, events.length, s.status);
+    bool isOpen(int i) => _open[i] ?? (_autoOpen.contains(i) || workOpenByDefault(blocks, i, s.status));
     // A link to a file the agent wrote ("artefato de sessão") opens it here; anything else keeps the default.
     void onLink(Uri uri) {
       final name = artifactLinkName(uri);
@@ -165,6 +215,7 @@ class _SessionBodyState extends State<_SessionBody> {
           ),
         Expanded(
           child: _Feed(
+            nearEnd: nearEnd,
             version: (detail?.lastSeq, events.length, partialText.length, partialThinking.length, s.status),
             children: [
               if (s.isOrgSession) ...[
@@ -542,7 +593,9 @@ class _AsideBanner extends StatelessWidget {
 /// Opens at the end, follows new content only while the user is within [_followSlack] of it, and otherwise offers
 /// a button back to the end.
 class _Feed extends StatefulWidget {
-  const _Feed({required this.version, required this.children});
+  const _Feed({required this.nearEnd, required this.version, required this.children});
+
+  final ValueNotifier<bool> nearEnd;
 
   /// Changes whenever content is appended or grows (events, tool results, streaming deltas, status).
   final Object version;
@@ -578,7 +631,9 @@ class _FeedState extends State<_Feed> {
   }
 
   void _onScroll() {
-    if (_newBelow && _nearEnd) setState(() => _newBelow = false);
+    final near = _nearEnd;
+    widget.nearEnd.value = near;
+    if (_newBelow && near) setState(() => _newBelow = false);
   }
 
   @override
@@ -599,6 +654,7 @@ class _FeedState extends State<_Feed> {
       final p = _controller.position;
       if (p.pixels >= p.maxScrollExtent) return;
       p.jumpTo(p.maxScrollExtent);
+      widget.nearEnd.value = true;
       if (tries > 1) _toEnd(tries - 1);
     });
   }

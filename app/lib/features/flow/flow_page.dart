@@ -67,12 +67,37 @@ class _FlowView extends StatefulWidget {
   State<_FlowView> createState() => _FlowViewState();
 }
 
-class _FlowViewState extends State<_FlowView> {
+class _FlowViewState extends State<_FlowView> with SessionLauncher<_FlowView> {
+  static const _startKey = 'cycle-start';
+
   late bool _timelineOpen = widget.stage != null;
   bool _detailsOpen = false;
-  // Kept here so the draft survives `_FlowMain` being remounted when the width crosses [kFlowSplitWidth].
+  // The draft, the create in flight and its error live here so they survive `_FlowMain` being remounted when the
+  // width crosses [kFlowSplitWidth].
   final _startText = TextEditingController();
   String? _startPathError;
+
+  @override
+  String get logName => 'CycleStart';
+
+  void _start(Project project, String command) {
+    final config = context.read<ConfigCubit>().state.data;
+    final cwd = project.path;
+    if (cwd == null) {
+      setState(() => _startPathError = missingProjectPathError(project));
+      return;
+    }
+    unawaited(
+      launchSession(
+        _startKey,
+        project.name,
+        command,
+        cwd: cwd,
+        githubAccount: githubFor(project.org, config).account,
+        permissionMode: effectivePermissionMode(null, project.org, config),
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -137,8 +162,12 @@ class _FlowViewState extends State<_FlowView> {
           onToggleTimeline: () => setState(() => _timelineOpen = !_timelineOpen),
           onToggleDetails: () => setState(() => _detailsOpen = !_detailsOpen),
           startText: _startText,
-          startPathError: _startPathError,
-          onStartPathError: (error) => setState(() => _startPathError = error),
+          startCreating: isCreating(_startKey),
+          startError: _startPathError ?? createError(_startKey),
+          onStartEdited: () {
+            if (_startPathError != null) setState(() => _startPathError = null);
+          },
+          onStart: _start,
         );
         return split
             ? _split(c, main, side)
@@ -218,8 +247,10 @@ class _FlowMain extends StatelessWidget {
     required this.onToggleTimeline,
     required this.onToggleDetails,
     required this.startText,
-    required this.startPathError,
-    required this.onStartPathError,
+    required this.startCreating,
+    required this.startError,
+    required this.onStartEdited,
+    required this.onStart,
   });
 
   final String projectName;
@@ -235,14 +266,18 @@ class _FlowMain extends StatelessWidget {
   final VoidCallback onToggleTimeline;
   final VoidCallback onToggleDetails;
   final TextEditingController startText;
-  final String? startPathError;
-  final ValueChanged<String?> onStartPathError;
+  final bool startCreating;
+  final String? startError;
+  final VoidCallback onStartEdited;
+  final void Function(Project project, String command) onStart;
 
   void _act(BuildContext context, Project project, CycleNow now) {
     if (now.route case final route?) {
       context.go(route);
     } else if (now.kind == CycleNowKind.paused) {
       unawaited(resumeCycle(context, project));
+    } else if (now.kind == CycleNowKind.stalled && project.cycle?.stage == Stage.kickoff) {
+      unawaited(showKickoffForm(context, project));
     } else {
       unawaited(showCommandPalette(context, ProjectTarget(project), skill: now.skill));
     }
@@ -267,8 +302,10 @@ class _FlowMain extends StatelessWidget {
                       projectName: projectName,
                       project: project,
                       text: startText,
-                      pathError: startPathError,
-                      onPathError: onStartPathError,
+                      creating: startCreating,
+                      error: startError,
+                      onEdited: onStartEdited,
+                      onSubmit: onStart,
                     ),
             ),
           ),
@@ -394,54 +431,36 @@ class _KickoffRunning extends StatelessWidget {
   );
 }
 
-/// Without a cycle and without a kickoff running: what the user types here starts the cycle ([startCommand]).
+/// Without a cycle and without a kickoff running: what the user types here starts the cycle ([startCommand]). The
+/// session is created by whoever owns [onSubmit]; this box only shows [creating] and [error].
 class _CycleStart extends StatefulWidget {
   const _CycleStart({
     required this.projectName,
     required this.project,
     required this.text,
-    required this.pathError,
-    required this.onPathError,
+    required this.creating,
+    required this.error,
+    required this.onEdited,
+    required this.onSubmit,
   });
 
   /// Of the route; the title falls back to it while the project is unknown.
   final String projectName;
   final Project? project;
   final TextEditingController text;
-  final String? pathError;
-  final ValueChanged<String?> onPathError;
+  final bool creating;
+  final String? error;
+  final VoidCallback onEdited;
+  final void Function(Project project, String command) onSubmit;
 
   @override
   State<_CycleStart> createState() => _CycleStartState();
 }
 
-class _CycleStartState extends State<_CycleStart> with SessionLauncher<_CycleStart> {
-  static const _key = 'cycle-start';
+class _CycleStartState extends State<_CycleStart> {
   static const _counterFrom = 18000;
 
   TextEditingController get _text => widget.text;
-
-  @override
-  String get logName => 'CycleStart';
-
-  void _submit(Project project, String command) {
-    final config = context.read<ConfigCubit>().state.data;
-    final cwd = project.path;
-    if (cwd == null) {
-      widget.onPathError(missingProjectPathError(project));
-      return;
-    }
-    unawaited(
-      launchSession(
-        _key,
-        project.name,
-        command,
-        cwd: cwd,
-        githubAccount: githubFor(project.org, config).account,
-        permissionMode: effectivePermissionMode(null, project.org, config),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -449,12 +468,14 @@ class _CycleStartState extends State<_CycleStart> with SessionLauncher<_CycleSta
     final project = widget.project;
     final config = context.watch<ConfigCubit>().state.data;
     final tracker = project == null ? null : orgConfigOf(config, project.org)?.tracker;
-    final creating = isCreating(_key);
+    final creating = widget.creating;
     final length = _text.text.length;
     final tooLong = length > kKickoffMaxChars;
     final command = startCommand(_text.text, tracker);
-    final submit = project == null || command == null || tooLong || creating ? null : () => _submit(project, command);
-    final error = widget.pathError ?? createError(_key);
+    final submit = project == null || command == null || tooLong || creating
+        ? null
+        : () => widget.onSubmit(project, command);
+    final error = widget.error;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: ConstrainedBox(
@@ -493,7 +514,7 @@ class _CycleStartState extends State<_CycleStart> with SessionLauncher<_CycleSta
                 maxLines: 8,
                 keyboardType: TextInputType.multiline,
                 onChanged: (_) {
-                  if (widget.pathError != null) widget.onPathError(null);
+                  widget.onEdited();
                   setState(() {});
                 },
                 style: const TextStyle(fontSize: 13),

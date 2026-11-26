@@ -453,6 +453,30 @@ void main() {
   });
 
   group('diagnóstico nas Execuções', () {
+    Finder expand(String run) =>
+        _within(find.byKey(ValueKey('diagnosis-$run')), find.byKey(const ValueKey('runs-diagnosis-expand')));
+
+    testWidgets('the hypotheses link opens the task with the other hypotheses showing', (tester) async {
+      final sessions = await pump(tester, '/p/trava/runs');
+
+      await _tap(tester, expand(_newRun));
+
+      expect(_router(tester).routerDelegate.currentConfiguration.uri.toString(), endsWith('others=1'));
+      expect(_location(tester), '/p/trava/runs/$_newRun/T3');
+      expect(_other(1), findsOneWidget);
+      expect(_within(_other(1), find.text('hipótese fix_spec')), findsOneWidget);
+      expect(find.byKey(const ValueKey('task-back')), findsOneWidget);
+      expect(sessions.createCalls, isEmpty);
+    });
+
+    testWidgets('a single hypothesis has no hypotheses link', (tester) async {
+      await pump(tester, '/p/trava/runs', data: _data(newest: [_hypothesis('split_task', 0.4)]));
+
+      expect(_action('split_task', run: _newRun), findsOneWidget);
+      expect(expand(_newRun), findsNothing);
+      expect(expand(_oldRun), findsOneWidget);
+    });
+
     testWidgets('two blocked runs render one panel each, with keys of their own run', (tester) async {
       final sessions = await pump(tester, '/p/trava/runs');
 

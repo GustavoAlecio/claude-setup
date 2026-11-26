@@ -136,6 +136,40 @@ void main() {
     expect(find.byKey(const ValueKey('palette-action-conversation')), findsNothing);
   });
 
+  group('a stalled kickoff resumes through the kickoff form, not the palette', () {
+    const kickoff = Cycle(stage: Stage.kickoff, runs: [], stageMinutes: {}, feature: 'Favoritos');
+    final form = find.byKey(const ValueKey('kickoff-description'));
+    final palette = find.byKey(const ValueKey('palette-action-conversation'));
+
+    for (final key in ['cycle-now-action', 'flow-orphan-resume']) {
+      testWidgets(key, (tester) async {
+        final sessions = await _open(tester, kickoff);
+        expect(
+          find.descendant(of: find.byKey(const ValueKey('cycle-now')), matching: find.text('Retomar /kickoff')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(ValueKey(key)));
+        await tester.pumpAndSettle();
+
+        expect(form, findsOneWidget);
+        expect(palette, findsNothing);
+        expect(find.text('argumentos (opcional)'), findsNothing);
+        expect(sessions.createCalls, isEmpty);
+      });
+    }
+
+    testWidgets('another stalled stage still opens the palette on its skill', (tester) async {
+      await _open(tester, const Cycle(stage: Stage.verify, runs: [], stageMinutes: {}, feature: 'Favoritos'));
+
+      await tester.tap(find.byKey(const ValueKey('flow-orphan-resume')));
+      await tester.pumpAndSettle();
+
+      expect(form, findsNothing);
+      expect(tester.widget<TextField>(find.byType(TextField).last).decoration!.hintText, 'argumentos (opcional)');
+    });
+  });
+
   testWidgets('a paused cycle over its budget shows no budget banner', (tester) async {
     final started = DateTime.utc(2026, 10, 1);
     Cycle cycle({DateTime? pausedAt}) =>

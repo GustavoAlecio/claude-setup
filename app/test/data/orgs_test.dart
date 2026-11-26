@@ -1441,6 +1441,10 @@ void main() {
       expect(orgRootsLabel(['/Users/x/dev', '/Users/x/work'], null), '/Users/x/dev +1');
     });
 
+    test('empty home counts as no home', () {
+      expect(orgRootsLabel(['/Users/x/dev'], ''), '/Users/x/dev');
+    });
+
     test('no roots', () {
       expect(orgRootsLabel([], '/Users/x'), 'sem pasta');
     });

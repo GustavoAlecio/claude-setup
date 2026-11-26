@@ -35,7 +35,14 @@ const _noHypotheses = 'O diagnóstico não trouxe hipóteses. Use a paleta para 
 
 /// The decision buttons do what [diagnosisMode] says for [task] in [run].
 class DiagnosisPanel extends StatefulWidget {
-  const DiagnosisPanel({super.key, required this.task, required this.run, required this.project, this.onExpand});
+  const DiagnosisPanel({
+    super.key,
+    required this.task,
+    required this.run,
+    required this.project,
+    this.onExpand,
+    this.initialShowOthers = false,
+  });
 
   final TaskRun task;
   final Run run;
@@ -46,6 +53,9 @@ class DiagnosisPanel extends StatefulWidget {
   /// Set when the panel is shown outside the task detail: only the top hypothesis is rendered.
   final VoidCallback? onExpand;
 
+  /// Whether the task screen starts with the hypotheses below the top one showing; the user can still fold them.
+  final bool initialShowOthers;
+
   @override
   State<DiagnosisPanel> createState() => _DiagnosisPanelState();
 }
@@ -53,7 +63,7 @@ class DiagnosisPanel extends StatefulWidget {
 class _DiagnosisPanelState extends State<DiagnosisPanel> with SessionLauncher<DiagnosisPanel> {
   String? _pathError;
   String? _lastKey;
-  bool _showOthers = false;
+  late bool _showOthers = widget.initialShowOthers;
 
   @override
   String get logName => 'DiagnosisPanel';
@@ -341,11 +351,14 @@ class _CompactTop extends StatelessWidget {
           ),
           const SizedBox(width: 16),
           SizedBox(width: 200, child: button),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: onExpand,
-            child: Text('ver as ${others + 1} hipóteses', style: TextStyle(fontSize: 12, color: c.textSecondary)),
-          ),
+          if (others > 0) ...[
+            const SizedBox(width: 8),
+            TextButton(
+              key: const ValueKey('runs-diagnosis-expand'),
+              onPressed: onExpand,
+              child: Text('ver as ${others + 1} hipóteses', style: TextStyle(fontSize: 12, color: c.textSecondary)),
+            ),
+          ],
         ],
       ),
     );

@@ -20,6 +20,9 @@ bool isLive(SessionStatus status) => switch (status) {
   SessionStatus.detached => false,
 };
 
+/// A process that is up or coming up: [isLive] plus `starting`, which already owns the stage.
+bool isLiveOrStarting(SessionStatus status) => status == SessionStatus.starting || isLive(status);
+
 /// Events that show a live process after `reattached`: a new message, or the model acting on its own.
 const _work = {'user_text', 'assistant_text', 'thinking', 'tool_use', 'permission', 'result'};
 
@@ -448,13 +451,14 @@ bool _isBoundary(SessionEvent e) =>
 
 FeedBlock _single(SessionEvent e) => (events: [e], work: false, steps: 0, errors: 0, seconds: 0);
 
-/// The card replaces the `AskUserQuestion` call whose id the request carries. A request without `toolUseId` (older
+/// The card replaces the call whose id the request carries, whatever its name: the id is what ties them. A request without `toolUseId` (older
 /// recordings) falls back to the next such request after the call. A session imported from the terminal has no
 /// request: the call stays as a step, with the answer as its result.
 bool _hasQuestionCard(List<SessionEvent> events, int i, Set<String> cardIds) {
   final e = events[i];
-  if (e is! ToolCall || e.name != 'AskUserQuestion') return false;
+  if (e is! ToolCall) return false;
   if (cardIds.contains(e.id)) return true;
+  if (e.name != 'AskUserQuestion') return false;
   for (var j = i + 1; j < events.length; j++) {
     final n = events[j];
     if (n is QuestionRequest && n.toolUseId == null) return true;
@@ -463,8 +467,9 @@ bool _hasQuestionCard(List<SessionEvent> events, int i, Set<String> cardIds) {
   return false;
 }
 
-/// When events are appended, a work block either keeps its index or disappears together with the `AskUserQuestion`
-/// call that just became a card (a block made only of that call); no other work block changes index. The UI keys
+/// When events are appended, a work block either keeps its index or disappears together with the call that just
+/// became a card (a block made only of that call, hidden by the request's id, not by the call's name); no other work
+/// block changes index. The UI keys
 /// open state by this position.
 List<FeedBlock> feedBlocks(List<SessionEvent> events) {
   final cardIds = {

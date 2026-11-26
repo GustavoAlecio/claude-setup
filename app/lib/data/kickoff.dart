@@ -84,6 +84,8 @@ const _skillLabels = {
   'complete': 'Fechar o ciclo e abrir o PR',
   'discovery': 'Amadurecer uma ideia de produto',
   'orcamento': 'Gerar uma proposta comercial',
+  'jira-refine': 'Detalhar uma issue do Jira',
+  'linear-refine': 'Detalhar uma issue do Linear',
 };
 
 const _skillLabelMaxChars = 60;
@@ -93,20 +95,53 @@ final _stagePrefix = RegExp(
   caseSensitive: false,
 );
 
+/// Index of the first of [marks] that is not inside parentheses, so `(e.g. x)` does not end the sentence.
+int? _firstOutsideParens(String text, List<String> marks) {
+  var depth = 0;
+  for (var i = 0; i < text.length; i++) {
+    final c = text[i];
+    if (c == '(') {
+      depth++;
+    } else if (c == ')' && depth > 0) {
+      depth--;
+    } else if (depth == 0 && marks.any((m) => text.startsWith(m, i))) {
+      return i;
+    }
+  }
+  return null;
+}
+
+/// Last space at or before [from] that is not inside parentheses, or -1.
+int _lastSpaceOutsideParens(String text, int from) {
+  var depth = 0;
+  var last = -1;
+  for (var i = 0; i <= from && i < text.length; i++) {
+    final c = text[i];
+    if (c == '(') {
+      depth++;
+    } else if (c == ')' && depth > 0) {
+      depth--;
+    } else if (c == ' ' && depth == 0) {
+      last = i;
+    }
+  }
+  return last;
+}
+
 /// The palette's phrase for a skill: the known name's fixed text, otherwise the first sentence of its
 /// [description] without the pipeline-stage prefix, capitalized and cut at a word within 60 characters.
 String skillLabel(String name, String description) {
   final known = _skillLabels[name];
   if (known != null) return known;
   var text = description.trim().replaceFirst(_stagePrefix, '');
-  final cuts = [text.indexOf('. '), text.indexOf('—'), text.indexOf(' - ')].where((i) => i >= 0);
-  if (cuts.isNotEmpty) text = text.substring(0, cuts.reduce((a, b) => a < b ? a : b));
+  final cut = _firstOutsideParens(text, const ['. ', '—', ' - ']);
+  if (cut != null) text = text.substring(0, cut);
   text = text.trim();
   if (text.endsWith('.')) text = text.substring(0, text.length - 1).trimRight();
   if (text.isEmpty) return name;
   text = text[0].toUpperCase() + text.substring(1);
   if (text.length <= _skillLabelMaxChars) return text;
-  final space = text.lastIndexOf(' ', _skillLabelMaxChars - 1);
+  final space = _lastSpaceOutsideParens(text, _skillLabelMaxChars - 1);
   final end = space > 0 ? space : _skillLabelMaxChars - 1;
   return '${text.substring(0, end).trimRight()}…';
 }

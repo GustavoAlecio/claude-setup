@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:claude_flow/data/config_mutations.dart';
 import 'package:claude_flow/data/dashboard_config_repository.dart';
+import 'package:claude_flow/engine/engine_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -134,6 +135,49 @@ void main() {
       final out = read();
       expect(out['hidden'], ['a']);
       expect(out['lastOrg'], 'r10');
+    });
+
+    test('fromMap keeps the first of orgs with the same name', () {
+      final config = DashboardConfig.fromMap({
+        'orgs': [
+          {
+            'name': 'r10',
+            'roots': ['/first'],
+          },
+          {
+            'name': 'abm',
+            'roots': ['/abm'],
+          },
+          {
+            'name': 'r10',
+            'roots': ['/second'],
+          },
+        ],
+      });
+
+      expect([for (final o in config.orgs) o.name], ['r10', 'abm']);
+      expect(config.orgs.first.roots, ['/first']);
+    });
+
+    test('saveOrgs keeps the raw entry of the first duplicate', () async {
+      file.writeAsStringSync(
+        jsonEncode({
+          'orgs': [
+            {'name': 'r10', 'extra': 'first'},
+            {'name': 'r10', 'extra': 'second'},
+          ],
+        }),
+      );
+
+      await repo.update(
+        saveOrgs([
+          const OrgConfig(name: 'r10', roots: ['/dev/r10']),
+        ]),
+      );
+
+      final orgs = read()['orgs'] as List;
+      expect(orgs, hasLength(1));
+      expect((orgs.single as Map)['extra'], 'first');
     });
 
     test('a failed write does not block the next one', () async {
